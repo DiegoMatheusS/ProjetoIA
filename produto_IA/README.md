@@ -1,6 +1,28 @@
 # Produto IA - CriaByte
 
-Coletor de páginas de produto alinhado aos nomes de campos da `main` do backend CriaByte.
+Coletor inicial de produtos alinhado à `main` do backend CriaByte.
+
+## Objetivo atual
+
+Receber uma URL de produto, coletar dados públicos da página e devolver um payload parcial compatível com o backend.
+
+O projeto separa:
+
+- dados técnicos de Hardware;
+- especificações de periféricos como Produto;
+- Notebook como cadastro especializado;
+- preço e disponibilidade como Oferta;
+- imagem somente como URL.
+
+## Fontes
+
+Prioridade atual:
+
+1. lojas/varejistas;
+2. fabricantes;
+3. fonte genérica quando o domínio não é reconhecido.
+
+Mercado Livre está bloqueado nesta versão para evitar depender dele como fonte principal.
 
 ## Instalação
 
@@ -11,28 +33,33 @@ npx playwright install --with-deps chromium
 
 ## Uso
 
-Detecção automática:
-
 ```bash
 npm start -- "https://site.com/produto"
 ```
 
-Forçando uma categoria quando necessário:
+Categoria forçada, se necessário:
 
 ```bash
 npm start -- "https://site.com/produto" TECLADO
 ```
 
-## O que retorna
+## Saída
 
-- categoriaDetectada
-- tipoCadastro (`HARDWARE`, `PRODUTO` ou `NOTEBOOK`)
-- `payloadParcialBackend` com os nomes de campos usados pelo backend
-- `ofertaColetada` separada dos dados técnicos
-- lista dos campos técnicos esperados para a categoria
+O programa retorna:
 
-A imagem é mantida somente como URL (`imagemUrl`). Nenhuma imagem é baixada.
+- categoria detectada;
+- fonte e vendedor detectados;
+- payload parcial compatível com o backend;
+- especificações encontradas;
+- campos obrigatórios ausentes;
+- preço atual e anterior quando encontrados;
+- disponibilidade;
+- URL original;
+- imagem somente como URL;
+- avisos básicos de validação.
 
-## Importante
+## Regra de precisão
 
-A extração técnica ainda é determinística e não inventa campos. Os schemas já espelham a `main` do backend. O próximo passo é adicionar um interpretador local/LLM para preencher melhor os campos difíceis, sempre filtrando a saída por esses schemas.
+O coletor não deve preencher um campo técnico apenas porque uma palavra apareceu na página. Ele prioriza valores rotulados e trechos da ficha técnica. Quando não há evidência suficiente, o campo fica ausente.
+
+A IA local ainda não é usada. Ela será adicionada depois como interpretador de casos difíceis, sempre limitada ao schema real do backend.

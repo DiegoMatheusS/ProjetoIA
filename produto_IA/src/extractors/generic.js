@@ -104,6 +104,69 @@ function extrairOfertaJsonLd(produto) {
   };
 }
 
+function extrairPrecoAnterior(texto, precoAtual) {
+  if (precoAtual == null) return null;
+
+  const fonte = String(texto || '');
+  const atualFormatado = precoAtual
+    .toFixed(2)
+    .replace('.', ',')
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+  const posicoes = [];
+  let inicio = 0;
+  const alvo = atualFormatado;
+
+  while (true) {
+    const pos = fonte.indexOf(alvo, inicio);
+    if (pos === -1) break;
+    posicoes.push(pos);
+    inicio = pos + alvo.length;
+  }
+
+  let melhor = null;
+
+  for (const pos of posicoes) {
+    const antes = fonte.slice(Math.max(0, pos - 120), pos);
+    const matches = [...antes.matchAll(/R\$\s*([\d.]+,\d{2})/gi)];
+    for (const match of matches) {
+      const valor = moedaParaNumero(match[1]);
+      if (valor != null && valor > precoAtual) {
+        melhor = valor;
+      }
+    }
+    if (melhor != null) return melhor;
+  }
+
+  return null;
+}
+
+function extrairRotuloSimples(texto, rotulos) {
+  const linhas = String(texto || '')
+    .split(/\r?\n/)
+    .map((linha) => linha.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  for (const linha of linhas) {
+    for (const rotulo of rotulos) {
+      const r = String(rotulo).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const padroes = [
+        new RegExp(`^${r}\\s*(?:\\||:|;|\\-|–|—)\\s*(.+?)$`, 'i'),
+        new RegExp(`^${r}\\s+(.+?)$`, 'i'),
+      ];
+      for (const regex of padroes) {
+        const match = linha.match(regex);
+        if (match?.[1]) {
+          const valor = match[1].trim();
+          if (valor && valor.toLowerCase() !== rotulo.toLowerCase()) return valor;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 async function extrairGenerico(page, url) {
   const jsonLd = await lerJsonLd(page);
   const ofertaLd = extrairOfertaJsonLd(jsonLd);
@@ -164,9 +227,24 @@ async function extrairGenerico(page, url) {
     textoLimpo(jsonLd?.brand) ??
     null;
 
+  const textoCorpoParaDados = await page.locator('body').innerText().catch(() => '');
+
+  const modelo =
+    textoLimpo(jsonLd?.model) ??
+    textoLimpo(jsonLd?.modelNumber) ??
+    extrairRotuloSimples(textoCorpoParaDados, ['Modelo']) ??
+    extrairRotuloSimples(textoCorpoParaDados, ['Referência', 'Referencia']) ??
+    null;
+
+  const mpn =
+    textoLimpo(jsonLd?.mpn) ??
+    textoLimpo(jsonLd?.productID) ??
+    extrairRotuloSimples(textoCorpoParaDados, ['Referência', 'Referencia']) ??
+    modelo ??
+    null;
+
   const sku =
     textoLimpo(jsonLd?.sku) ??
-    textoLimpo(jsonLd?.mpn) ??
     null;
 
   const descricao =
@@ -196,12 +274,16 @@ async function extrairGenerico(page, url) {
   }
 
   const tituloPagina = textoLimpo(await page.title());
+  const precoAnterior = extrairPrecoAnterior(textoCorpoParaDados, preco);
 
   return {
     nome,
     marca,
     sku,
+    modelo,
+    mpn,
     preco,
+    precoAnterior,
     moeda: ofertaLd?.moeda ?? "BRL",
     disponivel,
     imagem: urlAbsoluta(imagem, url),

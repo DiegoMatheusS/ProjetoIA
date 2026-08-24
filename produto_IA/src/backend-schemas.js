@@ -131,6 +131,18 @@ const SCHEMAS = {
   }
 };
 
+const REQUIRED_FIELDS = {
+  PROCESSADOR: ['socket', 'tiposMemoriaSuportados'],
+  PLACA_MAE: ['socket', 'chipset', 'formato', 'tiposMemoriaSuportados', 'frequenciasMemoriaJedecMhz', 'frequenciasMemoriaOverclockMhz', 'slotsMemoria', 'saidasVideo'],
+  MEMORIA_RAM: ['tipo', 'formato', 'capacidadePorModuloGb', 'quantidadeModulos', 'frequenciaMhz'],
+  GABINETE: ['tamanho', 'alturaMm', 'larguraMm', 'profundidadeMm', 'formatosPlacaMaeSuportados', 'formatosFonteSuportados'],
+  FONTE: ['formato', 'potenciaWatts'],
+  PLACA_VIDEO: ['comprimentoMm'],
+  COOLER: ['tipo', 'socketsSuportados'],
+  VENTOINHA: ['tamanhoMm', 'conector'],
+  ARMAZENAMENTO: ['tipo', 'formato', 'interface', 'capacidadeGb'],
+};
+
 const ENUMS = {
   TipoMemoria: ['DDR3','DDR4','DDR5'],
   FormatoMemoria: ['DIMM','SO_DIMM'],
@@ -146,4 +158,4 @@ const ENUMS = {
   ChaveM2: ['B','M','B_M']
 };
 
-module.exports = { SCHEMAS, ENUMS };
+module.exports = { SCHEMAS, ENUMS, REQUIRED_FIELDS };
