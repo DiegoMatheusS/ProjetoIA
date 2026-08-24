@@ -1,40 +1,38 @@
-# Produto AI Starter
+# Produto IA - CriaByte
 
-Projeto inicial para coletar dados de uma página de produto.
-
-## Requisitos
-
-- Node.js 18 ou superior
+Coletor de páginas de produto alinhado aos nomes de campos da `main` do backend CriaByte.
 
 ## Instalação
 
 ```bash
 npm install
-npx playwright install chromium
+npx playwright install --with-deps chromium
 ```
 
 ## Uso
+
+Detecção automática:
 
 ```bash
 npm start -- "https://site.com/produto"
 ```
 
-## Saída
+Forçando uma categoria quando necessário:
 
-O programa tenta retornar:
+```bash
+npm start -- "https://site.com/produto" TECLADO
+```
 
-- nome
-- marca
-- SKU/MPN
-- preço
-- moeda
-- disponibilidade
-- imagem
-- descrição
-- URL
+## O que retorna
 
-A extração usa primeiro JSON-LD e metadados da página e depois tenta seletores genéricos.
+- categoriaDetectada
+- tipoCadastro (`HARDWARE`, `PRODUTO` ou `NOTEBOOK`)
+- `payloadParcialBackend` com os nomes de campos usados pelo backend
+- `ofertaColetada` separada dos dados técnicos
+- lista dos campos técnicos esperados para a categoria
 
-## Próximo passo
+A imagem é mantida somente como URL (`imagemUrl`). Nenhuma imagem é baixada.
 
-Criar extratores específicos para cada loja e, depois, adicionar um modelo local para interpretar especificações técnicas.
+## Importante
+
+A extração técnica ainda é determinística e não inventa campos. Os schemas já espelham a `main` do backend. O próximo passo é adicionar um interpretador local/LLM para preencher melhor os campos difíceis, sempre filtrando a saída por esses schemas.
