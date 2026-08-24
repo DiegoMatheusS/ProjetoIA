@@ -1,0 +1,13 @@
+{
+  "name": "produto-ai-starter",
+  "version": "1.0.0",
+  "description": "Coletor inicial de dados de produtos usando Playwright e extração genérica.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  }
+}
