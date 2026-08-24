@@ -1,3 +1,24 @@
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
 .env
+.venv
+
+# IDE
+.vscode/
+.idea/
+
+# Dados
+data/raw/
 *.log
+
+# Cache
+.pytest_cache/
+
+# Node.js
+node_modules/
+package-lock.json

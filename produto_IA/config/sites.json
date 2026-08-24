@@ -1,0 +1,25 @@
+{
+  "sites": [
+    {
+      "name": "Mercado Livre",
+      "base_url": "https://www.mercadolivre.com.br",
+      "product_url_pattern": "https://www.mercadolivre.com.br/p/{product_id}",
+      "selectors": {
+        "title": "h1.ui-pdp-title",
+        "price": "span.andes-money-amount__fraction",
+        "condition": "span.ui-pdp-subtitle",
+        "seller": "span.ui-pdp-seller__header__title"
+      }
+    },
+    {
+      "name": "Shopee",
+      "base_url": "https://shopee.com.br",
+      "product_url_pattern": "https://shopee.com.br/product/{product_id}",
+      "selectors": {
+        "title": "div._36CEnD",
+        "price": "div._3I6S1H",
+        "seller": "div._2OaHUS"
+      }
+    }
+  ]
+}
