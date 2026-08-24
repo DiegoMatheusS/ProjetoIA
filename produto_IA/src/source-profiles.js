@@ -23,7 +23,8 @@ const SOURCES = [
   { id: 'THERMALTAKE', nome: 'Thermaltake', tipo: 'FABRICANTE', prioridade: 2, dominios: ['thermaltake.com'] },
   { id: 'COUGAR', nome: 'Cougar', tipo: 'FABRICANTE', prioridade: 2, dominios: ['cougargaming.com'] },
   { id: 'REDRAGON', nome: 'Redragon', tipo: 'FABRICANTE', prioridade: 2, dominios: ['redragonshop.com'] },
-  { id: 'MERCADO_LIVRE', nome: 'Mercado Livre', tipo: 'MARKETPLACE', prioridade: 9, bloqueado: true, dominios: ['mercadolivre.com.br', 'mercadolibre.com'] },
+  { id: 'MERCADO_LIVRE', nome: 'Mercado Livre', tipo: 'MARKETPLACE', prioridade: 3, bloqueado: false, api: 'MERCADO_LIVRE_API', dominios: ['mercadolivre.com.br', 'mercadolibre.com'] },
+  { id: 'SHOPEE', nome: 'Shopee', tipo: 'MARKETPLACE', prioridade: 3, bloqueado: false, api: 'SHOPEE_AFFILIATE_API', dominios: ['shopee.com.br'] },
 ];
 
 function identificarFonte(url) {

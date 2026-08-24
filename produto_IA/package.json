@@ -1,6 +1,6 @@
 {
   "name": "produto-ai-starter",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Coletor de produtos com fontes priorizadas e schemas alinhados ao backend CriaByte.",
   "main": "src/index.js",
   "type": "commonjs",

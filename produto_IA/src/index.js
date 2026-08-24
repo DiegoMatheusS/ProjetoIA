@@ -5,6 +5,7 @@ const { extrairPorCategoria } = require('./specs-extractor');
 const { SCHEMAS, REQUIRED_FIELDS } = require('./backend-schemas');
 const { identificarFonte } = require('./source-profiles');
 const { extrairConteudoPagina } = require('./page-content');
+const { consultarMarketplace } = require('./marketplace');
 
 function extrairVendedor(texto) {
   const fonte = String(texto || '');
@@ -48,10 +49,7 @@ async function main() {
   }
 
   const fonte = identificarFonte(url);
-  if (fonte.bloqueado) {
-    console.error(`Fonte bloqueada para coleta: ${fonte.nome}. Use uma loja ou fabricante como fonte principal.`);
-    process.exit(2);
-  }
+  // Marketplaces agora são suportados. A API é opcional: sem credenciais, o scraper continua como fallback.
 
   let browser;
 
@@ -60,28 +58,56 @@ async function main() {
     browser = sessao.browser;
     const page = sessao.page;
 
-    const produto = await extrairGenerico(page, url);
+    const finalUrl = page.url();
+    const marketplace = await consultarMarketplace(url, finalUrl);
+    const produto = await extrairGenerico(page, finalUrl);
     const conteudo = await extrairConteudoPagina(page);
-    const textoAnalise = [produto.nome, produto.descricao, produto.tituloPagina, conteudo.textoTecnico]
+
+    // Quando uma API oficial estiver disponível e configurada, ela tem prioridade
+    // para preço, imagem, identificadores e metadados do marketplace.
+    const produtoApi = marketplace.usado ? {
+      nome: marketplace.titulo,
+      marca: marketplace.marca,
+      modelo: marketplace.modelo,
+      descricao: marketplace.descricao,
+      mpn: marketplace.modelo,
+      gtin: marketplace.gtin,
+      imagem: marketplace.imagemUrl,
+      preco: marketplace.preco,
+      precoAnterior: marketplace.precoAnterior,
+      moeda: marketplace.moeda,
+      disponivel: marketplace.disponivel,
+      url: marketplace.productUrl || finalUrl,
+      coletadoEm: new Date().toISOString(),
+    } : null;
+
+    const produtoFinal = produtoApi ? {
+      ...produto,
+      ...Object.fromEntries(Object.entries(produtoApi).filter(([, v]) => v !== null && v !== undefined && v !== '')),
+      // A URL que o usuário forneceu continua sendo preservada abaixo como URL original/oferta.
+    } : produto;
+    const textoApi = marketplace.usado ? [marketplace.titulo, marketplace.atributosTexto, marketplace.loja].filter(Boolean).join('\n') : '';
+    const textoAnalise = [produtoFinal.nome, produtoFinal.descricao, produtoFinal.tituloPagina, textoApi, conteudo.textoTecnico]
       .filter(Boolean)
       .join('\n')
       .slice(0, 150000);
 
     const categoria = detectarCategoria(textoAnalise, categoriaForcada);
     const schema = categoria ? SCHEMAS[categoria] : null;
-    const specs = categoria ? extrairPorCategoria(categoria, conteudo.textoTecnico || textoAnalise) : {};
-    const vendedorNome = extrairVendedor(conteudo.textoCompleto);
+    const textoSpecs = [conteudo.textoTecnico, textoApi].filter(Boolean).join('\n');
+    const specs = categoria ? extrairPorCategoria(categoria, textoSpecs || textoAnalise) : {};
+    const vendedorNome = marketplace.usado && marketplace.loja ? marketplace.loja : extrairVendedor(conteudo.textoCompleto);
     const ausentes = categoria ? camposAusentes(categoria, specs) : [];
     const avisos = categoria ? validarEspecificacoesBasicas(categoria, specs) : [];
 
     const base = {
-      nome: produto.nome,
-      marca: produto.marca,
-      modelo: produto.modelo || null,
-      descricao: produto.descricao,
-      mpn: produto.mpn || produto.modelo || null,
-      gtin: null,
-      imagemUrl: produto.imagem,
+      nome: produtoFinal.nome,
+      marca: produtoFinal.marca,
+      modelo: produtoFinal.modelo || null,
+      descricao: produtoFinal.descricao,
+      mpn: produtoFinal.mpn || produtoFinal.modelo || null,
+      gtin: produtoFinal.gtin || null,
+      imagemUrl: produtoFinal.imagem,
     };
 
     if (categoria && schema?.tipoCadastro === 'HARDWARE') base.categoria = categoria;
@@ -101,24 +127,38 @@ async function main() {
       vendedorDetectado: vendedorNome,
       payloadParcialBackend: payloadParcial,
       ofertaColetada: {
-        preco: produto.preco,
-        precoAnterior: produto.precoAnterior,
-        moeda: produto.moeda,
-        disponivel: produto.disponivel,
-        urlOriginal: produto.url,
+        preco: produtoFinal.preco,
+        precoAnterior: produtoFinal.precoAnterior,
+        moeda: produtoFinal.moeda,
+        disponivel: produtoFinal.disponivel,
+        urlOriginal: url,
+        urlProduto: produtoFinal.url,
         vendedorNome,
       },
       especificacoesEncontradas: specs,
       camposEspecificacaoEsperados: schema?.campos ?? [],
       camposObrigatoriosAusentes: ausentes,
       avisosValidacao: avisos,
-      estrategia: {
-        mercadoLivre: 'BLOQUEADO',
-        imagem: 'SOMENTE_URL',
-        fontePrincipal: fonte.tipo === 'FABRICANTE' ? 'FABRICANTE' : fonte.tipo === 'LOJA' ? 'LOJA' : 'GENERICA',
-        iaAindaNaoUtilizada: true,
+      marketplace: {
+        plataforma: marketplace.plataforma,
+        apiUsada: marketplace.usado,
+        motivo: marketplace.motivo || null,
+        itemId: marketplace.itemId || null,
+        shopId: marketplace.shopId || null,
+        affiliateUrl: marketplace.affiliateUrl || null,
+        descontoPercentual: marketplace.descontoPercentual ?? null,
+        comissaoPercentual: marketplace.comissaoPercentual ?? null,
+        comissao: marketplace.comissao ?? null,
       },
-      coletadoEm: produto.coletadoEm,
+      estrategia: {
+        mercadoLivre: 'API_OPCIONAL_COM_FALLBACK',
+        imagem: 'SOMENTE_URL',
+        fontePrincipal: marketplace.usado ? marketplace.fonte : fonte.tipo === 'FABRICANTE' ? 'FABRICANTE' : fonte.tipo === 'LOJA' ? 'LOJA' : fonte.tipo === 'MARKETPLACE' ? 'MARKETPLACE_SCRAPER' : 'GENERICA',
+        iaAindaNaoUtilizada: true,
+        mercadoLivreApi: 'MERCADO_LIVRE_API',
+        shopeeApi: 'SHOPEE_AFFILIATE_API',
+      },
+      coletadoEm: produtoFinal.coletadoEm,
     };
 
     console.log(JSON.stringify(resultado, null, 2));
