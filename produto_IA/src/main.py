@@ -9,25 +9,23 @@ def main():
     logger.info("🚀 Iniciando Projeto IA Scraper")
     
     try:
-        # Inicializa o scraper do Mercado Livre
         scraper = MercadoLivreScraper()
         data_handler = DataHandler()
         
-        # 🔥 SEU ID DO PRODUTO
-        product_id = "MLB-7254149004"  # ← Você copiou este ID
+        # Use o ID do processador que você encontrou
+        product_id = "MLB38775549"  # Processador AMD Ryzen
         
         logger.info(f"Buscando produto ID: {product_id}")
         product_data = scraper.search_product(product_id)
         
         if product_data and product_data.get('title'):
-            # Salva os dados
             json_file = data_handler.save_json(product_data, f"produto_{product_id}")
             csv_file = data_handler.save_csv(product_data, f"produto_{product_id}")
             logger.info(f"✅ Dados salvos com sucesso!")
             logger.info(f"📁 JSON: {json_file}")
             logger.info(f"📁 CSV: {csv_file}")
         else:
-            logger.warning("❌ Produto não encontrado ou erro na extração")
+            logger.warning("❌ Produto não encontrado")
         
         logger.info("✅ Processo finalizado!")
         

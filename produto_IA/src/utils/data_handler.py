@@ -8,7 +8,7 @@ class DataHandler:
     def __init__(self, data_dir='data/raw'):
         self.data_dir = Path(data_dir)
         # CORREÇÃO: exist_ok=True impede o erro "File exists"
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)  # ← ESSA LINHA É CRUCIAL!
         
     def save_json(self, data, filename):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
