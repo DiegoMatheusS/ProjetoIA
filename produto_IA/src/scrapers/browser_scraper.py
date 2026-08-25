@@ -1,12 +1,17 @@
 import os
 from loguru import logger
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from ..utils.rate_limiter import PoliteRateLimiter
 
 
 class BrowserScraper:
     def __init__(self):
         self.timeout_ms = int(os.getenv("BROWSER_TIMEOUT_MS", "30000"))
         self.headless = os.getenv("HEADLESS", "true").lower() != "false"
+        self.rate_limiter = PoliteRateLimiter(
+            min_delay=float(os.getenv("BROWSER_MIN_DELAY_SECONDS", "1.8")),
+            jitter=float(os.getenv("BROWSER_JITTER_SECONDS", "0.6")),
+        )
 
     def fetch(self, url: str):
         with sync_playwright() as p:
@@ -21,6 +26,7 @@ class BrowserScraper:
             )
             page = context.new_page()
             try:
+                self.rate_limiter.wait(url)
                 logger.info(f"Abrindo navegador: {url}")
                 page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
                 page.wait_for_timeout(1200)

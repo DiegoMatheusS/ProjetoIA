@@ -1,6 +1,27 @@
-# Produto IA - Python
+# Produto IA — CriaByte (Python)
 
-Coletor de produtos alinhado ao backend CriaByte, com Mercado Livre via API oficial e navegador como fallback.
+Coletor de URLs de produtos alinhado ao frontend e ao backend do CriaByte.
+
+Princípios:
+- Hardware técnico separado de Oferta/preço.
+- Não inventar especificações. Campo não confirmado fica ausente.
+- Imagem é armazenada apenas como URL; o coletor não baixa a imagem.
+- Mercado Livre usa API oficial como fonte principal.
+- Outras lojas usam JSON-LD/ficha técnica e, se necessário, um único fallback de navegador.
+- Não é crawler em massa: trabalha com uma URL individual por execução.
+
+## Categorias cobertas
+
+### Componentes técnicos
+`PROCESSADOR`, `PLACA_MAE`, `MEMORIA_RAM`, `PLACA_VIDEO`, `ARMAZENAMENTO`, `FONTE`, `GABINETE`, `COOLER`, `VENTOINHA`.
+
+### Loja / periféricos / setup
+`MONITOR`, `MOUSE`, `TECLADO`, `HEADSET`, `FONE`, `MICROFONE`, `WEBCAM`, `CONTROLE`, `MOUSEPAD`, `CADEIRA`, `MESA`, `SUPORTE_MONITOR`, `ILUMINACAO`, `ORGANIZADOR_CABOS`, `ACESSORIO`.
+
+### Especiais
+`NOTEBOOK`, `CELULAR`, `PC_MONTADO`.
+
+O arquivo `config/criabyte_categories.json` lista o contrato de campos por categoria.
 
 ## Instalação no Codespaces
 
@@ -12,86 +33,87 @@ pip install -r requirements.txt
 python -m playwright install --with-deps chromium
 ```
 
-## Teste sem API
+## Uso
 
 ```bash
 python -m src.main "URL_DO_PRODUTO"
 ```
 
-Mercado Livre pode redirecionar o navegador para verificação. Para evitar isso, configure a API oficial.
+Sem fallback de navegador:
 
-## Mercado Livre - criar e autorizar a aplicação
+```bash
+python -m src.main "URL_DO_PRODUTO" --no-browser
+```
 
-### 1. Descobrir Redirect URI do Codespaces
+Forçando uma categoria quando você já sabe o destino:
+
+```bash
+python -m src.main "URL_DO_PRODUTO" PLACA_MAE --no-browser
+python -m src.main "URL_DO_PRODUTO" NOTEBOOK --no-browser
+```
+
+## Ritmo de coleta
+
+Os padrões já são conservadores:
+
+```text
+REQUEST_MIN_DELAY_SECONDS=1.25
+REQUEST_JITTER_SECONDS=0.45
+ML_MIN_DELAY_SECONDS=1.0
+ML_JITTER_SECONDS=0.35
+BROWSER_MIN_DELAY_SECONDS=1.8
+BROWSER_JITTER_SECONDS=0.6
+HTTP_MAX_RETRIES=2
+```
+
+O Mercado Livre também usa cache curto. Produtos técnicos podem ficar em cache por mais tempo; preço/ofertas têm cache curto.
+
+Se `/items/{id}` estiver proibido para a aplicação, o coletor não insiste por padrão em `/sale_price` e `/prices`; ele segue para o catálogo e `/products/{id}/items`. Para testar esses endpoints manualmente:
+
+```text
+ML_TRY_RESTRICTED_PRICE_ENDPOINTS=true
+```
+
+## Mercado Livre OAuth
+
+Descobrir callback do Codespaces:
 
 ```bash
 python -m src.auth.mercadolivre_oauth codespace-uri
 ```
 
-Copie a URL exibida e use exatamente essa URL como Redirect URI no DevCenter do Mercado Livre.
-
-### 2. Configure o `.env`
-
-Mantenha suas variáveis atuais e adicione:
+No `.env`:
 
 ```text
-ML_CLIENT_ID=SEU_CLIENT_ID
-ML_CLIENT_SECRET=SEU_CLIENT_SECRET
-ML_REDIRECT_URI=URL_HTTPS_EXATA_CADASTRADA_NO_MERCADO_LIVRE
+ML_CLIENT_ID=...
+ML_CLIENT_SECRET=...
+ML_REDIRECT_URI=https://...-8765.app.github.dev/callback
 ML_USE_PKCE=false
 ```
 
-Nunca envie o Client Secret, Access Token ou Refresh Token para o GitHub.
-
-### 3. Inicie o callback no Codespaces
+Iniciar callback:
 
 ```bash
 python -m src.auth.ml_callback_server
 ```
 
-A porta usada é `8765`. No painel **Ports** do Codespaces, deixe a porta acessível no navegador enquanto fizer a autorização.
-
-### 4. Em outro terminal, gere a URL de autorização
+Em outro terminal:
 
 ```bash
 python -m src.auth.mercadolivre_oauth auth-url
 ```
 
-Abra a URL exibida no navegador, faça login com a conta principal do Mercado Livre e autorize. O callback troca o `code` pelo token e grava `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env`.
-
-### 5. Confirme
+Confirmar autenticação:
 
 ```bash
-python -m src.auth.mercadolivre_oauth status
 python -m src.auth.mercadolivre_oauth whoami
 ```
 
-O comando `whoami` não mostra token nem secret.
+Nunca versione `.env`, Client Secret, Access Token ou Refresh Token.
 
-### 6. Teste o produto
-
-```bash
-python -m src.main "URL_DO_MERCADO_LIVRE" --no-browser
-```
-
-Procure no JSON:
-
-```json
-"apiUsada": true
-```
-
-## Renovação de token
-
-O projeto tenta renovar automaticamente um access token expirado quando `ML_REFRESH_TOKEN`, `ML_CLIENT_ID` e `ML_CLIENT_SECRET` estão configurados. O novo refresh token é salvo no `.env`, porque o Mercado Livre invalida o anterior após uso.
-
-Também é possível renovar manualmente:
+## Testes
 
 ```bash
-python -m src.auth.mercadolivre_oauth refresh
+pip install -r requirements-dev.txt
+pytest -q
 ```
-
-## Segurança
-
-- `.env` está no `.gitignore`.
-- O ZIP de atualização não contém seu `.env`.
-- Não envie Client Secret, Access Token ou Refresh Token em chat, commit ou screenshot.

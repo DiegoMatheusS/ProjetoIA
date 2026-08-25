@@ -6,10 +6,12 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
+from .scrapers.magazine_scraper import MagazineScraper
 from .extractors.category import detect_category
-from .extractors.backend_schemas import SCHEMAS, REQUIRED
+from .extractors.backend_schemas import SCHEMAS, REQUIRED, CATEGORY_SLUGS
 from .extractors.ml_specs import extract_specs
 from .utils.data_handler import DataHandler
+from .utils.sites import detect_site
 
 load_dotenv()
 
@@ -51,14 +53,25 @@ def build_result(raw, forced_category=None):
     if spec_field:
         payload[spec_field] = specs
 
+    # Builds e produtos sem tabela técnica própria não recebem campos
+    # desconhecidos no payload. As especificações continuam em
+    # especificacoesEncontradas para revisão do ADMIN.
+    if category == "PC_MONTADO":
+        for key in ("finalidade", "resolucaoRecomendada"):
+            if specs.get(key) not in (None, "", []):
+                payload[key] = specs[key]
+
     missing = [
         field
         for field in REQUIRED.get(category, [])
         if specs.get(field) in (None, "", [])
     ]
 
+    site = detect_site(raw.get("url_original") or "")
+
     return {
         "categoriaDetectada": category,
+        "categoriaSlugSugerida": CATEGORY_SLUGS.get(category),
         "tipoCadastro": tipo_cadastro,
         "payloadParcialBackend": payload,
         "ofertaColetada": {
@@ -70,10 +83,25 @@ def build_result(raw, forced_category=None):
             "urlOriginal": raw.get("url_original"),
             "urlProduto": raw.get("url_final"),
             "vendedorId": raw.get("seller_id"),
+            "vendedorMarketplace": raw.get("seller_name"),
+            "vendedorMarketplaceSlug": raw.get("seller_slug"),
+            "codigoMarketplace": raw.get("marketplace_product_code"),
         },
         "especificacoesEncontradas": specs,
         "camposEspecificacaoEsperados": expected,
         "camposObrigatoriosAusentes": missing,
+        "origemColeta": {
+            **site,
+            "fonte": raw.get("source"),
+        },
+        "politicaColeta": {
+            "modo": "URL_INDIVIDUAL",
+            "semCrawlerEmMassa": True,
+            "delayEntreRequisicoes": True,
+            "retriesLimitados": True,
+            "cacheAtivo": True,
+            "cacheUsadoNestaExecucao": bool(raw.get("cache_hit")),
+        },
         "marketplace": {
             "plataforma": (
                 "MERCADO_LIVRE"
@@ -86,6 +114,7 @@ def build_result(raw, forced_category=None):
             "itemId": raw.get("item_id"),
             "catalogProductId": raw.get("catalog_product_id"),
             "buyBoxItemId": raw.get("buy_box_item_id"),
+            "catalogOfferEncontrada": raw.get("catalog_offer_found", False),
             "errosApi": raw.get("api_errors", []),
             "diagnosticoApi": raw.get("api_debug", []),
             "bloqueadoNoNavegador": bool(raw.get("blocked")),
@@ -125,9 +154,14 @@ def main():
             args.url,
             no_browser=args.no_browser,
         )
+    elif MagazineScraper.is_magazine(args.url):
+        raw = MagazineScraper().collect(
+            args.url,
+            no_browser=args.no_browser,
+        )
     else:
         from .scrapers.generic_scraper import GenericScraper
-        raw = GenericScraper().collect(args.url)
+        raw = GenericScraper().collect(args.url, no_browser=args.no_browser)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)
 

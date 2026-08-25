@@ -1,0 +1,595 @@
+{
+  "PROCESSADOR": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "processadores",
+    "campoEspecificacaoBackend": "especificacaoProcessador",
+    "camposEsperados": [
+      "socket",
+      "familia",
+      "linha",
+      "geracao",
+      "arquitetura",
+      "litografiaNm",
+      "nucleos",
+      "threads",
+      "frequenciaBaseMhz",
+      "frequenciaTurboMhz",
+      "cacheL2Mb",
+      "cacheL3Mb",
+      "tdpWatts",
+      "possuiVideoIntegrado",
+      "modeloVideoIntegrado",
+      "tiposMemoriaSuportados",
+      "frequenciaMemoriaMaximaMhz",
+      "capacidadeMemoriaMaximaGb",
+      "canaisMemoria",
+      "suportaEcc",
+      "temperaturaMaximaC",
+      "versaoPcie",
+      "lanesPcie",
+      "coolerIncluso",
+      "multiplicadorDesbloqueado",
+      "suporteOverclock",
+      "dataLancamento"
+    ],
+    "camposObrigatorios": [
+      "socket",
+      "tiposMemoriaSuportados"
+    ]
+  },
+  "PLACA_MAE": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "placas-mae",
+    "campoEspecificacaoBackend": "especificacaoPlacaMae",
+    "camposEsperados": [
+      "socket",
+      "chipset",
+      "formato",
+      "revisao",
+      "biosInicial",
+      "tiposMemoriaSuportados",
+      "formatosMemoriaSuportados",
+      "frequenciasMemoriaJedecMhz",
+      "frequenciasMemoriaOverclockMhz",
+      "slotsMemoria",
+      "capacidadeMaximaMemoriaGb",
+      "capacidadeMaximaPorSlotGb",
+      "suportaXmp",
+      "suportaExpo",
+      "suportaEcc",
+      "suportaMemoriaRegistrada",
+      "saidasVideo",
+      "portasSata",
+      "versaoPcie",
+      "wifi",
+      "bluetooth",
+      "ethernet",
+      "biosFlashback",
+      "biosMinima",
+      "slotsM2"
+    ],
+    "camposObrigatorios": [
+      "socket",
+      "chipset",
+      "formato",
+      "tiposMemoriaSuportados",
+      "slotsMemoria"
+    ]
+  },
+  "MEMORIA_RAM": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "memorias-ram",
+    "campoEspecificacaoBackend": "especificacaoMemoriaRam",
+    "camposEsperados": [
+      "tipo",
+      "formato",
+      "capacidadePorModuloGb",
+      "quantidadeModulos",
+      "frequenciaMhz",
+      "frequenciaJedecMhz",
+      "latenciaCl",
+      "tensaoVolts",
+      "ecc",
+      "registrada",
+      "suportaXmp",
+      "suportaExpo",
+      "alturaMm",
+      "rgb",
+      "consumoWatts"
+    ],
+    "camposObrigatorios": [
+      "tipo",
+      "formato",
+      "capacidadePorModuloGb",
+      "quantidadeModulos",
+      "frequenciaMhz"
+    ]
+  },
+  "PLACA_VIDEO": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "placas-video",
+    "campoEspecificacaoBackend": "especificacaoPlacaVideo",
+    "camposEsperados": [
+      "chipset",
+      "gpu",
+      "arquitetura",
+      "memoriaVideoGb",
+      "tipoMemoriaVideo",
+      "barramentoBits",
+      "clockBaseMhz",
+      "clockBoostMhz",
+      "geracaoPcie",
+      "larguraPcie",
+      "comprimentoMm",
+      "alturaMm",
+      "espessuraMm",
+      "slotsOcupados",
+      "consumoWatts",
+      "potenciaFonteRecomendadaWatts",
+      "conectoresPcie6Pinos",
+      "conectoresPcie8Pinos",
+      "conectores12vhpwr",
+      "conectores12v2x6",
+      "saidasVideo",
+      "hdmi",
+      "displayPort"
+    ],
+    "camposObrigatorios": [
+      "comprimentoMm"
+    ]
+  },
+  "ARMAZENAMENTO": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "armazenamento",
+    "campoEspecificacaoBackend": "especificacaoArmazenamento",
+    "camposEsperados": [
+      "tipo",
+      "formato",
+      "interface",
+      "capacidadeGb",
+      "tamanhoM2Mm",
+      "chaveM2",
+      "geracaoPcie",
+      "pistasPcie",
+      "leituraSequencialMbps",
+      "escritaSequencialMbps",
+      "alturaMm",
+      "larguraMm",
+      "profundidadeMm",
+      "espessuraMm",
+      "consumoWatts",
+      "possuiDissipador"
+    ],
+    "camposObrigatorios": [
+      "tipo",
+      "formato",
+      "interface",
+      "capacidadeGb"
+    ]
+  },
+  "FONTE": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "fontes",
+    "campoEspecificacaoBackend": "especificacaoFonte",
+    "camposEsperados": [
+      "formato",
+      "potenciaWatts",
+      "certificacao",
+      "modularidade",
+      "comprimentoMm",
+      "larguraMm",
+      "alturaMm",
+      "padraoAtx",
+      "eficienciaPercentual",
+      "correnteLinha12vAmperes",
+      "conectoresAtx24Pinos",
+      "conectoresEpsCpu",
+      "conectoresPcie6Pinos",
+      "conectoresPcie8Pinos",
+      "conectores12vhpwr",
+      "conectores12v2x6",
+      "conectoresSata",
+      "conectoresMolex",
+      "protecoes",
+      "tensaoEntrada"
+    ],
+    "camposObrigatorios": [
+      "formato",
+      "potenciaWatts"
+    ]
+  },
+  "GABINETE": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "gabinetes",
+    "campoEspecificacaoBackend": "especificacaoGabinete",
+    "camposEsperados": [
+      "tamanho",
+      "alturaMm",
+      "larguraMm",
+      "profundidadeMm",
+      "formatosPlacaMaeSuportados",
+      "formatosFonteSuportados",
+      "comprimentoMaximoFonteMm",
+      "comprimentoMaximoGpuMm",
+      "alturaMaximaGpuMm",
+      "slotsMaximosGpu",
+      "alturaMaximaCoolerCpuMm",
+      "baias25",
+      "baias35",
+      "slotsTraseiros",
+      "suportaGpuVertical",
+      "espacoGerenciamentoCabosMm",
+      "suportesFans",
+      "suportesRadiador"
+    ],
+    "camposObrigatorios": [
+      "tamanho",
+      "alturaMm",
+      "larguraMm",
+      "profundidadeMm"
+    ]
+  },
+  "COOLER": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "coolers",
+    "campoEspecificacaoBackend": "especificacaoCooler",
+    "camposEsperados": [
+      "tipo",
+      "socketsSuportados",
+      "capacidadeTermicaWatts",
+      "alturaMm",
+      "larguraMm",
+      "profundidadeMm",
+      "alturaLivreRamMm",
+      "tamanhoRadiadorMm",
+      "espessuraRadiadorMm",
+      "quantidadeVentoinhas",
+      "tamanhoVentoinhaMm",
+      "espessuraVentoinhaMm",
+      "comprimentoMangueirasMm",
+      "conectorBomba",
+      "consumoBombaWatts",
+      "consumoWatts",
+      "ruidoDb",
+      "vidaUtilHoras",
+      "pesoGramas",
+      "velocidadeMaxRpm",
+      "rgb",
+      "argb"
+    ],
+    "camposObrigatorios": [
+      "tipo",
+      "socketsSuportados"
+    ]
+  },
+  "VENTOINHA": {
+    "tipoCadastro": "HARDWARE",
+    "categoriaSlugSugerida": "ventoinhas",
+    "campoEspecificacaoBackend": "especificacaoVentoinha",
+    "camposEsperados": [
+      "tamanhoMm",
+      "espessuraMm",
+      "rpmMinima",
+      "rpmMaxima",
+      "fluxoArCfm",
+      "pressaoEstaticaMmH2o",
+      "ruidoDb",
+      "conector",
+      "tensaoVolts",
+      "correnteAmperes",
+      "pwm",
+      "rgb",
+      "argb",
+      "fluxoReverso"
+    ],
+    "camposObrigatorios": [
+      "tamanhoMm",
+      "conector"
+    ]
+  },
+  "MONITOR": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "monitores",
+    "campoEspecificacaoBackend": "especificacaoMonitor",
+    "camposEsperados": [
+      "tamanhoPolegadas",
+      "resolucao",
+      "taxaAtualizacaoHz",
+      "tipoPainel",
+      "tempoRespostaMs",
+      "brilhoNits",
+      "hdr",
+      "adaptiveSync",
+      "gSync",
+      "freeSync",
+      "hdmi",
+      "displayPort",
+      "usbC",
+      "vesa"
+    ],
+    "camposObrigatorios": []
+  },
+  "MOUSE": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "mouses",
+    "campoEspecificacaoBackend": "especificacaoMouse",
+    "camposEsperados": [
+      "sensor",
+      "dpiMaximo",
+      "pollingRateHz",
+      "botoes",
+      "pesoGramas",
+      "conexao",
+      "mao",
+      "bluetooth",
+      "wireless",
+      "cabo",
+      "rgb"
+    ],
+    "camposObrigatorios": []
+  },
+  "TECLADO": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "teclados",
+    "campoEspecificacaoBackend": "especificacaoTeclado",
+    "camposEsperados": [
+      "tipo",
+      "layout",
+      "switch",
+      "tamanho",
+      "abnt2",
+      "conexao",
+      "bluetooth",
+      "wireless",
+      "usb",
+      "rgb",
+      "hotSwap"
+    ],
+    "camposObrigatorios": []
+  },
+  "FONE": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "fones",
+    "campoEspecificacaoBackend": "especificacaoHeadset",
+    "camposEsperados": [
+      "tipoConexao",
+      "wireless",
+      "bluetooth",
+      "driverMm",
+      "microfone",
+      "somSurround",
+      "impedancia",
+      "pesoGramas",
+      "bateriaHoras"
+    ],
+    "camposObrigatorios": []
+  },
+  "HEADSET": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "headsets",
+    "campoEspecificacaoBackend": "especificacaoHeadset",
+    "camposEsperados": [
+      "tipoConexao",
+      "wireless",
+      "bluetooth",
+      "driverMm",
+      "microfone",
+      "somSurround",
+      "impedancia",
+      "pesoGramas",
+      "bateriaHoras"
+    ],
+    "camposObrigatorios": []
+  },
+  "MICROFONE": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "microfones",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "conexao",
+      "padraoPolar",
+      "taxaAmostragemKhz"
+    ],
+    "camposObrigatorios": []
+  },
+  "WEBCAM": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "webcams",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "resolucao",
+      "fps",
+      "conexao",
+      "microfone"
+    ],
+    "camposObrigatorios": []
+  },
+  "CONTROLE": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "controles",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "conexao",
+      "bluetooth",
+      "wireless",
+      "plataformas"
+    ],
+    "camposObrigatorios": []
+  },
+  "CADEIRA": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "cadeiras",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "material",
+      "pesoMaximoKg",
+      "alturaMaximaCm"
+    ],
+    "camposObrigatorios": []
+  },
+  "MESA": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "mesas",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "larguraCm",
+      "profundidadeCm",
+      "alturaCm",
+      "pesoMaximoKg"
+    ],
+    "camposObrigatorios": []
+  },
+  "MOUSEPAD": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "mousepads",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "larguraMm",
+      "alturaMm",
+      "espessuraMm",
+      "rgb"
+    ],
+    "camposObrigatorios": []
+  },
+  "ILUMINACAO": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "iluminacao",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "tipo",
+      "rgb",
+      "argb",
+      "conexao"
+    ],
+    "camposObrigatorios": []
+  },
+  "SUPORTE_MONITOR": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "suportes-monitor",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "quantidadeMonitores",
+      "vesa",
+      "pesoMaximoKg",
+      "tamanhoMaximoPolegadas"
+    ],
+    "camposObrigatorios": []
+  },
+  "ORGANIZADOR_CABOS": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "organizadores-cabos",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [],
+    "camposObrigatorios": []
+  },
+  "ACESSORIO": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "acessorios",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [],
+    "camposObrigatorios": []
+  },
+  "NOTEBOOK": {
+    "tipoCadastro": "NOTEBOOK",
+    "categoriaSlugSugerida": "notebooks",
+    "campoEspecificacaoBackend": "especificacao",
+    "camposEsperados": [
+      "processadorNome",
+      "processadorMarca",
+      "processadorGeracao",
+      "nucleos",
+      "threads",
+      "clockBaseMhz",
+      "clockTurboMhz",
+      "tdpWatts",
+      "gpuNome",
+      "gpuIntegrada",
+      "gpuDedicada",
+      "vramGb",
+      "tgpWatts",
+      "ramInstaladaGb",
+      "tipoMemoria",
+      "frequenciaMhz",
+      "ramSoldadaGb",
+      "slotsRamTotal",
+      "slotsRamLivres",
+      "ramMaximaGb",
+      "upgradeRam",
+      "armazenamentoGb",
+      "tipoArmazenamento",
+      "slotsM2Total",
+      "slotsM2Livres",
+      "upgradeArmazenamento",
+      "tamanhoTelaPolegadas",
+      "resolucaoLargura",
+      "resolucaoAltura",
+      "taxaAtualizacaoHz",
+      "tipoPainel",
+      "brilhoNits",
+      "touch",
+      "bateriaWh",
+      "autonomiaInformadaHoras",
+      "potenciaCarregadorWatts",
+      "pesoKg",
+      "larguraMm",
+      "alturaMm",
+      "profundidadeMm",
+      "wifi",
+      "bluetooth",
+      "usbA",
+      "usbC",
+      "thunderbolt",
+      "hdmi",
+      "displayPort",
+      "ethernet",
+      "leitorCartao",
+      "sistemaOperacional",
+      "webcam",
+      "resolucaoWebcam",
+      "tecladoIluminado",
+      "tecladoNumerico",
+      "leitorDigital"
+    ],
+    "camposObrigatorios": []
+  },
+  "CELULAR": {
+    "tipoCadastro": "PRODUTO",
+    "categoriaSlugSugerida": "celulares",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "processadorNome",
+      "ramGb",
+      "armazenamentoGb",
+      "tamanhoTelaPolegadas",
+      "resolucao",
+      "taxaAtualizacaoHz",
+      "tipoTela",
+      "cameraPrincipalMp",
+      "cameraFrontalMp",
+      "bateriaMah",
+      "carregamentoWatts",
+      "cincoG",
+      "nfc",
+      "dualSim",
+      "esim",
+      "wifi",
+      "bluetooth",
+      "sistemaOperacional",
+      "pesoGramas",
+      "cor",
+      "resistenciaAgua"
+    ],
+    "camposObrigatorios": []
+  },
+  "PC_MONTADO": {
+    "tipoCadastro": "BUILD",
+    "categoriaSlugSugerida": "pcs-montados",
+    "campoEspecificacaoBackend": null,
+    "camposEsperados": [
+      "finalidade",
+      "resolucaoRecomendada",
+      "componentes"
+    ],
+    "camposObrigatorios": []
+  }
+}

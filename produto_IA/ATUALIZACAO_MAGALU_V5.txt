@@ -1,0 +1,24 @@
+CriaByte Produto IA - v5 Magazine Luiza / Magalu
+
+Integração específica adicionada para:
+- magazineluiza.com.br
+- magazinevoce.com.br
+- magalu.com
+
+Fluxo:
+1. recebe uma URL individual;
+2. respeita pausa mínima por host + jitter;
+3. consulta apenas a página informada;
+4. prioriza JSON-LD e estado estruturado da página;
+5. reconhece preço Pix quando explicitamente indicado;
+6. extrai vendedor, seller_id/slug da URL e código /p/{codigo};
+7. coleta descrição/ficha técnica e atributos estruturados;
+8. usa um único Playwright fallback somente se necessário e se --no-browser não estiver ativo;
+9. cacheia o resultado por 10 minutos por padrão;
+10. não faz busca, paginação, crawling ou download de imagens.
+
+Variáveis opcionais:
+MAGAZINE_MIN_DELAY_SECONDS=2.0
+MAGAZINE_JITTER_SECONDS=0.8
+MAGAZINE_MAX_RETRIES=1
+MAGAZINE_CACHE_TTL_SECONDS=600

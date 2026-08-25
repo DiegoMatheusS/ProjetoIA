@@ -7,6 +7,7 @@ from loguru import logger
 
 from ..utils.normalizers import clean_text, first_attr, to_float
 from ..auth.mercadolivre_oauth import refresh_access_token
+from ..utils.rate_limiter import PoliteRateLimiter, JsonDiskCache
 
 
 class MercadoLivreScraper:
@@ -22,6 +23,12 @@ class MercadoLivreScraper:
             "User-Agent": "CriaByte-ProdutoIA/1.0",
         })
         self.api_debug = []
+        self.rate_limiter = PoliteRateLimiter(
+            min_delay=float(os.getenv("ML_MIN_DELAY_SECONDS", "1.0")),
+            jitter=float(os.getenv("ML_JITTER_SECONDS", "0.35")),
+        )
+        self.cache = JsonDiskCache()
+        self.max_retries = max(0, int(os.getenv("HTTP_MAX_RETRIES", "2")))
 
     @staticmethod
     def is_mercadolivre(url: str):
@@ -108,49 +115,101 @@ class MercadoLivreScraper:
             logger.warning(f"Não foi possível renovar o token do Mercado Livre: {exc}")
             return False
 
+    @staticmethod
+    def _cache_ttl(path: str):
+        if path.endswith("/sale_price") or path.endswith("/prices"):
+            return 60
+        if re.search(r"/products/[^/]+/items$", path):
+            return 120
+        if re.search(r"/products/[^/]+$", path):
+            return 3600
+        return 300
+
     def _request_get(self, path: str, params=None, use_auth=True):
         url = f"{self.API_BASE}{path}"
-        try:
-            response = self.session.get(
-                url,
-                params=params,
-                headers=self._headers(use_auth=use_auth),
-                timeout=self.timeout,
-            )
+        namespace = "ml_auth" if use_auth else "ml_public"
+        cached = self.cache.get(
+            url, params=params, namespace=namespace, ttl_seconds=self._cache_ttl(path)
+        )
+        if cached is not None:
+            self.api_debug.append({
+                "endpoint": path,
+                "status": 200,
+                "modo": "CACHE_AUTH" if use_auth else "CACHE_PUBLICO",
+                "detalhe": None,
+            })
+            return cached, None
 
-            if response.status_code == 401 and use_auth and self._refresh_token_if_possible():
+        for attempt in range(self.max_retries + 1):
+            try:
+                self.rate_limiter.wait(url)
                 response = self.session.get(
                     url,
                     params=params,
-                    headers=self._headers(use_auth=True),
+                    headers=self._headers(use_auth=use_auth),
                     timeout=self.timeout,
                 )
 
-            detail = self._safe_error_detail(response)
-            self.api_debug.append({
-                "endpoint": path,
-                "status": response.status_code,
-                "modo": "AUTH" if use_auth else "PUBLICO",
-                "detalhe": detail if response.status_code >= 400 else None,
-            })
+                if response.status_code == 401 and use_auth and self._refresh_token_if_possible():
+                    self.rate_limiter.wait(url)
+                    response = self.session.get(
+                        url,
+                        params=params,
+                        headers=self._headers(use_auth=True),
+                        timeout=self.timeout,
+                    )
 
-            if response.status_code in (401, 403):
-                suffix = f": {detail}" if detail else ""
-                return None, f"{path} -> HTTP {response.status_code}{suffix}"
+                detail = self._safe_error_detail(response)
+                self.api_debug.append({
+                    "endpoint": path,
+                    "status": response.status_code,
+                    "modo": "AUTH" if use_auth else "PUBLICO",
+                    "detalhe": detail if response.status_code >= 400 else None,
+                })
 
-            response.raise_for_status()
-            return response.json(), None
+                if response.status_code == 429:
+                    if attempt < self.max_retries:
+                        retry_after = response.headers.get("Retry-After")
+                        try:
+                            wait_seconds = min(60.0, max(2.0, float(retry_after)))
+                        except (TypeError, ValueError):
+                            wait_seconds = min(20.0, 3.0 * (2 ** attempt))
+                        logger.warning(f"Mercado Livre limitou a requisição; aguardando {wait_seconds:.1f}s.")
+                        import time
+                        time.sleep(wait_seconds)
+                        continue
+                    return None, f"{path} -> HTTP 429: limite de requisições"
 
-        except requests.RequestException as exc:
-            self.api_debug.append({
-                "endpoint": path,
-                "status": None,
-                "modo": "AUTH" if use_auth else "PUBLICO",
-                "detalhe": str(exc)[:300],
-            })
-            return None, f"{path} -> ML_API_ERRO: {exc}"
-        except ValueError:
-            return None, f"{path} -> ML_API_RESPOSTA_NAO_JSON"
+                if response.status_code in (500, 502, 503, 504) and attempt < self.max_retries:
+                    import time
+                    time.sleep(min(12.0, 2.5 * (2 ** attempt)))
+                    continue
+
+                if response.status_code in (401, 403):
+                    suffix = f": {detail}" if detail else ""
+                    return None, f"{path} -> HTTP {response.status_code}{suffix}"
+
+                response.raise_for_status()
+                payload = response.json()
+                self.cache.set(url, payload, params=params, namespace=namespace)
+                return payload, None
+
+            except requests.RequestException as exc:
+                if attempt < self.max_retries:
+                    import time
+                    time.sleep(min(12.0, 2.5 * (2 ** attempt)))
+                    continue
+                self.api_debug.append({
+                    "endpoint": path,
+                    "status": None,
+                    "modo": "AUTH" if use_auth else "PUBLICO",
+                    "detalhe": str(exc)[:300],
+                })
+                return None, f"{path} -> ML_API_ERRO: {exc}"
+            except ValueError:
+                return None, f"{path} -> ML_API_RESPOSTA_NAO_JSON"
+
+        return None, f"{path} -> ML_API_SEM_RESPOSTA"
 
     def _api_get(self, path: str, params=None, allow_public_fallback=False):
         if self.token:
@@ -297,7 +356,7 @@ class MercadoLivreScraper:
         catalog_product_id = ids["catalog_product_id"]
 
         api_errors = []
-        item = sale_price = prices = catalog = None
+        item = sale_price = prices = catalog = catalog_items = catalog_offer = None
 
         # Detalhe do anúncio: primeiro autenticado, depois público se o token
         # não tiver escopo de leitura daquele recurso.
@@ -310,9 +369,14 @@ class MercadoLivreScraper:
             if err:
                 api_errors.append(err)
 
-            if item:
-                # APIs novas de preço são preferidas. Se não houver permissão,
-                # o item/catalog continua útil e o coletor aplica fallbacks seguros.
+            # Evita insistir em endpoints restritos quando /items já foi negado.
+            # É possível forçar a tentativa via ML_TRY_RESTRICTED_PRICE_ENDPOINTS=true,
+            # mas por padrão o coletor segue para o catálogo, reduzindo chamadas.
+            try_restricted_prices = (
+                item is not None
+                or os.getenv("ML_TRY_RESTRICTED_PRICE_ENDPOINTS", "false").lower() == "true"
+            )
+            if try_restricted_prices:
                 sale_price, err = self._api_get(
                     f"/items/{item_id}/sale_price",
                     params={"context": "channel_marketplace"},
@@ -324,6 +388,7 @@ class MercadoLivreScraper:
                 if err:
                     api_errors.append(err)
 
+            if item:
                 catalog_product_id = (
                     clean_text(item.get("catalog_product_id"))
                     or catalog_product_id
@@ -338,7 +403,26 @@ class MercadoLivreScraper:
             if err:
                 api_errors.append(err)
 
-        if item or catalog:
+            # Recurso oficial de competição do catálogo. Ele lista anúncios que
+            # competem nesta PDP e inclui preço/seller/estoque. É especialmente
+            # útil quando /items/{id} é negado por política de acesso.
+            catalog_items, err = self._api_get(
+                f"/products/{catalog_product_id}/items"
+            )
+            if err:
+                api_errors.append(err)
+            elif isinstance(catalog_items, dict):
+                rows = catalog_items.get("results") or []
+                if item_id:
+                    catalog_offer = next(
+                        (
+                            row for row in rows
+                            if clean_text(row.get("item_id")) == item_id
+                        ),
+                        None,
+                    )
+
+        if item or catalog or catalog_offer:
             catalog_attrs = (catalog or {}).get("attributes") or []
             item_attrs = (item or {}).get("attributes") or []
             attrs = self._merge_attributes(catalog_attrs, item_attrs)
@@ -348,8 +432,10 @@ class MercadoLivreScraper:
             image = clean_text(picture.get("secure_url") or picture.get("url"))
 
             price, previous, currency, price_source = self._pick_price(
-                item, sale_price, prices, catalog, item_id
+                item or catalog_offer, sale_price, prices, catalog, item_id
             )
+            if price_source == "ITEM_LEGACY_PRICE" and not item and catalog_offer:
+                price_source = "CATALOG_ITEMS"
 
             winner = self._buy_box(catalog)
             winner_item_id = clean_text(winner.get("item_id"))
@@ -361,12 +447,18 @@ class MercadoLivreScraper:
                 )
             )
 
-            available_quantity = (item or {}).get("available_quantity")
-            item_status = clean_text((item or {}).get("status"))
+            commercial = item or catalog_offer or {}
+            available_quantity = commercial.get("available_quantity")
+            item_status = clean_text(commercial.get("status"))
             if isinstance(available_quantity, (int, float)):
                 available = available_quantity > 0
             elif item_status:
                 available = item_status == "active"
+            elif catalog_offer:
+                # /products/{id}/items lista ofertas que estão competindo na PDP.
+                # Se a oferta exata solicitada aparece nessa lista e não há status
+                # explícito contrário, tratamos como disponível.
+                available = True
             elif winner_matches:
                 available = True
             else:
@@ -388,11 +480,13 @@ class MercadoLivreScraper:
                 "GTIN", "EAN", "UPC", "Código universal de produto"
             ])
 
-            seller_id = (item or {}).get("seller_id")
+            seller_id = (item or catalog_offer or {}).get("seller_id")
             if seller_id is None and winner_matches:
                 seller_id = winner.get("seller_id")
 
-            item_permalink = clean_text((item or {}).get("permalink"))
+            item_permalink = clean_text(
+                (item or catalog_offer or {}).get("permalink")
+            )
             catalog_permalink = clean_text((catalog or {}).get("permalink"))
 
             return {
@@ -419,13 +513,14 @@ class MercadoLivreScraper:
                 "available": available,
                 "seller_id": seller_id,
                 "category_id": clean_text(
-                    (item or {}).get("category_id") or (catalog or {}).get("domain_id")
+                    (item or catalog_offer or {}).get("category_id") or (catalog or {}).get("domain_id")
                 ),
                 "attributes": attrs,
                 "attributes_text": self._attributes_text(attrs),
                 "api_errors": list(dict.fromkeys(api_errors)),
                 "api_debug": self.api_debug,
                 "buy_box_item_id": winner_item_id,
+                "catalog_offer_found": bool(catalog_offer),
             }
 
         if no_browser:
