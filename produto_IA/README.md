@@ -1,83 +1,97 @@
-# Produto IA - CriaByte
+# Produto IA - Python
 
-Coletor de produtos alinhado à `main` do backend CriaByte.
+Coletor de produtos alinhado ao backend CriaByte, com Mercado Livre via API oficial e navegador como fallback.
 
-## Fontes e APIs
+## Instalação no Codespaces
 
-O projeto suporta três modos:
+```bash
+cd /workspaces/ProjetoIA/produto_IA
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install --with-deps chromium
+```
 
-1. lojas/fabricantes via navegador e extratores;
-2. Mercado Livre via API oficial quando `ML_ACCESS_TOKEN` estiver configurado;
-3. Shopee via Shopee Affiliate Open API quando `SHOPEE_AFFILIATE_APP_ID` e `SHOPEE_AFFILIATE_SECRET` estiverem configurados.
+## Teste sem API
 
-Sem credenciais, Mercado Livre e Shopee continuam podendo ser coletados pelo navegador como fallback, quando a página permitir.
+```bash
+python -m src.main "URL_DO_PRODUTO"
+```
 
-A URL fornecida pelo usuário nunca é substituída como `urlOriginal`. No caso da Shopee, quando a API devolver `offerLink`, ele aparece separado como `marketplace.affiliateUrl`.
+Mercado Livre pode redirecionar o navegador para verificação. Para evitar isso, configure a API oficial.
 
-## Mercado Livre
+## Mercado Livre - criar e autorizar a aplicação
 
-A API usa o item ID encontrado na URL e consulta:
+### 1. Descobrir Redirect URI do Codespaces
 
-- `/items/{ITEM_ID}?include_attributes=all`
-- `/items/{ITEM_ID}/prices`
-- `/items/{ITEM_ID}/sale_price?context=channel_marketplace`
+```bash
+python -m src.auth.mercadolivre_oauth codespace-uri
+```
 
-O resultado da API é usado para preço, preço anterior quando disponível, imagem, título, identificadores e atributos técnicos. O scraper continua sendo fallback.
+Copie a URL exibida e use exatamente essa URL como Redirect URI no DevCenter do Mercado Livre.
 
-Configure:
+### 2. Configure o `.env`
+
+Mantenha suas variáveis atuais e adicione:
 
 ```text
-ML_ACCESS_TOKEN=...
+ML_CLIENT_ID=SEU_CLIENT_ID
+ML_CLIENT_SECRET=SEU_CLIENT_SECRET
+ML_REDIRECT_URI=URL_HTTPS_EXATA_CADASTRADA_NO_MERCADO_LIVRE
+ML_USE_PKCE=false
 ```
 
-## Shopee
+Nunca envie o Client Secret, Access Token ou Refresh Token para o GitHub.
 
-A integração usa a Shopee Affiliate Open API GraphQL e `productOfferV2`, quando as credenciais de afiliado estiverem disponíveis.
-
-Configure:
-
-```text
-SHOPEE_AFFILIATE_APP_ID=...
-SHOPEE_AFFILIATE_SECRET=...
-```
-
-A API pode retornar, entre outros:
-
-- nome;
-- link do produto;
-- link de afiliado;
-- imagem;
-- preço mínimo/máximo;
-- desconto;
-- vendas;
-- avaliação;
-- comissão.
-
-## Instalação
+### 3. Inicie o callback no Codespaces
 
 ```bash
-npm install
-npx playwright install --with-deps chromium
+python -m src.auth.ml_callback_server
 ```
 
-## Uso
+A porta usada é `8765`. No painel **Ports** do Codespaces, deixe a porta acessível no navegador enquanto fizer a autorização.
+
+### 4. Em outro terminal, gere a URL de autorização
 
 ```bash
-npm start -- "https://site.com/produto"
+python -m src.auth.mercadolivre_oauth auth-url
 ```
 
-Categoria forçada, se necessário:
+Abra a URL exibida no navegador, faça login com a conta principal do Mercado Livre e autorize. O callback troca o `code` pelo token e grava `ML_ACCESS_TOKEN` e `ML_REFRESH_TOKEN` no `.env`.
+
+### 5. Confirme
 
 ```bash
-npm start -- "https://site.com/produto" TECLADO
+python -m src.auth.mercadolivre_oauth status
+python -m src.auth.mercadolivre_oauth whoami
+```
+
+O comando `whoami` não mostra token nem secret.
+
+### 6. Teste o produto
+
+```bash
+python -m src.main "URL_DO_MERCADO_LIVRE" --no-browser
+```
+
+Procure no JSON:
+
+```json
+"apiUsada": true
+```
+
+## Renovação de token
+
+O projeto tenta renovar automaticamente um access token expirado quando `ML_REFRESH_TOKEN`, `ML_CLIENT_ID` e `ML_CLIENT_SECRET` estão configurados. O novo refresh token é salvo no `.env`, porque o Mercado Livre invalida o anterior após uso.
+
+Também é possível renovar manualmente:
+
+```bash
+python -m src.auth.mercadolivre_oauth refresh
 ```
 
 ## Segurança
 
-Nunca coloque `ML_ACCESS_TOKEN`, `SHOPEE_AFFILIATE_APP_ID` ou `SHOPEE_AFFILIATE_SECRET` no Git. Use Secrets/Environment Variables do Codespaces.
-
-## Precisão
-
-O coletor não deve preencher um campo técnico apenas porque uma palavra apareceu na página. Ele prioriza ficha técnica e dados estruturados. Quando a API oficial fornece atributos, eles entram como fonte adicional de evidência.
-
-A IA local ainda não é usada. Ela será adicionada depois como interpretador de casos difíceis, sempre limitada ao schema real do backend.
+- `.env` está no `.gitignore`.
+- O ZIP de atualização não contém seu `.env`.
+- Não envie Client Secret, Access Token ou Refresh Token em chat, commit ou screenshot.

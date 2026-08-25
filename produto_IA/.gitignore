@@ -1,24 +1,20 @@
 # Python
 __pycache__/
 *.py[cod]
-*.so
-.Python
-env/
+.venv/
 venv/
+
+# Segredos
 .env
-.venv
+
+# Dados gerados
+data/raw/*
+!data/raw/.gitkeep
+*.log
 
 # IDE
 .vscode/
 .idea/
 
-# Dados
-data/raw/
-*.log
-
-# Cache
-.pytest_cache/
-
-# Node.js
-node_modules/
-package-lock.json
+# OAuth temporário
+.ml_oauth_pending.json
