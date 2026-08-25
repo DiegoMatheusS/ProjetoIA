@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
-from .scrapers.generic_scraper import GenericScraper
 from .extractors.category import detect_category
 from .extractors.backend_schemas import SCHEMAS, REQUIRED
 from .extractors.ml_specs import extract_specs
@@ -127,6 +126,7 @@ def main():
             no_browser=args.no_browser,
         )
     else:
+        from .scrapers.generic_scraper import GenericScraper
         raw = GenericScraper().collect(args.url)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)

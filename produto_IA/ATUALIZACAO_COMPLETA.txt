@@ -1,0 +1,19 @@
+PRODUTO IA - PACOTE COMPLETO RESTAURADO
+
+Este ZIP contém a estrutura completa do projeto Python:
+- src/auth
+- src/utils
+- src/extractors
+- src/scrapers
+- tests
+- config
+- data/raw
+- requirements.txt
+- README.md
+
+Também contém as correções atuais do Mercado Livre.
+
+IMPORTANTE:
+- O arquivo .env NÃO está incluído.
+- Guarde seu .env atual antes de substituir a pasta.
+- node_modules não está incluído e não deve ser usado neste projeto Python.

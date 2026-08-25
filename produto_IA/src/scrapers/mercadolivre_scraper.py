@@ -5,7 +5,6 @@ from urllib.parse import urlparse, parse_qs, unquote
 import requests
 from loguru import logger
 
-from .generic_scraper import GenericScraper
 from ..utils.normalizers import clean_text, first_attr, to_float
 from ..auth.mercadolivre_oauth import refresh_access_token
 
@@ -16,7 +15,6 @@ class MercadoLivreScraper:
     def __init__(self):
         self.token = clean_text(os.getenv("ML_ACCESS_TOKEN"))
         self.timeout = int(os.getenv("TIMEOUT", "20"))
-        self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
@@ -451,8 +449,22 @@ class MercadoLivreScraper:
                 ),
             }
 
-        logger.warning("API do Mercado Livre indisponível; usando navegador como fallback.")
-        browser_result = self.generic.collect(url)
+        logger.warning("API do Mercado Livre indisponível; usando coletor genérico como fallback.")
+        try:
+            from .generic_scraper import GenericScraper
+            browser_result = GenericScraper().collect(url)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "source": "MERCADO_LIVRE",
+                "api_used": bool(self.token),
+                "url_original": url,
+                "item_id": item_id,
+                "catalog_product_id": catalog_product_id,
+                "api_errors": api_errors,
+                "api_debug": self.api_debug,
+                "error": f"FALLBACK_GENERICO_INDISPONIVEL: {exc}",
+            }
         browser_result.update({
             "source": "MERCADO_LIVRE_BROWSER",
             "api_used": False,
