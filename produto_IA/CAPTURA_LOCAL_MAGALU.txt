@@ -2,7 +2,6 @@ MODO NAVEGADOR LOCAL — MAGAZINE LUIZA / MAGALU
 
 Por que existe:
 O GitHub Codespaces pode receber HTTP 403 do Magalu mesmo quando a página abre
-
 normalmente no navegador do seu computador. Este modo NÃO tenta contornar o
 bloqueio do Codespaces. Ele captura a página pelo seu próprio Chrome local e
 entrega somente HTML/texto ao Produto IA para processamento.
