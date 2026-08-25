@@ -112,6 +112,7 @@ class MagazineScraper:
         patterns = [
             r"Vendido\s+por\s+(.+?)\s+e\s+entregue\s+por",
             r"Vendido\s+e\s+entregue\s+por\s+(.+?)(?:\n|$)",
+            r"Vendido\s+por\s+(.+?)(?=\s+R\$|\s+Adicionar|\s+Comprar|\n|$)",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, flags=re.I | re.S)
@@ -331,6 +332,76 @@ class MagazineScraper:
                     continue
         return None, last_error
 
+    @staticmethod
+    def _is_access_error_page(title: str | None, text: str | None):
+        sample = " ".join(filter(None, [clean_text(title), clean_text(text)]))[:5000].casefold()
+        terms = (
+            "não é possível acessar a página",
+            "nao e possivel acessar a pagina",
+            "não foi possível acessar a página",
+            "this site can't be reached",
+            "this site can’t be reached",
+            "access denied",
+            "403 forbidden",
+            "erro de privacidade",
+            "err_connection_",
+            "err_timed_out",
+        )
+        return any(term in sample for term in terms)
+
+    def collect_from_local_capture(self, url: str, capture: dict):
+        """Processa uma captura feita no navegador LOCAL do usuário.
+
+        A captura contém apenas HTML/texto/URL/título da página. O arquivo não
+        precisa nem deve conter cookies, tokens ou dados do perfil do navegador.
+        """
+        if not isinstance(capture, dict):
+            return {
+                "ok": False,
+                "source": "MAGALU_NAVEGADOR_LOCAL",
+                "api_used": False,
+                "url_original": url,
+                "url_final": url,
+                "marketplace_product_code": self.product_code_from_url(url),
+                "seller_slug": self.seller_slug_from_url(url),
+                "local_capture": True,
+                "error": "MAGALU_CAPTURA_LOCAL_INVALIDA",
+            }
+
+        final_url = clean_text(capture.get("final_url")) or url
+        html = capture.get("html") or ""
+        text = capture.get("text") or ""
+        title = capture.get("title") or ""
+
+        if capture.get("blocked") or capture.get("error") or self._is_access_error_page(title, text):
+            return {
+                "ok": False,
+                "source": "MAGALU_NAVEGADOR_LOCAL",
+                "api_used": False,
+                "url_original": url,
+                "url_final": final_url,
+                "marketplace_product_code": self.product_code_from_url(final_url) or self.product_code_from_url(url),
+                "seller_slug": self.seller_slug_from_url(final_url) or self.seller_slug_from_url(url),
+                "local_capture": True,
+                "blocked": True,
+                "error": clean_text(capture.get("error")) or "MAGALU_CAPTURA_LOCAL_SEM_ACESSO_A_PAGINA",
+            }
+
+        result = self._parse_magazine_html(
+            url,
+            final_url,
+            html,
+            body_text=text,
+            source="MAGALU_NAVEGADOR_LOCAL",
+        )
+        result["local_capture"] = True
+        result["cache_hit"] = False
+        if not result.get("title") or self._is_access_error_page(result.get("title"), text):
+            result["ok"] = False
+            result["blocked"] = True
+            result["error"] = "MAGALU_CAPTURA_LOCAL_SEM_DADOS_DE_PRODUTO"
+        return result
+
     def collect(self, url, no_browser=False):
         cached = self.cache.get(
             url,
@@ -369,14 +440,30 @@ class MagazineScraper:
             browser = BrowserScraper().fetch(url)
             if browser.get("error"):
                 raise RuntimeError(browser["error"])
+            title = browser.get("title") or ""
+            body_text = browser.get("text") or ""
+            blocked = bool(browser.get("blocked")) or self._is_access_error_page(title, body_text)
+            if blocked:
+                return {
+                    "ok": False,
+                    "source": "MAGALU_NAVEGADOR",
+                    "api_used": False,
+                    "url_original": url,
+                    "url_final": browser.get("final_url") or url,
+                    "marketplace_product_code": self.product_code_from_url(url),
+                    "seller_slug": self.seller_slug_from_url(url),
+                    "cache_hit": False,
+                    "blocked": True,
+                    "error": "MAGALU_ACESSO_BLOQUEADO_NO_AMBIENTE",
+                }
             result = self._parse_magazine_html(
                 url,
                 browser.get("final_url") or url,
                 browser.get("html") or "",
-                body_text=browser.get("text") or "",
+                body_text=body_text,
                 source="MAGALU_NAVEGADOR",
             )
-            result["blocked"] = bool(browser.get("blocked"))
+            result["blocked"] = False
             result["cache_hit"] = False
             if result.get("title"):
                 self.cache.set(url, result, namespace="magalu_result_v1")

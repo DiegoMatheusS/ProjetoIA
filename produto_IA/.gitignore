@@ -26,3 +26,7 @@ data/raw/*
 
 # Cache HTTP local
 .cache/
+
+# Capturas locais temporárias
+magalu_capture.json
+data/local/*.json

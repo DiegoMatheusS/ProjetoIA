@@ -34,10 +34,19 @@ class BrowserScraper:
                 title = page.title()
                 html = page.content()
                 body_text = page.locator("body").inner_text(timeout=5000)
+                sample = f"{title}\n{body_text[:5000]}".casefold()
                 blocked = (
                     "account-verification" in final_url.lower()
-                    or "verificação" in body_text.lower()[:5000]
-                    or "verificacao" in body_text.lower()[:5000]
+                    or "verificação" in sample
+                    or "verificacao" in sample
+                    or "não é possível acessar a página" in sample
+                    or "nao e possivel acessar a pagina" in sample
+                    or "this site can't be reached" in sample
+                    or "this site can’t be reached" in sample
+                    or "access denied" in sample
+                    or "403 forbidden" in sample
+                    or "err_connection_" in sample
+                    or "err_timed_out" in sample
                 )
                 return {
                     "html": html,

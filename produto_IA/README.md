@@ -117,3 +117,22 @@ Nunca versione `.env`, Client Secret, Access Token ou Refresh Token.
 pip install -r requirements-dev.txt
 pytest -q
 ```
+
+## Magalu bloqueado no Codespaces — captura pelo navegador local
+
+Se o Magalu retornar `403` no Codespaces, não tente contornar o bloqueio. Faça a
+captura pelo Chrome do seu próprio computador:
+
+```bash
+python -m src.local_browser_capture "URL_DO_MAGALU" --output magalu_capture.json
+```
+
+Quando a página carregar, pressione ENTER no terminal. Depois envie o arquivo
+`magalu_capture.json` para o Codespaces e processe:
+
+```bash
+python -m src.main "URL_DO_MAGALU" --local-capture magalu_capture.json
+```
+
+O arquivo guarda HTML/texto/URL/título da página, sem cookies ou senhas. Veja
+`CAPTURA_LOCAL_MAGALU.txt` para o passo a passo no Windows.

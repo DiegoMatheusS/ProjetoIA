@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -93,6 +94,7 @@ def build_result(raw, forced_category=None):
         "origemColeta": {
             **site,
             "fonte": raw.get("source"),
+            "capturaLocal": bool(raw.get("local_capture")),
         },
         "politicaColeta": {
             "modo": "URL_INDIVIDUAL",
@@ -101,6 +103,7 @@ def build_result(raw, forced_category=None):
             "retriesLimitados": True,
             "cacheAtivo": True,
             "cacheUsadoNestaExecucao": bool(raw.get("cache_hit")),
+            "capturaLocalImportada": bool(raw.get("local_capture")),
         },
         "marketplace": {
             "plataforma": (
@@ -144,12 +147,54 @@ def main():
         action="store_true",
         help="Não usar navegador como fallback",
     )
+    parser.add_argument(
+        "--local-capture",
+        help="JSON capturado no navegador local (ex.: magalu_capture.json)",
+    )
     args = parser.parse_args()
 
     logger.remove()
     logger.add(sys.stderr, level="INFO")
 
-    if MercadoLivreScraper.is_mercadolivre(args.url):
+    if args.local_capture:
+        capture_path = Path(args.local_capture)
+        try:
+            capture_data = json.loads(capture_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            parser.error(f"Arquivo de captura não encontrado: {capture_path}")
+        except json.JSONDecodeError as exc:
+            parser.error(f"JSON de captura inválido: {exc}")
+
+        captured_original = capture_data.get("original_url")
+        if captured_original and captured_original != args.url:
+            logger.warning("A URL informada difere da URL original da captura; será mantida a URL do comando como referência.")
+
+        if MagazineScraper.is_magazine(args.url):
+            raw = MagazineScraper().collect_from_local_capture(args.url, capture_data)
+        else:
+            from .scrapers.generic_scraper import GenericScraper
+            generic = GenericScraper()
+            if capture_data.get("blocked") or capture_data.get("error"):
+                raw = {
+                    "ok": False,
+                    "source": "NAVEGADOR_LOCAL",
+                    "api_used": False,
+                    "url_original": args.url,
+                    "url_final": capture_data.get("final_url") or args.url,
+                    "local_capture": True,
+                    "blocked": bool(capture_data.get("blocked")),
+                    "error": capture_data.get("error") or "CAPTURA_LOCAL_INVALIDA",
+                }
+            else:
+                raw = generic._parse_html(
+                    args.url,
+                    capture_data.get("final_url") or args.url,
+                    capture_data.get("html") or "",
+                    source="NAVEGADOR_LOCAL",
+                    blocked=False,
+                )
+                raw["local_capture"] = True
+    elif MercadoLivreScraper.is_mercadolivre(args.url):
         raw = MercadoLivreScraper().collect(
             args.url,
             no_browser=args.no_browser,

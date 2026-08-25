@@ -97,3 +97,74 @@ def test_magazine_does_not_use_installment_total_as_previous_price():
     raw = MagazineScraper()._parse_magazine_html(MAGALU_URL, MAGALU_URL, html)
     assert raw["price"] == 349.90
     assert raw["previous_price"] is None
+
+
+def test_magazine_rejects_browser_error_page():
+    scraper = MagazineScraper()
+    assert scraper._is_access_error_page(
+        "Não é possível acessar a página",
+        "ERR_CONNECTION_RESET",
+    ) is True
+
+
+def test_magazine_local_capture_parser():
+    html = r'''
+    <html><head>
+      <script type="application/ld+json">{
+        "@context":"https://schema.org",
+        "@type":"Product",
+        "name":"Processador AMD Ryzen 5 7600, AM5",
+        "brand":{"@type":"Brand","name":"AMD"},
+        "model":"Ryzen 5 7600",
+        "mpn":"100-100001015BOX",
+        "image":"https://a-static.mlcdn.com.br/ryzen.jpg",
+        "offers":{"@type":"Offer","price":"1299.90","priceCurrency":"BRL","availability":"https://schema.org/InStock"}
+      }</script>
+    </head><body>
+      <h1>Processador AMD Ryzen 5 7600, AM5</h1>
+      <div>Vendido por KaBuM! e entregue por Magalu</div>
+      <div>R$ 1.249,90 no Pix</div>
+      <button>Adicionar à sacola</button>
+      <h2>Descrição e ficha técnica</h2>
+      <div>Socket: AM5</div>
+      <div>Número de núcleos: 6</div>
+      <div>Número de threads: 12</div>
+      <div>Tipo de memória RAM: DDR5</div>
+    </body></html>
+    '''
+    capture = {
+        "original_url": MAGALU_URL,
+        "final_url": MAGALU_URL,
+        "title": "Processador AMD Ryzen 5 7600, AM5",
+        "html": html,
+        "text": "Processador AMD Ryzen 5 7600 AM5 Vendido por KaBuM! R$ 1.249,90 no Pix Adicionar à sacola",
+        "blocked": False,
+        "error": None,
+    }
+    raw = MagazineScraper().collect_from_local_capture(MAGALU_URL, capture)
+    assert raw["ok"] is True
+    assert raw["source"] == "MAGALU_NAVEGADOR_LOCAL"
+    assert raw["local_capture"] is True
+    assert raw["price"] == 1249.90
+    assert raw["seller_name"] == "KaBuM!"
+
+    result = build_result(raw)
+    assert result["origemColeta"]["capturaLocal"] is True
+    assert result["politicaColeta"]["capturaLocalImportada"] is True
+    assert result["categoriaDetectada"] == "PROCESSADOR"
+
+
+def test_magazine_local_capture_rejects_blocked_page():
+    capture = {
+        "original_url": MAGALU_URL,
+        "final_url": MAGALU_URL,
+        "title": "Não é possível acessar a página",
+        "html": "<html><body>ERR_CONNECTION_RESET</body></html>",
+        "text": "Não é possível acessar a página ERR_CONNECTION_RESET",
+        "blocked": True,
+        "error": "CAPTURA_LOCAL_SEM_ACESSO_A_PAGINA",
+    }
+    raw = MagazineScraper().collect_from_local_capture(MAGALU_URL, capture)
+    assert raw["ok"] is False
+    assert raw["blocked"] is True
+    assert raw["error"] == "CAPTURA_LOCAL_SEM_ACESSO_A_PAGINA"

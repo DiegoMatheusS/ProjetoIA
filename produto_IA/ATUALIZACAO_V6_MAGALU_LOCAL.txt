@@ -1,0 +1,14 @@
+Produto IA CriaByte v6 — Magalu com navegador local
+
+Principais mudanças:
+- captura Magalu pelo Chrome LOCAL do usuário quando Codespaces recebe 403;
+- novo módulo: python -m src.local_browser_capture;
+- importação da captura: --local-capture;
+- captura não guarda cookies, senhas ou tokens;
+- bloqueios como "Não é possível acessar a página" viram erro explícito;
+- uma captura corresponde a uma única URL;
+- sem crawling/paginação automática;
+- mantém parsing técnico e comercial do CriaByte;
+- 24 testes aprovados.
+
+Veja CAPTURA_LOCAL_MAGALU.txt.
