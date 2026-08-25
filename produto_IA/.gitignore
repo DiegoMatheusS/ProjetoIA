@@ -1,8 +1,14 @@
+add .
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Node legado
+node_modules/
+npm-debug.log*
+package-lock.json
 
 # Segredos
 .env

@@ -1,1 +1,0 @@
-"""Autenticação OAuth de marketplaces."""
