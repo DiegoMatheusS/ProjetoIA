@@ -33,7 +33,7 @@ class MagazineScraper:
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
         # Namespace versionado para nunca reaproveitar capturas de páginas de
         # verificação que versões antigas tenham salvo como se fossem produto.
-        self.cache_namespace = "magalu_result_v14_5"
+        self.cache_namespace = "magalu_result_v14_6"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({

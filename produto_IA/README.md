@@ -1,8 +1,8 @@
 # Produto IA — CriaByte (Python)
 
-## Atualização v14.5
+## Atualização v14.6
 
-A v14.5 adiciona fallback de coleta para ambientes de nuvem: detecta páginas de verificação do Magalu/Magazine Você, tenta Chromium/Playwright e, quando aplicável, a página pública equivalente do Magazine Luiza. Se todos os caminhos estiverem bloqueados, retorna erro estruturado sem inventar dados de produto. O cache de Magalu foi versionado para descartar capturas inválidas antigas.
+A v14.6 adiciona fallback de coleta para ambientes de nuvem: detecta páginas de verificação do Magalu/Magazine Você, tenta Chromium/Playwright e, quando aplicável, a página pública equivalente do Magazine Luiza. Se todos os caminhos estiverem bloqueados, retorna erro estruturado sem inventar dados de produto. O cache de Magalu foi versionado para descartar capturas inválidas antigas.
 
 A v14.2 reforça a normalização do Magalu com casos reais de PC montado, CPU, GPU e placa-mãe: PC Gamer completo tem prioridade sobre componentes internos, marca confirmada no título vence atributo genérico conflitante, GPU separa modelo comercial de MPN e nomes comerciais com espaços não são promovidos a MPN automaticamente.
 
@@ -442,3 +442,10 @@ A v14 aceita Oferta que tenha somente `urlOriginal`. `urlAfiliada` é fallback e
 **104 testes automatizados aprovados.**
 
 A v14 continua incluindo todos os recursos da v11, v12 e v13. Para atualizar o projeto, use diretamente a versão mais nova; não é necessário aplicar as versões anteriores em sequência.
+
+## v14.6 - fallback de captura local
+
+Quando a coleta cloud do Magalu retornar `MAGALU_COLETA_BLOQUEADA`, o serviço
+pode receber uma captura feita no Chrome do ADMIN via `POST /analisar-captura`.
+A captura local resolve apenas o acesso à página; toda a normalização continua
+centralizada na Produto IA da Railway.
