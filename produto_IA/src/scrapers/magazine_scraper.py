@@ -2,7 +2,7 @@ import json
 import os
 import re
 import time
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -33,7 +33,7 @@ class MagazineScraper:
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
         # Namespace versionado para nunca reaproveitar capturas de páginas de
         # verificação que versões antigas tenham salvo como se fossem produto.
-        self.cache_namespace = "magalu_result_v14_4"
+        self.cache_namespace = "magalu_result_v14_5"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
@@ -871,6 +871,49 @@ class MagazineScraper:
         ))
 
     @classmethod
+    def _magazineluiza_candidate_urls(cls, url: str):
+        """Gera URLs públicas alternativas do mesmo produto no ecossistema Magalu.
+
+        A ordem prioriza a página oficial desktop e depois variações sem
+        ``seller_id`` e no domínio móvel. Nenhuma delas resolve CAPTCHA; são
+        apenas URLs públicas do mesmo código de produto que podem ter políticas
+        de entrega/cache diferentes na borda.
+        """
+        base = cls._magazineluiza_equivalent_url(url)
+        if not base:
+            return []
+
+        result = []
+        seen = set()
+
+        def add(mode: str, candidate: str):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                result.append((mode, candidate))
+
+        add("MAGAZINELUIZA", base)
+
+        parsed = urlparse(base)
+        query_without_seller = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.casefold() != "seller_id"
+        ]
+        no_seller = urlunparse(parsed._replace(query=urlencode(query_without_seller, doseq=True)))
+        add("MAGAZINELUIZA_SEM_SELLER", no_seller)
+
+        mobile = urlunparse(parsed._replace(netloc="m.magazineluiza.com.br"))
+        add("MAGAZINELUIZA_MOBILE", mobile)
+
+        mobile_parsed = urlparse(mobile)
+        mobile_no_seller = urlunparse(
+            mobile_parsed._replace(query=urlencode(query_without_seller, doseq=True))
+        )
+        add("MAGAZINELUIZA_MOBILE_SEM_SELLER", mobile_no_seller)
+
+        return result
+
+    @classmethod
     def _response_is_product_page(cls, requested_url: str, final_url: str, html: str):
         soup = BeautifulSoup(html or "", "html.parser")
         title = clean_text(soup.title.get_text(" ", strip=True)) if soup.title else ""
@@ -1088,17 +1131,30 @@ class MagazineScraper:
                 self.cache.set(url, result, namespace=self.cache_namespace)
                 return result
 
-        # 3) Para Magazine Você, tenta a página pública equivalente do
-        # Magazine Luiza para o MESMO código de produto. É uma fonte oficial
-        # alternativa, não uma técnica para contornar CAPTCHA.
-        alternative_url = self._magazineluiza_equivalent_url(url)
-        if alternative_url and alternative_url != url:
+        # 3) Para Magazine Você, tenta páginas públicas equivalentes do
+        # Magazine Luiza para o MESMO código de produto. Primeiro HTTP nas
+        # variações desktop/móvel e com/sem seller_id; depois navegador.
+        # Isso não resolve CAPTCHA: apenas tenta endpoints públicos oficiais
+        # equivalentes que podem ter comportamento diferente na borda.
+        alternative_candidates = self._magazineluiza_candidate_urls(url)
+
+        for mode, alternative_url in alternative_candidates:
+            http_source = (
+                "MAGALU_URL_ALTERNATIVA_HTTP"
+                if mode == "MAGAZINELUIZA"
+                else f"MAGALU_URL_ALTERNATIVA_HTTP_{mode}"
+            )
             result, error, blocked = self._try_http_product(
                 url,
                 alternative_url,
-                "MAGALU_URL_ALTERNATIVA_HTTP",
+                http_source,
             )
-            attempts.append({"modo": "HTTP_MAGAZINELUIZA", "url": alternative_url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+            attempts.append({
+                "modo": f"HTTP_{mode}",
+                "url": alternative_url,
+                "bloqueado": blocked,
+                "erro": clean_text(str(error)) if error else None,
+            })
             any_blocked = any_blocked or blocked
             last_error = error or last_error
             if self._cacheable_result(result):
@@ -1107,16 +1163,27 @@ class MagazineScraper:
                 self.cache.set(url, result, namespace=self.cache_namespace)
                 return result
 
-            if not no_browser:
+        if not no_browser:
+            for mode, alternative_url in alternative_candidates:
                 try:
+                    browser_source = (
+                        "MAGALU_URL_ALTERNATIVA_NAVEGADOR"
+                        if mode == "MAGAZINELUIZA"
+                        else f"MAGALU_URL_ALTERNATIVA_NAVEGADOR_{mode}"
+                    )
                     result, error, blocked = self._try_browser_product(
                         url,
                         alternative_url,
-                        "MAGALU_URL_ALTERNATIVA_NAVEGADOR",
+                        browser_source,
                     )
                 except Exception as exc:
                     result, error, blocked = None, str(exc), False
-                attempts.append({"modo": "NAVEGADOR_MAGAZINELUIZA", "url": alternative_url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+                attempts.append({
+                    "modo": f"NAVEGADOR_{mode}",
+                    "url": alternative_url,
+                    "bloqueado": blocked,
+                    "erro": clean_text(str(error)) if error else None,
+                })
                 any_blocked = any_blocked or blocked
                 last_error = error or last_error
                 if self._cacheable_result(result):

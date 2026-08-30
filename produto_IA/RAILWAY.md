@@ -1,4 +1,4 @@
-# Produto IA v14.4 - Railway
+# Produto IA v14.5 - Railway
 
 ## Deploy
 
@@ -56,7 +56,7 @@ O backend deve chamar `POST ${PRODUTO_IA_URL}/analisar`.
 
 ## Coleta Magalu / Magazine Você na nuvem
 
-A v14.4 usa, nesta ordem:
+A v14.5 usa, nesta ordem:
 
 1. HTTP da URL original.
 2. Chromium/Playwright da URL original.
@@ -65,4 +65,9 @@ A v14.4 usa, nesta ordem:
 
 Se o site devolver uma página de verificação (`az-request-verify`) em todos os caminhos, a API retorna `MAGALU_COLETA_BLOQUEADA` e **não transforma o texto da verificação em produto**. O backend deve manter a confirmação desabilitada nesse caso.
 
-O cache foi versionado na v14.4, portanto respostas incorretas de verificação salvas pela v14.3 não são reaproveitadas.
+O cache foi versionado na v14.5, portanto respostas incorretas de verificação salvas pela v14.3 não são reaproveitadas.
+
+
+## Fallback adicional v14.5
+
+Para links Magazine Você bloqueados, além da página desktop do Magazine Luiza, a v14.5 tenta a mesma página sem `seller_id` e no domínio público móvel `m.magazineluiza.com.br`. Essas variações usam o mesmo código de produto. Se todas forem bloqueadas, a API continua retornando `MAGALU_COLETA_BLOQUEADA` sem criar dados falsos.

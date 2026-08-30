@@ -1,0 +1,8 @@
+CRIABYTE - PRODUTO IA V14.5 - FALLBACKS PUBLICOS MAGALU
+
+- Mantem deteccao de CAPTCHA/verificacao da v14.4.
+- Adiciona tentativas na pagina oficial Magazine Luiza sem seller_id.
+- Adiciona tentativas no dominio publico movel m.magazineluiza.com.br.
+- Testa HTTP primeiro e Chromium depois para cada URL alternativa.
+- Nao transforma pagina de bloqueio em produto.
+- Cache Magalu versionado para v14.5.
