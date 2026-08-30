@@ -62,6 +62,46 @@ class MagazineScraper:
         values = parse_qs(urlparse(url or "").query).get("seller_id") or []
         return clean_text(values[0]) if values else None
 
+    @classmethod
+    def is_product_url(cls, url: str):
+        """Aceita somente URL individual de produto do ecossistema Magalu."""
+        return bool(cls.is_magazine(url) and cls.product_code_from_url(url))
+
+    @staticmethod
+    def _gtin_check_digit_ok(value: str):
+        digits = re.sub(r"\D", "", value or "")
+        if len(digits) not in (8, 12, 13, 14):
+            return False
+        body = digits[:-1]
+        check = int(digits[-1])
+        total = 0
+        # Regra GS1: da direita para a esquerda, pesos 3 e 1 alternados.
+        for idx, ch in enumerate(reversed(body)):
+            total += int(ch) * (3 if idx % 2 == 0 else 1)
+        expected = (10 - (total % 10)) % 10
+        return expected == check
+
+    @classmethod
+    def _normalize_gtin(cls, value):
+        if value is None:
+            return None
+        digits = re.sub(r"\D", "", str(value))
+        return digits if cls._gtin_check_digit_ok(digits) else None
+
+    @classmethod
+    def _gtin_from_attributes(cls, attributes, fallback=None):
+        by_name = cls._attribute_lookup(attributes)
+        keys = (
+            "gtin", "ean", "ean/gtin", "gtin/ean", "código de barras",
+            "codigo de barras", "código ean", "codigo ean", "ean 13", "ean13",
+        )
+        for key in keys:
+            value = by_name.get(key)
+            normalized = cls._normalize_gtin(value)
+            if normalized:
+                return normalized
+        return cls._normalize_gtin(fallback)
+
     @staticmethod
     def _money(value):
         if value is None:
@@ -79,7 +119,6 @@ class MagazineScraper:
         patterns = [
             r"R\$\s*([0-9.]+,[0-9]{2})\s*(?:\n|\s){0,30}no\s+Pix",
             r"(?:pre[cç]o\s+no\s+pix|pix)\s*[:\-]?\s*R\$\s*([0-9.]+,[0-9]{2})",
-            r"Pre[cç]o\s+R\$\s*([0-9.]+,[0-9]{2})",
         ]
         for pattern in patterns:
             matches = re.findall(pattern, text, flags=re.I)
@@ -89,6 +128,22 @@ class MagazineScraper:
                 values = [v for v in values if v is not None and v > 0]
                 if values:
                     return values[0]
+        return None
+
+    @classmethod
+    def _regular_price_from_text(cls, text: str):
+        """Preço à vista/normal explícito, sem confundir parcelas com preço."""
+        if not text:
+            return None
+        patterns = [
+            r"(?:pre[cç]o|por)\s*[:\-]?\s*R\$\s*([0-9.]+,[0-9]{2})(?!\s*(?:em|x|\/))",
+            r"(?:à\s+vista|a\s+vista)\s*[:\-]?\s*R\$\s*([0-9.]+,[0-9]{2})",
+        ]
+        for pattern in patterns:
+            for match in re.findall(pattern, text, flags=re.I):
+                value = cls._money(match)
+                if value is not None and value > 0:
+                    return value
         return None
 
     @classmethod
@@ -121,6 +176,221 @@ class MagazineScraper:
                 if value and len(value) <= 120:
                     return value
         return None
+
+    @staticmethod
+    def _seller_from_html(soup):
+        # Magazine Você/Magalu pode representar o nome do seller apenas por
+        # logo/alt, então o texto visível fica literalmente "Vendido por".
+        selectors = (
+            '[data-testid="seller-modal-content"] [data-testid="main-title"]',
+            '[data-testid="seller-icon"][alt]',
+            '[data-testid="mod-sellerdetails"] img[alt]',
+        )
+        for selector in selectors:
+            node = soup.select_one(selector)
+            if not node:
+                continue
+            value = clean_text(node.get("alt") or node.get_text(" ", strip=True))
+            if value and value.casefold() not in {"vendido por", "entregue por", "magalu"}:
+                return value
+        return None
+
+    @classmethod
+    def _original_price_from_html(cls, soup, current_price=None):
+        # O próprio DOM do Magalu usa data-testid=price-original para o preço
+        # riscado/de referência. Só aceitamos se for maior que o preço atual.
+        node = soup.select_one('[data-testid="price-original"]')
+        value = cls._money(node.get_text(" ", strip=True)) if node else None
+        if value is not None and (current_price is None or value > current_price):
+            return value
+        return None
+
+    @classmethod
+    def _structured_product_prices(cls, objects):
+        """Lê bestPrice/fullPrice apenas do objeto de produto embutido na página."""
+        found = []
+
+        def walk(value):
+            if isinstance(value, list):
+                for item in value:
+                    walk(item)
+                return
+            if not isinstance(value, dict):
+                return
+            price = value.get("price")
+            if isinstance(price, dict) and any(k in price for k in ("bestPrice", "fullPrice", "price")):
+                best = cls._money(price.get("bestPrice"))
+                full = cls._money(price.get("fullPrice"))
+                regular = cls._money(price.get("price"))
+                found.append((best, full, regular))
+            for child in value.values():
+                if isinstance(child, (dict, list)):
+                    walk(child)
+
+        for obj in objects or []:
+            walk(obj)
+        for best, full, regular in found:
+            current = best or full or regular
+            previous_candidates = [v for v in (full, regular) if v is not None and current is not None and v > current]
+            previous = max(previous_candidates) if previous_candidates else None
+            if current is not None:
+                return current, previous
+        return None, None
+
+    @staticmethod
+    def _attribute_lookup(attributes):
+        return {
+            clean_text(row.get("name")).casefold(): clean_text(row.get("value_name"))
+            for row in attributes or []
+            if clean_text(row.get("name")) and clean_text(row.get("value_name"))
+        }
+
+    @staticmethod
+    def _looks_like_part_number(value):
+        value = clean_text(value)
+        if not value or len(value) < 5:
+            return False
+        # Conservador: MPNs costumam misturar letras/dígitos e/ou hífens.
+        return bool(
+            re.search(r"[A-Za-z]", value) and re.search(r"\d", value)
+            and (
+                "-" in value
+                or "/" in value
+                or (len(value) >= 8 and not re.search(r"\s", value))
+            )
+        )
+
+    @classmethod
+    def _refine_identity(cls, generic, attributes):
+        by_name = cls._attribute_lookup(attributes)
+        title = clean_text(generic.get("title")) or ""
+        generic_brand = clean_text(generic.get("brand"))
+        labeled_brand = by_name.get("marca") or by_name.get("manufacturer")
+        # Se a marca genérica aparece explicitamente no título, ela é evidência
+        # mais forte que um atributo conflitante da ficha (ex.: placa-mãe
+        # Gigabyte cuja ficha do Magalu traz "Marca: AMD" por causa da plataforma).
+        # Se o JSON-LD trouxer algo genérico/concatenado que não aparece no título,
+        # o campo rotulado continua prevalecendo (ex.: "AMD PCYES" -> "AMD").
+        if generic_brand and generic_brand.casefold() in title.casefold():
+            brand = generic_brand
+        else:
+            brand = labeled_brand or generic_brand
+        model = generic.get("model")
+        mpn = generic.get("mpn")
+
+        visible_model = by_name.get("modelo")
+        processor_number = by_name.get("número do processador") or by_name.get("numero do processador")
+
+        characteristics = by_name.get("características") or by_name.get("caracteristicas") or ""
+        embedded_part_number = None
+        match = re.search(r"(?:Part\s*Number|P/N|MPN)\s*:\s*([^|;]+)", characteristics, re.I)
+        if match:
+            embedded_part_number = clean_text(match.group(1))
+
+        # Alguns parceiros publicam em Características algo como
+        # "Modelo: 306-7ZP6B22-809", enquanto o campo Modelo visível traz o
+        # nome comercial (MAG A600DN). Se esse código também aparece no título,
+        # tratamos como identificador de fabricante, sem adivinhação externa.
+        embedded_model_code = None
+        match = re.search(r"(?:^|\|)\s*Modelo\s*:\s*([^|;]+)", characteristics, re.I)
+        if match:
+            candidate = clean_text(match.group(1))
+            if candidate and candidate != visible_model and candidate in title and cls._looks_like_part_number(candidate):
+                embedded_model_code = candidate
+
+        reference = by_name.get("referência") or by_name.get("referencia")
+        labeled_mpn = (
+            by_name.get("mpn")
+            or by_name.get("part number")
+            or by_name.get("part number do fabricante")
+            or by_name.get("código do fabricante")
+            or by_name.get("codigo do fabricante")
+        )
+
+        # Campos explicitamente rotulados como MPN/Part Number podem ser aceitos
+        # diretamente. Já "Referência" é ambíguo no Magalu: em muitos anúncios
+        # repete apenas o modelo comercial (ex.: B550M AORUS ELITE). Por isso,
+        # Referência só vira MPN quando tiver formato forte de part number.
+        if labeled_mpn:
+            mpn = labeled_mpn
+        elif reference and cls._looks_like_part_number(reference):
+            mpn = reference
+        elif embedded_part_number and cls._looks_like_part_number(embedded_part_number):
+            mpn = embedded_part_number
+        elif embedded_model_code:
+            mpn = embedded_model_code
+
+        if processor_number:
+            model = processor_number
+            if not mpn and cls._looks_like_part_number(visible_model):
+                mpn = visible_model
+        else:
+            # O campo Modelo da ficha pode ser mais específico que o JSON-LD.
+            # Ex.: ASUS DUAL-RTX5060TI-O8G + referência 90YV0MP2-M0NA00.
+            # Quando o Modelo é distinto do MPN, ele representa a identidade
+            # comercial do produto e deve ser preservado.
+            if visible_model and clean_text(visible_model) != clean_text(mpn):
+                model = visible_model
+            elif not model:
+                model = visible_model or by_name.get("model") or by_name.get("model name")
+
+        if not mpn and cls._looks_like_part_number(visible_model) and visible_model in title:
+            mpn = visible_model
+
+        # Alguns anúncios não têm campo Modelo, mas o título termina com um
+        # código comercial explícito (ex.: "- M711", "- AM8"). Isso é
+        # suficiente para modelo, mas NÃO para afirmar MPN.
+        if not model and title:
+            match = re.search(r"\s-\s([A-Z0-9][A-Z0-9._/+() -]{1,35})$", title, re.I)
+            if match:
+                candidate = clean_text(match.group(1))
+                if candidate and len(candidate) <= 40 and re.search(r"[A-Za-z]", candidate) and re.search(r"\d", candidate):
+                    model = candidate
+
+        # Em processadores, alguns sellers colocam o MPN no campo "Modelo".
+        # Quando o nome comercial está explícito no título, preservamos ambos:
+        # modelo comercial em `modelo` e part number em `mpn`.
+        if title and (not model or (mpn and clean_text(model) == clean_text(mpn))):
+            commercial = None
+            m = re.search(r"\bRyzen\s+[3579]\s+([0-9]{4}[A-Z0-9]+)\b", title, re.I)
+            if m:
+                commercial = m.group(1).upper()
+            if not commercial:
+                m = re.search(r"\bCore\s+(i[3579][ -]?[0-9]{4,5}[A-Z0-9]*)\b", title, re.I)
+                if m:
+                    commercial = re.sub(r"\s+", "", m.group(1))
+            if not commercial:
+                m = re.search(r"\bCore\s+Ultra\s+[3579]\s+([0-9]{3}[A-Z0-9]*)\b", title, re.I)
+                if m:
+                    commercial = m.group(1).upper()
+            if commercial:
+                model = commercial
+
+        # Em GPUs, chip e modelo do fabricante são conceitos diferentes.
+        # Ex.: GPU = RTX 5060 Ti, Modelo = DUAL-RTX5060TI-O8G. Quando o seller
+        # só fornece o part number no campo Modelo, usamos Linha + chip para
+        # evitar que placas distintas do mesmo chip virem o mesmo produto.
+        if title and (not model or (mpn and clean_text(model) == clean_text(mpn))):
+            commercial_gpu = None
+            m = re.search(r"\b(RX\s*[0-9]{4}\s*(?:XTX|XT|GRE)?)\b", title, re.I)
+            if m:
+                commercial_gpu = re.sub(r"\s+", " ", m.group(1)).upper()
+            if not commercial_gpu:
+                m = re.search(r"\b((?:RTX|GTX)\s*[0-9]{3,4}(?:\s*(?:TI|SUPER))?)\b", title, re.I)
+                if m:
+                    commercial_gpu = re.sub(r"\s+", " ", m.group(1)).upper()
+            if commercial_gpu:
+                line = by_name.get("linha") or by_name.get("line")
+                model = clean_text(f"{line} {commercial_gpu}") if line else commercial_gpu
+
+        # Para outros produtos cujo campo Modelo é apenas o mesmo part number,
+        # uma Linha explícita pode ser identidade comercial melhor.
+        if mpn and clean_text(model) == clean_text(mpn):
+            line = by_name.get("linha") or by_name.get("line")
+            if line:
+                model = line
+
+        return clean_text(brand), clean_text(model), clean_text(mpn)
 
     @staticmethod
     def _description_section(text: str):
@@ -243,6 +513,154 @@ class MagazineScraper:
                 })
         return result[:350]
 
+    @staticmethod
+    def _is_product_attribute(name: str):
+        """Mantém somente informações sobre o produto em si."""
+        key = clean_text(name).casefold()
+        if not key:
+            return False
+        blocked = (
+            "vendido por", "vendedor", "seller", "entregue por", "entrega",
+            "frete", "prazo", "cep", "parcel", "pagamento", "cartão", "cartao",
+            "pix", "total", "preço", "preco", "sacola",
+        )
+        return not any(term in key for term in blocked)
+
+    @classmethod
+    def _product_attributes_only(cls, attributes, brand=None, model=None, mpn=None):
+        result = []
+        seen = set()
+        brand_key = clean_text(brand).casefold() if clean_text(brand) else None
+        model_key = clean_text(model).casefold() if clean_text(model) else None
+        mpn_key = clean_text(mpn).casefold() if clean_text(mpn) else None
+
+        for row in attributes or []:
+            name = clean_text(row.get("name"))
+            value = clean_text(row.get("value_name"))
+            if not name or not value or not cls._is_product_attribute(name):
+                continue
+
+            name_key = name.casefold()
+            value_key = value.casefold()
+
+            # Não manter na ficha "limpa" uma marca que contradiz a identidade
+            # confirmada pelo título/JSON-LD. Isso evita casos como placa-mãe
+            # Gigabyte cuja ficha traz "Marca: AMD" por causa da plataforma.
+            if name_key in {"marca", "manufacturer"} and brand_key and value_key != brand_key:
+                continue
+
+            # Alguns sellers usam "Modelo" para o próprio part number. Se a
+            # normalização já separou Modelo e MPN, não repetir o MPN como modelo.
+            if name_key in {"modelo", "model"} and mpn_key and value_key == mpn_key and model_key != mpn_key:
+                name = "MPN"
+                name_key = "mpn"
+
+            key = (name_key, value_key)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append({"nome": name, "valor": value})
+        return result
+
+    @staticmethod
+    def _selected_variants(soup):
+        """Captura apenas opções explicitamente marcadas como selecionadas."""
+        result = []
+        seen = set()
+
+        def add(name, value):
+            name = clean_text(name) or "variante"
+            value = clean_text(value)
+            if not value or len(value) > 160:
+                return
+            key = (name.casefold(), value.casefold())
+            if key in seen:
+                return
+            seen.add(key)
+            result.append({"nome": name, "valor": value})
+
+        for select in soup.select("select")[:30]:
+            selected = select.select_one("option[selected]")
+            if not selected:
+                continue
+            label = select.get("aria-label") or select.get("name") or select.get("id") or "variante"
+            add(label, selected.get_text(" ", strip=True) or selected.get("value"))
+
+        for node in soup.select('[aria-selected="true"], [aria-checked="true"]')[:60]:
+            value = node.get("aria-label") or node.get("title") or node.get_text(" ", strip=True)
+            label = node.get("data-testid") or node.get("name") or "variante"
+            add(label, value)
+
+        for inp in soup.select('input[type="radio"][checked]')[:30]:
+            value = inp.get("aria-label") or inp.get("value")
+            label = inp.get("name") or "variante"
+            if inp.get("id"):
+                lab = soup.select_one(f'label[for="{inp.get("id")}"]')
+                if lab:
+                    value = lab.get_text(" ", strip=True) or value
+            add(label, value)
+
+        return result[:20]
+
+    @staticmethod
+    def _kit_combo_info(title: str, attributes=None):
+        text = clean_text(title) or ""
+        low = text.casefold()
+        is_kit = bool(re.search(r"\b(?:kit|combo|conjunto)\b", low))
+        quantity = None
+        patterns = [
+            r"\bkit\s+(?:com|de)\s+(\d+)\b",
+            r"\b(\d+)\s*x\s*(?:8|16|24|32|48|64)\s*gb\b",
+            r"\b(\d+)\s*(?:fans?|ventoinhas?)\b",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, low, re.I)
+            if m:
+                quantity = int(m.group(1))
+                is_kit = True
+                break
+
+        components = []
+        component_terms = (
+            ("TECLADO", r"\bteclado\b"),
+            ("MOUSE", r"\bmouse\b"),
+            ("VENTOINHA", r"\b(?:fan|ventoinha)"),
+            ("MEMORIA_RAM", r"\b(?:mem[oó]ria\s+ram|ddr[345])\b"),
+        )
+        for category, pattern in component_terms:
+            if re.search(pattern, low, re.I):
+                components.append(category)
+        if len(components) > 1:
+            is_kit = True
+        return {"ehKitCombo": is_kit, "quantidadeDetectada": quantity, "componentesDetectados": components}
+
+    @staticmethod
+    def _image_variant_key(url: str):
+        return re.sub(r"/\d+x\d+/", "/{size}/", clean_text(url) or "", count=1)
+
+    @classmethod
+    def _best_product_image(cls, soup, html: str, fallback=None):
+        """Prefere a maior variante realmente presente da imagem principal."""
+        og = soup.select_one('meta[property="og:image"]')
+        og_url = clean_text(og.get("content")) if og else clean_text(fallback)
+        if not og_url:
+            return clean_text(fallback)
+        target_key = cls._image_variant_key(og_url)
+        candidates = [og_url]
+        pattern = r"https://[^\"'<>\s]+\.(?:jpe?g|png|webp)"
+        for url in re.findall(pattern, html or "", flags=re.I):
+            url = url.replace("&amp;", "&")
+            if cls._image_variant_key(url) == target_key:
+                candidates.append(url)
+
+        def score(url):
+            match = re.search(r"/(\d+)x(\d+)/", url)
+            if not match:
+                return 0
+            return int(match.group(1)) * int(match.group(2))
+
+        return max(dict.fromkeys(candidates), key=score)
+
     def _parse_magazine_html(self, url, final_url, html, body_text=None, source="MAGALU_PAGINA"):
         generic = self.generic._parse_html(url, final_url, html, source=source)
         soup = BeautifulSoup(html, "html.parser")
@@ -251,18 +669,34 @@ class MagazineScraper:
         structured = self._structured_pairs(objects)
 
         attributes = self._merge_attributes(generic.get("attributes"), structured)
+        attributes = [
+            row for row in attributes
+            if not re.search(
+                r"^(?:\(Produto \+ Frete\)|\d{2}x\s+de\s+R\$|Numero de parcelas|Total$)",
+                clean_text(row.get("name")) or "",
+                re.I,
+            )
+        ]
         attributes_text = "\n".join(
             f"{row['name']}: {row['value_name']}" for row in attributes
         )
+        brand, model, mpn = self._refine_identity(generic, attributes)
+        gtin = self._gtin_from_attributes(attributes, generic.get("gtin"))
 
         pix_price = self._pix_price_from_text(text)
-        previous = self._explicit_previous_price(text)
-        seller_name = self._seller_from_text(text)
+        regular_text_price = self._regular_price_from_text(text)
+        structured_price, structured_previous = self._structured_product_prices(objects)
         product_code = self.product_code_from_url(final_url or url)
-        seller_slug = self.seller_slug_from_url(final_url or url) or self.seller_slug_from_url(url)
+        product_attributes = self._product_attributes_only(attributes, brand=brand, model=model, mpn=mpn)
+        best_image = self._best_product_image(soup, html, generic.get("image_url"))
+        selected_variants = self._selected_variants(soup)
+        kit_combo = self._kit_combo_info(generic.get("title") or "", attributes)
 
         page_description = self._description_section(text)
         description = generic.get("description")
+        if description and re.search(r"<[^>]+>", description):
+            description = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+            description = clean_text(description)
         if page_description:
             if description and page_description.casefold() not in description.casefold():
                 description = clean_text(f"{description} {page_description}")
@@ -276,15 +710,31 @@ class MagazineScraper:
         elif any(term in text_low for term in ("adicionar à sacola", "adicionar a sacola", "comprar agora")):
             available = True
 
-        price = pix_price if pix_price is not None else generic.get("price")
-        price_source = "MAGALU_PIX" if pix_price is not None else generic.get("price_source")
+        if pix_price is not None:
+            price = pix_price
+            price_source = "MAGALU_PIX"
+        elif structured_price is not None:
+            price = structured_price
+            price_source = "MAGALU_ESTRUTURADO"
+        elif generic.get("price") is not None:
+            price = generic.get("price")
+            price_source = generic.get("price_source")
+        else:
+            price = regular_text_price
+            price_source = "MAGALU_TEXTO_PRECO" if regular_text_price is not None else None
 
-        # Não tratar o preço parcelado como "preço anterior". Só aceitamos preço
-        # anterior quando há rótulo explícito ou dado estruturado já confiável.
+        # Não tratar parcelamento como preço anterior. Preferimos o elemento
+        # explicitamente marcado pelo Magalu como price-original; depois, rótulos
+        # textuais explícitos e JSON-LD highPrice.
+        previous = self._original_price_from_html(soup, current_price=price)
+        if previous is None:
+            previous = self._explicit_previous_price(text)
+        if previous is None:
+            previous = structured_previous
         if previous is None:
             previous = generic.get("previous_price")
-            if previous is not None and price is not None and previous <= price:
-                previous = None
+        if previous is not None and price is not None and previous <= price:
+            previous = None
 
         result = dict(generic)
         result.update({
@@ -292,14 +742,20 @@ class MagazineScraper:
             "source": source,
             "url_original": url,
             "url_final": final_url,
+            "brand": brand,
+            "model": model,
+            "mpn": mpn,
+            "gtin": gtin,
+            "image_url": best_image,
             "description": description,
             "price": price,
             "previous_price": previous,
             "price_source": price_source,
             "available": available,
-            "seller_name": seller_name,
-            "seller_slug": seller_slug,
             "marketplace_product_code": product_code,
+            "product_attributes": product_attributes,
+            "selected_variants": selected_variants,
+            "kit_combo": kit_combo,
             "attributes": attributes,
             "attributes_text": attributes_text,
             "error": None if generic.get("title") else "MAGALU_SEM_DADOS_DE_PRODUTO",
@@ -332,6 +788,24 @@ class MagazineScraper:
                     continue
         return None, last_error
 
+    @classmethod
+    def _capture_has_product_evidence(cls, url: str, html: str, title: str = "", text: str = ""):
+        if not cls.is_product_url(url):
+            return False
+        html = html or ""
+        title = clean_text(title) or ""
+        text = clean_text(text) or ""
+        if len(html.strip()) < 80:
+            return False
+        soup = BeautifulSoup(html, "html.parser")
+        has_product_json = bool(GenericScraper._product_json_ld(soup))
+        has_h1 = bool(clean_text(soup.select_one("h1").get_text(" ", strip=True)) if soup.select_one("h1") else None)
+        has_title = bool(title and len(title) >= 6)
+        has_product_signal = bool(
+            re.search(r"(?:adicionar\s+[àa]\s+sacola|comprar\s+agora|produto\s+indispon[ií]vel|avise-me\s+quando\s+chegar)", text, re.I)
+        )
+        return has_product_json or (has_h1 and (has_title or has_product_signal))
+
     @staticmethod
     def _is_access_error_page(title: str | None, text: str | None):
         sample = " ".join(filter(None, [clean_text(title), clean_text(text)]))[:5000].casefold()
@@ -363,7 +837,6 @@ class MagazineScraper:
                 "url_original": url,
                 "url_final": url,
                 "marketplace_product_code": self.product_code_from_url(url),
-                "seller_slug": self.seller_slug_from_url(url),
                 "local_capture": True,
                 "error": "MAGALU_CAPTURA_LOCAL_INVALIDA",
             }
@@ -373,6 +846,19 @@ class MagazineScraper:
         text = capture.get("text") or ""
         title = capture.get("title") or ""
 
+        if not self.is_product_url(final_url) and not self.is_product_url(url):
+            return {
+                "ok": False,
+                "source": "MAGALU_NAVEGADOR_LOCAL",
+                "api_used": False,
+                "url_original": url,
+                "url_final": final_url,
+                "marketplace_product_code": None,
+                "local_capture": True,
+                "blocked": False,
+                "error": "MAGALU_URL_NAO_E_PAGINA_DE_PRODUTO",
+            }
+
         if capture.get("blocked") or capture.get("error") or self._is_access_error_page(title, text):
             return {
                 "ok": False,
@@ -381,10 +867,22 @@ class MagazineScraper:
                 "url_original": url,
                 "url_final": final_url,
                 "marketplace_product_code": self.product_code_from_url(final_url) or self.product_code_from_url(url),
-                "seller_slug": self.seller_slug_from_url(final_url) or self.seller_slug_from_url(url),
                 "local_capture": True,
                 "blocked": True,
                 "error": clean_text(capture.get("error")) or "MAGALU_CAPTURA_LOCAL_SEM_ACESSO_A_PAGINA",
+            }
+
+        if not self._capture_has_product_evidence(final_url if self.is_product_url(final_url) else url, html, title, text):
+            return {
+                "ok": False,
+                "source": "MAGALU_NAVEGADOR_LOCAL",
+                "api_used": False,
+                "url_original": url,
+                "url_final": final_url,
+                "marketplace_product_code": self.product_code_from_url(final_url) or self.product_code_from_url(url),
+                "local_capture": True,
+                "blocked": False,
+                "error": "MAGALU_CAPTURA_LOCAL_INCOMPLETA",
             }
 
         result = self._parse_magazine_html(
@@ -398,14 +896,26 @@ class MagazineScraper:
         result["cache_hit"] = False
         if not result.get("title") or self._is_access_error_page(result.get("title"), text):
             result["ok"] = False
-            result["blocked"] = True
+            result["blocked"] = bool(self._is_access_error_page(result.get("title"), text))
             result["error"] = "MAGALU_CAPTURA_LOCAL_SEM_DADOS_DE_PRODUTO"
         return result
 
     def collect(self, url, no_browser=False):
+        if not self.is_product_url(url):
+            return {
+                "ok": False,
+                "source": "MAGALU_VALIDACAO_URL",
+                "api_used": False,
+                "url_original": url,
+                "url_final": url,
+                "marketplace_product_code": None,
+                "cache_hit": False,
+                "error": "MAGALU_URL_NAO_E_PAGINA_DE_PRODUTO",
+            }
+
         cached = self.cache.get(
             url,
-            namespace="magalu_result_v1",
+            namespace="magalu_result_v12",
             ttl_seconds=self.cache_ttl,
         )
         if isinstance(cached, dict):
@@ -414,11 +924,23 @@ class MagazineScraper:
             return cached
 
         response, error = self._http_get(url)
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        if status_code in (404, 410):
+            return {
+                "ok": False,
+                "source": "MAGALU_HTTP",
+                "api_used": False,
+                "url_original": url,
+                "url_final": url,
+                "marketplace_product_code": self.product_code_from_url(url),
+                "cache_hit": False,
+                "error": "MAGALU_URL_404" if status_code == 404 else "MAGALU_PRODUTO_REMOVIDO",
+            }
         if response is not None:
             result = self._parse_magazine_html(url, response.url, response.text)
             if result.get("title"):
                 result["cache_hit"] = False
-                self.cache.set(url, result, namespace="magalu_result_v1")
+                self.cache.set(url, result, namespace="magalu_result_v12")
                 return result
 
         if no_browser:
@@ -429,7 +951,6 @@ class MagazineScraper:
                 "url_original": url,
                 "url_final": url,
                 "marketplace_product_code": self.product_code_from_url(url),
-                "seller_slug": self.seller_slug_from_url(url),
                 "cache_hit": False,
                 "error": f"MAGALU_ERRO_HTTP: {error}" if error else "MAGALU_SEM_DADOS_DE_PRODUTO",
             }
@@ -451,8 +972,7 @@ class MagazineScraper:
                     "url_original": url,
                     "url_final": browser.get("final_url") or url,
                     "marketplace_product_code": self.product_code_from_url(url),
-                    "seller_slug": self.seller_slug_from_url(url),
-                    "cache_hit": False,
+                        "cache_hit": False,
                     "blocked": True,
                     "error": "MAGALU_ACESSO_BLOQUEADO_NO_AMBIENTE",
                 }
@@ -466,7 +986,7 @@ class MagazineScraper:
             result["blocked"] = False
             result["cache_hit"] = False
             if result.get("title"):
-                self.cache.set(url, result, namespace="magalu_result_v1")
+                self.cache.set(url, result, namespace="magalu_result_v12")
             return result
         except Exception as exc:
             return {
@@ -476,7 +996,6 @@ class MagazineScraper:
                 "url_original": url,
                 "url_final": url,
                 "marketplace_product_code": self.product_code_from_url(url),
-                "seller_slug": self.seller_slug_from_url(url),
                 "cache_hit": False,
                 "error": f"MAGALU_ERRO_FALLBACK_NAVEGADOR: {exc}",
             }

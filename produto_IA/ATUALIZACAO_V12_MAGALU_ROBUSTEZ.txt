@@ -1,0 +1,87 @@
+Produto IA / CriaByte — v12
+
+VERSÃO CUMULATIVA
+Use diretamente a v12. Ela contém tudo o que existia na v11.
+
+FOCO DA V12
+Robustez da busca/captura do Magazine Você/Magalu para uso real com uma URL por vez.
+
+IMPLEMENTADO
+1. Produto indisponível/esgotado
+   - detecta disponivel=false por evidência explícita da página
+   - não cria preço quando a página não fornece preço
+
+2. Produto sem promoção
+   - mantém precoAnterior=null quando não existe preço anterior explícito
+
+3. Múltiplos preços
+   - separa Pix, preço normal/estruturado, preço anterior e parcelamento
+   - parcelamento não vira precoAnterior
+
+4. Produto sem MPN
+   - SKU, código Magalu e código do produto não viram MPN automaticamente
+
+5. EAN/GTIN
+   - lê GTIN/EAN da ficha técnica quando presente
+   - valida comprimentos GTIN-8/UPC-12/EAN-13/GTIN-14
+   - valida dígito verificador GS1
+   - código inválido fica vazio
+
+6. Variantes
+   - captura opções explicitamente marcadas como selecionadas no HTML
+   - não adivinha variante sem marcação explícita
+
+7. Kit/combo
+   - sinaliza kit/combo
+   - detecta quantidade quando explícita
+   - identifica componentes conhecidos quando aparecem claramente no título
+
+8. Categoria errada na loja
+   - classificação continua priorizando o produto/título, não a categoria comercial do Magalu
+
+9. Título x ficha técnica
+   - título claro continua prioritário
+   - quando o título é ambíguo, ficha técnica/atributos entram como fallback
+
+10. Ficha incompleta
+   - campos ausentes continuam ausentes
+   - nenhuma especificação é completada por conhecimento geral
+
+11. Página de busca/listagem
+   - rejeita antes de coletar
+   - erro: MAGALU_URL_NAO_E_PAGINA_DE_PRODUTO
+
+12. URL 404/410
+   - erro controlado
+   - 404: MAGALU_URL_404
+   - 410: MAGALU_PRODUTO_REMOVIDO
+
+13. Captura local incompleta
+   - valida se há HTML e evidência suficiente de produto
+   - erro: MAGALU_CAPTURA_LOCAL_INCOMPLETA
+
+14. Produto fora das categorias do CriaByte
+   - não cria tipoCadastro de Hardware
+   - erro: PRODUTO_FORA_DAS_CATEGORIAS_CRIABYTE
+
+15. Mesmo produto com nomes diferentes
+   - saída inclui analiseProduto.chavesComparacao
+   - chaves: GTIN, marca+MPN e marca+modelo
+   - isso prepara a futura consulta/deduplicação no banco do CriaByte
+
+NOVOS CAMPOS DE DIAGNÓSTICO
+analiseProduto.variantesSelecionadas
+analiseProduto.kitCombo
+analiseProduto.chavesComparacao
+analiseProduto.categoriaSuportada
+
+REGRA ABSOLUTA MANTIDA
+Nunca inventar especificação ausente na fonte.
+
+ESCOPO MANTIDO
+1 URL por execução. Não foi implementado lote nesta versão.
+
+TESTES
+74 testes automatizados aprovados:
+- 59 testes existentes da v11
+- 15 novos testes de robustez da v12

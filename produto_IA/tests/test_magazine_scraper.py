@@ -60,8 +60,8 @@ def test_magazine_product_page_parser():
     assert raw["price"] == 1268.22
     assert raw["price_source"] == "MAGALU_PIX"
     assert raw["available"] is True
-    assert raw["seller_name"] == "KaBuM!"
-    assert raw["seller_slug"] == "kabum"
+    assert "seller_name" not in raw
+    assert "seller_slug" not in raw
     assert raw["marketplace_product_code"] == "jhk3d95a72"
     assert any(a["name"] == "Socket" and a["value_name"] == "AM5" for a in raw["attributes"])
 
@@ -70,7 +70,9 @@ def test_magazine_product_page_parser():
     assert result["origemColeta"]["plataforma"] == "MAGALU"
     assert result["origemColeta"]["modoIntegracao"] == "EXTRATOR_ESPECIFICO"
     assert result["ofertaColetada"]["preco"] == 1268.22
-    assert result["ofertaColetada"]["vendedorMarketplace"] == "KaBuM!"
+    assert "vendedorMarketplace" not in result["ofertaColetada"]
+    assert "vendedorMarketplaceSlug" not in result["ofertaColetada"]
+    assert "vendedorId" not in result["ofertaColetada"]
     specs = result["payloadParcialBackend"]["especificacaoProcessador"]
     assert specs["socket"] == "AM5"
     assert specs["nucleos"] == 6
@@ -146,7 +148,7 @@ def test_magazine_local_capture_parser():
     assert raw["source"] == "MAGALU_NAVEGADOR_LOCAL"
     assert raw["local_capture"] is True
     assert raw["price"] == 1249.90
-    assert raw["seller_name"] == "KaBuM!"
+    assert "seller_name" not in raw
 
     result = build_result(raw)
     assert result["origemColeta"]["capturaLocal"] is True
@@ -168,3 +170,45 @@ def test_magazine_local_capture_rejects_blocked_page():
     assert raw["ok"] is False
     assert raw["blocked"] is True
     assert raw["error"] == "CAPTURA_LOCAL_SEM_ACESSO_A_PAGINA"
+
+
+def test_magazine_keeps_only_product_information_and_best_image():
+    html = r'''<html><head>
+      <meta property="og:title" content="Processador AMD Ryzen 7 7800X3D, AM5, 8 Núcleos - 100-100000910WOF">
+      <meta property="og:image" content="https://a-static.mlcdn.com.br/470x352/produto/kabum/1/foto.jpeg">
+      <link rel="preload" as="image" href="https://a-static.mlcdn.com.br/1500x1500/produto/kabum/1/foto.jpeg">
+      <script type="application/ld+json">{
+        "@type":"Product","name":"Processador AMD Ryzen 7 7800X3D, AM5, 8 Núcleos - 100-100000910WOF",
+        "brand":{"name":"AMD"}
+      }</script>
+      <script id="__NEXT_DATA__" type="application/json">{
+        "props":{"pageProps":{"product":{"technicalSpecifications":[
+          {"name":"Marca","value":"AMD"},
+          {"name":"Modelo","value":"100-100000910WOF"},
+          {"name":"Número do Processador","value":"7800X3D"},
+          {"name":"Tipo de Memória","value":"DDR5"},
+          {"name":"Garantia","value":"3 Anos"},
+          {"name":"Cor","value":"Preto"},
+          {"name":"Vendido por","value":"KaBuM!"},
+          {"name":"Frete","value":"Grátis"}
+        ]}}}
+      }</script>
+    </head><body>
+      <h1>Processador AMD Ryzen 7 7800X3D, AM5, 8 Núcleos - 100-100000910WOF</h1>
+      <div>Vendido por KaBuM! e entregue por Magalu</div>
+      <div>R$ 2.163,75 no Pix</div><button>COMPRAR AGORA</button>
+    </body></html>'''
+    raw = MagazineScraper()._parse_magazine_html(MAGALU_URL, MAGALU_URL, html)
+    assert raw["image_url"] == "https://a-static.mlcdn.com.br/1500x1500/produto/kabum/1/foto.jpeg"
+    assert raw["model"] == "7800X3D"
+    assert raw["mpn"] == "100-100000910WOF"
+    assert "seller_name" not in raw
+    names = {row["nome"] for row in raw["product_attributes"]}
+    assert "Marca" in names
+    assert "Garantia" in names
+    assert "Cor" in names
+    assert "Vendido por" not in names
+    assert "Frete" not in names
+    result = build_result(raw)
+    assert "vendedorMarketplace" not in result["ofertaColetada"]
+    assert any(x["nome"] == "Garantia" for x in result["informacoesProdutoEncontradas"])

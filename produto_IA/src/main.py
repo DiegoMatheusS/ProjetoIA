@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,7 +27,26 @@ def build_result(raw, forced_category=None):
         raw.get("attributes_text"),
     ]))
 
-    category = detect_category(text, forced_category)
+    # v12: classificação em camadas. Uma categoria técnica explicitamente
+    # rotulada como "Tipo de produto" pode corrigir um título ambíguo/conflitante.
+    # Categoria/breadcrumb comercial da loja não é usada para sobrescrever o produto.
+    category = detect_category(raw.get("title") or "", forced_category)
+    if not forced_category:
+        explicit_type = None
+        for row in raw.get("attributes") or []:
+            label = str(row.get("name") or "").strip().casefold()
+            if label in {"tipo de produto", "tipo do produto", "product type"}:
+                explicit_type = detect_category(str(row.get("value_name") or ""))
+                if explicit_type:
+                    break
+        if explicit_type:
+            category = explicit_type
+    if not category:
+        # Fallback técnico: usa a ficha/atributos, sem depender da categoria
+        # comercial da loja. Só depois usa descrição como último recurso.
+        category = detect_category(raw.get("attributes_text") or "", forced_category)
+    if not category and (raw.get("attributes") or []):
+        category = detect_category(text, forced_category)
     specs = extract_specs(
         category,
         raw.get("attributes") or [],
@@ -70,6 +90,20 @@ def build_result(raw, forced_category=None):
 
     site = detect_site(raw.get("url_original") or "")
 
+    brand_key = (raw.get("brand") or "").strip().casefold() or None
+    model_key = (raw.get("model") or "").strip().casefold() or None
+    mpn_key = (raw.get("mpn") or "").strip().casefold() or None
+    gtin_key = (raw.get("gtin") or "").strip() or None
+    identity_keys = {
+        "gtin": gtin_key,
+        "mpnMarca": f"{brand_key}|{mpn_key}" if brand_key and mpn_key else None,
+        "modeloMarca": f"{brand_key}|{model_key}" if brand_key and model_key else None,
+    }
+
+    result_error = raw.get("error")
+    if not result_error and raw.get("ok") and not category:
+        result_error = "PRODUTO_FORA_DAS_CATEGORIAS_CRIABYTE"
+
     return {
         "categoriaDetectada": category,
         "categoriaSlugSugerida": CATEGORY_SLUGS.get(category),
@@ -83,12 +117,23 @@ def build_result(raw, forced_category=None):
             "disponivel": raw.get("available"),
             "urlOriginal": raw.get("url_original"),
             "urlProduto": raw.get("url_final"),
-            "vendedorId": raw.get("seller_id"),
-            "vendedorMarketplace": raw.get("seller_name"),
-            "vendedorMarketplaceSlug": raw.get("seller_slug"),
             "codigoMarketplace": raw.get("marketplace_product_code"),
         },
+        # Guarda tudo o que a página informou sobre o PRODUTO, mesmo quando o
+        # backend ainda não possui um campo específico. Dados de vendedor,
+        # entrega, frete e pagamento são excluídos de propósito.
+        "informacoesProdutoEncontradas": raw.get("product_attributes") or [],
         "especificacoesEncontradas": specs,
+        "analiseProduto": {
+            "variantesSelecionadas": raw.get("selected_variants") or [],
+            "kitCombo": raw.get("kit_combo") or {
+                "ehKitCombo": False,
+                "quantidadeDetectada": None,
+                "componentesDetectados": [],
+            },
+            "chavesComparacao": identity_keys,
+            "categoriaSuportada": bool(category),
+        },
         "camposEspecificacaoEsperados": expected,
         "camposObrigatoriosAusentes": missing,
         "origemColeta": {
@@ -123,7 +168,7 @@ def build_result(raw, forced_category=None):
             "bloqueadoNoNavegador": bool(raw.get("blocked")),
         },
         "fonte": raw.get("source"),
-        "erro": raw.get("error"),
+        "erro": result_error,
     }
 
 
@@ -131,7 +176,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Coletor de produtos do CriaByte em Python"
     )
-    parser.add_argument("url", help="URL do produto")
+    parser.add_argument("url", nargs="?", help="URL do produto (fluxo individual)")
     parser.add_argument(
         "categoria",
         nargs="?",
@@ -151,7 +196,48 @@ def main():
         "--local-capture",
         help="JSON capturado no navegador local (ex.: magalu_capture.json)",
     )
+    parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Complementar especificações ausentes com fabricante/fontes técnicas, quando a identidade estiver confirmada",
+    )
+    parser.add_argument(
+        "--batch-prices",
+        metavar="ARQUIVO",
+        help="Verificar vários links de ofertas (JSON/CSV/TXT), uma URL por vez, sem alterar ficha técnica",
+    )
+    parser.add_argument(
+        "--batch-output",
+        metavar="ARQUIVO",
+        help="Salvar o resultado do recálculo de preços em JSON",
+    )
+    parser.add_argument(
+        "--criabyte-plan",
+        action="store_true",
+        help="Consultar o backend do CriaByte e anexar um plano seguro de criação/atualização sem aplicar alterações",
+    )
+    parser.add_argument(
+        "--criabyte-output",
+        metavar="ARQUIVO",
+        help="Salvar o plano de integração com o CriaByte em JSON",
+    )
     args = parser.parse_args()
+
+    if args.batch_prices:
+        from .batch.price_updater import BatchPriceUpdater, load_batch_items
+        try:
+            items = load_batch_items(args.batch_prices)
+            batch_result = BatchPriceUpdater().check_many(items, no_browser=args.no_browser)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(f"Arquivo de lote inválido: {exc}")
+        rendered = json.dumps(batch_result, ensure_ascii=False, indent=2)
+        print(rendered)
+        if args.batch_output:
+            Path(args.batch_output).write_text(rendered, encoding="utf-8")
+        return
+
+    if not args.url:
+        parser.error("Informe uma URL de produto ou use --batch-prices ARQUIVO.")
 
     logger.remove()
     logger.add(sys.stderr, level="INFO")
@@ -211,7 +297,37 @@ def main():
         raw.setdefault("api_used", False)
 
     result = build_result(raw, args.categoria)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    # v13: enriquecimento técnico é separado da coleta comercial. Só roda
+    # quando solicitado (ou habilitado por ambiente) e nunca sobrescreve
+    # silenciosamente especificação já coletada da fonte principal.
+    auto_enrich = os.getenv("ENRICHMENT_AUTO", "false").strip().casefold() in {"1", "true", "sim", "yes"}
+    if args.enrich or auto_enrich:
+        from .enrichment.core import apply_enrichment
+        result = apply_enrichment(result)
+
+    # v14: consulta conservadora do banco real do CriaByte. O modo apenas
+    # PLANEJA ações; não grava nada automaticamente no backend de produção.
+    if args.criabyte_plan:
+        from .criabyte.client import CriaByteClient, CriaByteApiError
+        from .criabyte.planner import plan_with_client
+        try:
+            client = CriaByteClient()
+            result["integracaoCriaByte"] = plan_with_client(result, client)
+        except CriaByteApiError as exc:
+            result["integracaoCriaByte"] = {
+                "versao": 14,
+                "modo": "CONSULTA_E_PLANEJAMENTO",
+                "erro": str(exc),
+                "acoesSugeridas": [],
+                "aplicaAlteracoesAutomaticamente": False,
+            }
+
+    rendered = json.dumps(result, ensure_ascii=False, indent=2)
+    print(rendered)
+
+    if args.criabyte_output:
+        Path(args.criabyte_output).write_text(rendered, encoding="utf-8")
 
     if args.save:
         handler = DataHandler()

@@ -1,0 +1,24 @@
+CriaByte Produto IA - v8
+
+Validada com capturas reais do Magazine Você/Magalu para:
+- placa de vídeo
+- placa-mãe
+- memória RAM
+
+Melhorias:
+- MPN prioriza Referência / Part Number explícito da ficha técnica.
+- GPU: VRAM, tipo da VRAM, barramento em bits, PCIe geração/largura,
+  arquitetura explícita e contagem de HDMI/DisplayPort.
+- GPU: dimensões genéricas do varejo/embalagem NÃO são usadas como tamanho
+  físico da placa de vídeo; comprimento continua pendente quando a ficha não
+  informa medida técnica da placa.
+- Placa-mãe: socket, chipset, formato, DDR, DIMM, slots de RAM, memória máxima,
+  frequências JEDEC/OC, SATA, PCIe, LAN, Wi-Fi, Bluetooth, EXPO, ECC,
+  memória registrada, BIOS Flashback e saídas de vídeo.
+- RAM: tipo DDR, formato DIMM/SO_DIMM, frequência, CL, tensão e MPN.
+- Capacidade por módulo e quantidade de módulos NÃO são inventadas quando a
+  página mostra apenas a capacidade total do produto.
+- Informações extras da ficha continuam em informacoesProdutoEncontradas.
+- Dados de vendedor/entrega continuam fora do resultado final.
+
+Testes automatizados: 28 aprovados nesta versão.

@@ -1,0 +1,73 @@
+PRODUTO IA / CRIABYTE — v14
+INTEGRAÇÃO CONSERVADORA COM O BACKEND REAL
+
+Esta versão é CUMULATIVA e substitui a v13.
+
+PRINCIPAIS ALTERAÇÕES
+
+1. Consulta do banco do CriaByte
+- GET /admin/hardwares
+- GET /admin/produtos
+- GET /admin/ofertas
+- GET /admin/ofertas/parceiros
+- GET /admin/categorias-produto
+- busca detalhe apenas do Hardware/Produto confirmado
+
+2. Identificação de existentes
+- GTIN/EAN + marca compatível
+- MPN + marca compatível
+- marca + modelo
+- nome semelhante da mesma marca é apenas candidato, nunca confirmação automática
+- marca diferente impede match por modelo/nome
+
+3. Preenchimento de vazios
+- preenche somente null/vazio/ausente
+- preserva campos existentes
+- conflito é registrado para revisão
+- especificação técnica é mesclada em objeto completo antes do PATCH
+- false e 0 não são considerados vazios
+
+4. Hardware / Produto / Oferta
+- Hardware não recebe preço
+- Produto não recebe preço
+- Oferta concentra preço, disponibilidade e URL
+
+5. Ações sugeridas usando as rotas reais
+Novo Hardware:
+POST /hardwares
+POST /admin/produtos/de-hardware/{hardwareIdCriado}
+POST /admin/ofertas
+
+Produto genérico:
+POST /admin/produtos
+POST /admin/ofertas
+
+Existentes:
+PATCH /admin/hardwares/:id
+PATCH /admin/produtos/:id
+PATCH /admin/ofertas/:id
+
+6. Segurança
+--criabyte-plan apenas CONSULTA e gera plano.
+Não grava nada automaticamente no banco.
+
+7. Recalcular preços em lote
+- continua separado do cadastro individual
+- aceita urlOriginal sem exigir urlAfiliada
+- gera rotaBackend/metodoBackend/payloadBackend compatíveis com AtualizarOfertaDto
+- status usa ATIVA / INDISPONIVEL, não um campo inexistente "disponivel"
+
+8. Limitação conhecida do backend para ajustar na integração
+O backend atual ainda seleciona ofertas do lote exigindo urlAfiliada != null.
+Na integração futura, alterar para permitir urlOriginal e usar urlAfiliada apenas como fallback.
+
+9. Enriquecimento técnico
+Mantido da v13:
+Fabricante oficial -> TechPowerUp -> PC-Kombo -> Geizhals.
+Só ocorre com identidade forte e nunca sobrescreve silenciosamente conflito.
+
+TESTES
+104 testes automatizados aprovados.
+
+ATUALIZAÇÃO
+Use diretamente a v14. Não precisa aplicar v12/v13 antes.
