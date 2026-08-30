@@ -1,6 +1,8 @@
 # Produto IA — CriaByte (Python)
 
-## Atualização v14.2
+## Atualização v14.4
+
+A v14.4 adiciona fallback de coleta para ambientes de nuvem: detecta páginas de verificação do Magalu/Magazine Você, tenta Chromium/Playwright e, quando aplicável, a página pública equivalente do Magazine Luiza. Se todos os caminhos estiverem bloqueados, retorna erro estruturado sem inventar dados de produto. O cache de Magalu foi versionado para descartar capturas inválidas antigas.
 
 A v14.2 reforça a normalização do Magalu com casos reais de PC montado, CPU, GPU e placa-mãe: PC Gamer completo tem prioridade sobre componentes internos, marca confirmada no título vence atributo genérico conflitante, GPU separa modelo comercial de MPN e nomes comerciais com espaços não são promovidos a MPN automaticamente.
 

@@ -19,6 +19,7 @@ load_dotenv()
 
 
 def build_result(raw, forced_category=None):
+    blocked = bool(raw.get("blocked"))
     text = "\n".join(filter(None, [
         raw.get("title"),
         raw.get("brand"),
@@ -30,8 +31,11 @@ def build_result(raw, forced_category=None):
     # v12: classificação em camadas. Uma categoria técnica explicitamente
     # rotulada como "Tipo de produto" pode corrigir um título ambíguo/conflitante.
     # Categoria/breadcrumb comercial da loja não é usada para sobrescrever o produto.
-    category = detect_category(raw.get("title") or "", forced_category)
-    if not forced_category:
+    # Em coleta bloqueada não interpretar texto de CAPTCHA/verificação como
+    # produto. Se o backend informou uma categoria esperada, ela pode ser
+    # preservada apenas como contexto, nunca como evidência coletada.
+    category = forced_category if blocked else detect_category(raw.get("title") or "", forced_category)
+    if not forced_category and not blocked:
         explicit_type = None
         for row in raw.get("attributes") or []:
             label = str(row.get("name") or "").strip().casefold()
@@ -41,13 +45,13 @@ def build_result(raw, forced_category=None):
                     break
         if explicit_type:
             category = explicit_type
-    if not category:
+    if not category and not blocked:
         # Fallback técnico: usa a ficha/atributos, sem depender da categoria
         # comercial da loja. Só depois usa descrição como último recurso.
         category = detect_category(raw.get("attributes_text") or "", forced_category)
-    if not category and (raw.get("attributes") or []):
+    if not category and not blocked and (raw.get("attributes") or []):
         category = detect_category(text, forced_category)
-    specs = extract_specs(
+    specs = {} if blocked else extract_specs(
         category,
         raw.get("attributes") or [],
         context_text=text,
@@ -57,15 +61,15 @@ def build_result(raw, forced_category=None):
     tipo_cadastro, spec_field, expected = schema if schema else (None, None, [])
 
     payload = {
-        "nome": raw.get("title"),
-        "marca": raw.get("brand"),
-        "modelo": raw.get("model"),
-        "descricao": raw.get("description"),
+        "nome": None if blocked else raw.get("title"),
+        "marca": None if blocked else raw.get("brand"),
+        "modelo": None if blocked else raw.get("model"),
+        "descricao": None if blocked else raw.get("description"),
         # Não usar MODEL como MPN. MPN só entra quando o marketplace realmente
         # fornece part number / manufacturer part number.
-        "mpn": raw.get("mpn"),
-        "gtin": raw.get("gtin"),
-        "imagemUrl": raw.get("image_url"),
+        "mpn": None if blocked else raw.get("mpn"),
+        "gtin": None if blocked else raw.get("gtin"),
+        "imagemUrl": None if blocked else raw.get("image_url"),
     }
 
     if category and tipo_cadastro == "HARDWARE":
@@ -153,10 +157,12 @@ def build_result(raw, forced_category=None):
         "marketplace": {
             "plataforma": (
                 "MERCADO_LIVRE"
-                if MercadoLivreScraper.is_mercadolivre(
-                    raw.get("url_original") or ""
+                if MercadoLivreScraper.is_mercadolivre(raw.get("url_original") or "")
+                else (
+                    "MAGALU"
+                    if MagazineScraper.is_magazine(raw.get("url_original") or "")
+                    else None
                 )
-                else None
             ),
             "apiUsada": raw.get("api_used", False),
             "itemId": raw.get("item_id"),
@@ -166,6 +172,8 @@ def build_result(raw, forced_category=None):
             "errosApi": raw.get("api_errors", []),
             "diagnosticoApi": raw.get("api_debug", []),
             "bloqueadoNoNavegador": bool(raw.get("blocked")),
+            "capturaLocalNecessaria": bool(raw.get("requires_local_capture")),
+            "tentativasColeta": raw.get("collection_attempts") or raw.get("tentativasColeta") or [],
         },
         "fonte": raw.get("source"),
         "erro": result_error,

@@ -2,7 +2,7 @@ import json
 import os
 import re
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -31,6 +31,9 @@ class MagazineScraper:
         )
         self.cache = JsonDiskCache()
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
+        # Namespace versionado para nunca reaproveitar capturas de páginas de
+        # verificação que versões antigas tenham salvo como se fossem produto.
+        self.cache_namespace = "magalu_result_v14_4"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
@@ -807,8 +810,19 @@ class MagazineScraper:
         return has_product_json or (has_h1 and (has_title or has_product_signal))
 
     @staticmethod
-    def _is_access_error_page(title: str | None, text: str | None):
-        sample = " ".join(filter(None, [clean_text(title), clean_text(text)]))[:5000].casefold()
+    def _is_verification_url(url: str | None):
+        low = (url or "").casefold()
+        return any(marker in low for marker in (
+            "/az-request-verify",
+            "/account-verification",
+            "/challenge/",
+        ))
+
+    @classmethod
+    def _is_access_error_page(cls, title: str | None, text: str | None, url: str | None = None):
+        if cls._is_verification_url(url):
+            return True
+        sample = " ".join(filter(None, [clean_text(title), clean_text(text)]))[:8000].casefold()
         terms = (
             "não é possível acessar a página",
             "nao e possivel acessar a pagina",
@@ -820,8 +834,62 @@ class MagazineScraper:
             "erro de privacidade",
             "err_connection_",
             "err_timed_out",
+            # Página real observada no Magazine Você/Magalu em IP de datacenter.
+            "acessou nosso site de uma forma um pouco diferente do comum",
+            "para sua segurança precisamos de uma verificação rápida",
+            "para sua seguranca precisamos de uma verificacao rapida",
+            "essa é uma etapa simples e rápida",
+            "essa e uma etapa simples e rapida",
         )
         return any(term in sample for term in terms)
+
+    @classmethod
+    def _magazineluiza_equivalent_url(cls, url: str):
+        """Converte uma página Magazine Você para a página pública equivalente
+        do Magazine Luiza quando a estrutura da URL permite.
+
+        Não tenta contornar CAPTCHA; apenas usa outra página pública do mesmo
+        ecossistema para o mesmo código de produto.
+        """
+        parsed = urlparse(url or "")
+        host = (parsed.hostname or "").casefold()
+        if not host.endswith("magazinevoce.com.br"):
+            return None
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) < 3 or not parts[0].casefold().startswith("magazine"):
+            return None
+        new_path = "/" + "/".join(parts[1:])
+        if parsed.path.endswith("/"):
+            new_path += "/"
+        return urlunparse((
+            "https",
+            "www.magazineluiza.com.br",
+            new_path,
+            "",
+            parsed.query,
+            "",
+        ))
+
+    @classmethod
+    def _response_is_product_page(cls, requested_url: str, final_url: str, html: str):
+        soup = BeautifulSoup(html or "", "html.parser")
+        title = clean_text(soup.title.get_text(" ", strip=True)) if soup.title else ""
+        text = soup.get_text(" ", strip=True)[:12000]
+        if cls._is_access_error_page(title, text, final_url):
+            return False
+        evidence_url = final_url if cls.is_product_url(final_url) else requested_url
+        return cls._capture_has_product_evidence(evidence_url, html, title, text)
+
+    @classmethod
+    def _cacheable_result(cls, result: dict):
+        return bool(
+            isinstance(result, dict)
+            and result.get("ok")
+            and result.get("title")
+            and not result.get("blocked")
+            and not cls._is_verification_url(result.get("url_final"))
+            and not cls._is_access_error_page(result.get("title"), result.get("description"), result.get("url_final"))
+        )
 
     def collect_from_local_capture(self, url: str, capture: dict):
         """Processa uma captura feita no navegador LOCAL do usuário.
@@ -859,7 +927,7 @@ class MagazineScraper:
                 "error": "MAGALU_URL_NAO_E_PAGINA_DE_PRODUTO",
             }
 
-        if capture.get("blocked") or capture.get("error") or self._is_access_error_page(title, text):
+        if capture.get("blocked") or capture.get("error") or self._is_access_error_page(title, text, final_url):
             return {
                 "ok": False,
                 "source": "MAGALU_NAVEGADOR_LOCAL",
@@ -894,11 +962,65 @@ class MagazineScraper:
         )
         result["local_capture"] = True
         result["cache_hit"] = False
-        if not result.get("title") or self._is_access_error_page(result.get("title"), text):
+        if not result.get("title") or self._is_access_error_page(result.get("title"), text, final_url):
             result["ok"] = False
-            result["blocked"] = bool(self._is_access_error_page(result.get("title"), text))
+            result["blocked"] = bool(self._is_access_error_page(result.get("title"), text, final_url))
             result["error"] = "MAGALU_CAPTURA_LOCAL_SEM_DADOS_DE_PRODUTO"
         return result
+
+    def _try_http_product(self, original_url: str, candidate_url: str, source: str):
+        response, error = self._http_get(candidate_url)
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        if status_code in (404, 410):
+            return None, error, False
+        if response is None:
+            return None, error, False
+
+        html = response.text or ""
+        blocked = self._is_access_error_page(None, html, response.url)
+        if blocked or not self._response_is_product_page(candidate_url, response.url, html):
+            return None, error, blocked
+
+        result = self._parse_magazine_html(
+            original_url,
+            response.url,
+            html,
+            source=source,
+        )
+        result["blocked"] = False
+        result["url_original"] = original_url
+        return result, error, False
+
+    def _try_browser_product(self, original_url: str, candidate_url: str, source: str):
+        from .browser_scraper import BrowserScraper
+
+        browser = BrowserScraper().fetch(candidate_url)
+        if browser.get("error"):
+            return None, browser.get("error"), False
+        title = browser.get("title") or ""
+        body_text = browser.get("text") or ""
+        final_url = browser.get("final_url") or candidate_url
+        blocked = bool(browser.get("blocked")) or self._is_access_error_page(title, body_text, final_url)
+        if blocked:
+            return None, None, True
+        if not self._capture_has_product_evidence(
+            final_url if self.is_product_url(final_url) else candidate_url,
+            browser.get("html") or "",
+            title,
+            body_text,
+        ):
+            return None, "MAGALU_NAVEGADOR_SEM_EVIDENCIA_DE_PRODUTO", False
+
+        result = self._parse_magazine_html(
+            original_url,
+            final_url,
+            browser.get("html") or "",
+            body_text=body_text,
+            source=source,
+        )
+        result["blocked"] = False
+        result["url_original"] = original_url
+        return result, None, False
 
     def collect(self, url, no_browser=False):
         if not self.is_product_url(url):
@@ -915,15 +1037,20 @@ class MagazineScraper:
 
         cached = self.cache.get(
             url,
-            namespace="magalu_result_v12",
+            namespace=self.cache_namespace,
             ttl_seconds=self.cache_ttl,
         )
-        if isinstance(cached, dict):
+        if isinstance(cached, dict) and self._cacheable_result(cached):
             cached = dict(cached)
             cached["cache_hit"] = True
             return cached
 
-        response, error = self._http_get(url)
+        attempts = []
+        any_blocked = False
+        last_error = None
+
+        # 1) URL original por HTTP.
+        result, error, blocked = self._try_http_product(url, url, "MAGALU_PAGINA")
         status_code = getattr(getattr(error, "response", None), "status_code", None)
         if status_code in (404, 410):
             return {
@@ -934,68 +1061,84 @@ class MagazineScraper:
                 "url_final": url,
                 "marketplace_product_code": self.product_code_from_url(url),
                 "cache_hit": False,
+                "blocked": False,
                 "error": "MAGALU_URL_404" if status_code == 404 else "MAGALU_PRODUTO_REMOVIDO",
             }
-        if response is not None:
-            result = self._parse_magazine_html(url, response.url, response.text)
-            if result.get("title"):
+        attempts.append({"modo": "HTTP_ORIGINAL", "url": url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+        any_blocked = any_blocked or blocked
+        last_error = error or last_error
+        if self._cacheable_result(result):
+            result["cache_hit"] = False
+            result["tentativasColeta"] = attempts
+            self.cache.set(url, result, namespace=self.cache_namespace)
+            return result
+
+        # 2) Mesmo link em Chromium/Playwright.
+        if not no_browser:
+            try:
+                result, error, blocked = self._try_browser_product(url, url, "MAGALU_NAVEGADOR")
+            except Exception as exc:
+                result, error, blocked = None, str(exc), False
+            attempts.append({"modo": "NAVEGADOR_ORIGINAL", "url": url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+            any_blocked = any_blocked or blocked
+            last_error = error or last_error
+            if self._cacheable_result(result):
                 result["cache_hit"] = False
-                self.cache.set(url, result, namespace="magalu_result_v12")
+                result["tentativasColeta"] = attempts
+                self.cache.set(url, result, namespace=self.cache_namespace)
                 return result
 
-        if no_browser:
-            return {
-                "ok": False,
-                "source": "MAGALU_HTTP",
-                "api_used": False,
-                "url_original": url,
-                "url_final": url,
-                "marketplace_product_code": self.product_code_from_url(url),
-                "cache_hit": False,
-                "error": f"MAGALU_ERRO_HTTP: {error}" if error else "MAGALU_SEM_DADOS_DE_PRODUTO",
-            }
-
-        # Somente um fallback de navegador para a mesma URL.
-        try:
-            from .browser_scraper import BrowserScraper
-            browser = BrowserScraper().fetch(url)
-            if browser.get("error"):
-                raise RuntimeError(browser["error"])
-            title = browser.get("title") or ""
-            body_text = browser.get("text") or ""
-            blocked = bool(browser.get("blocked")) or self._is_access_error_page(title, body_text)
-            if blocked:
-                return {
-                    "ok": False,
-                    "source": "MAGALU_NAVEGADOR",
-                    "api_used": False,
-                    "url_original": url,
-                    "url_final": browser.get("final_url") or url,
-                    "marketplace_product_code": self.product_code_from_url(url),
-                        "cache_hit": False,
-                    "blocked": True,
-                    "error": "MAGALU_ACESSO_BLOQUEADO_NO_AMBIENTE",
-                }
-            result = self._parse_magazine_html(
+        # 3) Para Magazine Você, tenta a página pública equivalente do
+        # Magazine Luiza para o MESMO código de produto. É uma fonte oficial
+        # alternativa, não uma técnica para contornar CAPTCHA.
+        alternative_url = self._magazineluiza_equivalent_url(url)
+        if alternative_url and alternative_url != url:
+            result, error, blocked = self._try_http_product(
                 url,
-                browser.get("final_url") or url,
-                browser.get("html") or "",
-                body_text=body_text,
-                source="MAGALU_NAVEGADOR",
+                alternative_url,
+                "MAGALU_URL_ALTERNATIVA_HTTP",
             )
-            result["blocked"] = False
-            result["cache_hit"] = False
-            if result.get("title"):
-                self.cache.set(url, result, namespace="magalu_result_v12")
-            return result
-        except Exception as exc:
-            return {
-                "ok": False,
-                "source": "MAGALU_NAVEGADOR",
-                "api_used": False,
-                "url_original": url,
-                "url_final": url,
-                "marketplace_product_code": self.product_code_from_url(url),
-                "cache_hit": False,
-                "error": f"MAGALU_ERRO_FALLBACK_NAVEGADOR: {exc}",
-            }
+            attempts.append({"modo": "HTTP_MAGAZINELUIZA", "url": alternative_url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+            any_blocked = any_blocked or blocked
+            last_error = error or last_error
+            if self._cacheable_result(result):
+                result["cache_hit"] = False
+                result["tentativasColeta"] = attempts
+                self.cache.set(url, result, namespace=self.cache_namespace)
+                return result
+
+            if not no_browser:
+                try:
+                    result, error, blocked = self._try_browser_product(
+                        url,
+                        alternative_url,
+                        "MAGALU_URL_ALTERNATIVA_NAVEGADOR",
+                    )
+                except Exception as exc:
+                    result, error, blocked = None, str(exc), False
+                attempts.append({"modo": "NAVEGADOR_MAGAZINELUIZA", "url": alternative_url, "bloqueado": blocked, "erro": clean_text(str(error)) if error else None})
+                any_blocked = any_blocked or blocked
+                last_error = error or last_error
+                if self._cacheable_result(result):
+                    result["cache_hit"] = False
+                    result["tentativasColeta"] = attempts
+                    self.cache.set(url, result, namespace=self.cache_namespace)
+                    return result
+
+        error_code = "MAGALU_COLETA_BLOQUEADA" if any_blocked else "MAGALU_SEM_DADOS_DE_PRODUTO"
+        return {
+            "ok": False,
+            "source": "MAGALU_BLOQUEADO" if any_blocked else "MAGALU_COLETA_FALHOU",
+            "api_used": False,
+            "url_original": url,
+            # Não devolver URL de az-request-verify como se fosse produto.
+            "url_final": url,
+            "marketplace_product_code": self.product_code_from_url(url),
+            "cache_hit": False,
+            "blocked": any_blocked,
+            "requires_local_capture": any_blocked,
+            "collection_attempts": attempts,
+            "error": error_code if any_blocked else (
+                f"MAGALU_ERRO_COLETA: {last_error}" if last_error else error_code
+            ),
+        }

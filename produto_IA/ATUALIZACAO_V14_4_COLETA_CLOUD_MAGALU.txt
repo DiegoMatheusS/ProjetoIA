@@ -1,0 +1,14 @@
+CRIABYTE - PRODUTO IA V14.4 - COLETA CLOUD MAGALU
+
+Principais correcoes:
+- Detecta /az-request-verify e o texto real de verificacao do Magalu.
+- Nunca usa pagina de verificacao como nome/descricao do produto.
+- Fluxo: HTTP original -> Chromium original -> Magazine Luiza equivalente HTTP -> Chromium equivalente.
+- Mantem urlOriginal do Magazine Voce quando usa pagina oficial alternativa para coleta.
+- Se todos os caminhos bloquearem, retorna MAGALU_COLETA_BLOQUEADA.
+- Marca marketplace como MAGALU e informa capturaLocalNecessaria.
+- Namespace de cache atualizado para v14.4 para invalidar capturas ruins da v14.3.
+- Browser com locale pt-BR, timezone America/Sao_Paulo, viewport desktop e espera maior de carregamento.
+- Sem bypass de CAPTCHA ou mecanismos de verificacao.
+
+Testes: 114 passando.

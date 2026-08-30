@@ -18,6 +18,9 @@ class BrowserScraper:
             browser = p.chromium.launch(headless=self.headless)
             context = browser.new_context(
                 locale="pt-BR",
+                timezone_id="America/Sao_Paulo",
+                viewport={"width": 1365, "height": 900},
+                color_scheme="light",
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -29,7 +32,7 @@ class BrowserScraper:
                 self.rate_limiter.wait(url)
                 logger.info(f"Abrindo navegador: {url}")
                 page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(2500)
                 final_url = page.url
                 title = page.title()
                 html = page.content()
@@ -37,6 +40,10 @@ class BrowserScraper:
                 sample = f"{title}\n{body_text[:5000]}".casefold()
                 blocked = (
                     "account-verification" in final_url.lower()
+                    or "az-request-verify" in final_url.lower()
+                    or "acessou nosso site de uma forma um pouco diferente do comum" in sample
+                    or "para sua segurança precisamos de uma verificação rápida" in sample
+                    or "para sua seguranca precisamos de uma verificacao rapida" in sample
                     or "verificação" in sample
                     or "verificacao" in sample
                     or "não é possível acessar a página" in sample
