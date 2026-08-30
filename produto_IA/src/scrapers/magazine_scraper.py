@@ -33,7 +33,7 @@ class MagazineScraper:
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
         # Namespace versionado para nunca reaproveitar capturas de páginas de
         # verificação que versões antigas tenham salvo como se fossem produto.
-        self.cache_namespace = "magalu_result_v14_6"
+        self.cache_namespace = "magalu_result_v14_7"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
@@ -1065,6 +1065,43 @@ class MagazineScraper:
         result["url_original"] = original_url
         return result, None, False
 
+    def _try_browserless_product(self, original_url: str, candidate_url: str, source: str):
+        from .browser_scraper import BrowserScraper
+
+        scraper = BrowserScraper()
+        if not scraper.browserless_configured():
+            return None, "BROWSERLESS_NAO_CONFIGURADO", False
+        browser = scraper.fetch_browserless(candidate_url)
+        if browser.get("error"):
+            return None, browser.get("error"), False
+        title = browser.get("title") or ""
+        body_text = browser.get("text") or ""
+        final_url = browser.get("final_url") or candidate_url
+        blocked = bool(browser.get("blocked")) or self._is_access_error_page(title, body_text, final_url)
+        if blocked:
+            return None, None, True
+        if not self._capture_has_product_evidence(
+            final_url if self.is_product_url(final_url) else candidate_url,
+            browser.get("html") or "",
+            title,
+            body_text,
+        ):
+            return None, "MAGALU_BROWSERLESS_SEM_EVIDENCIA_DE_PRODUTO", False
+
+        result = self._parse_magazine_html(
+            original_url,
+            final_url,
+            browser.get("html") or "",
+            body_text=body_text,
+            source=source,
+        )
+        result["blocked"] = False
+        result["url_original"] = original_url
+        result["browserless"] = True
+        result["proxy_network"] = browser.get("proxy")
+        result["proxy_country"] = browser.get("proxy_country")
+        return result, None, False
+
     def collect(self, url, no_browser=False):
         if not self.is_product_url(url):
             return {
@@ -1186,6 +1223,43 @@ class MagazineScraper:
                 })
                 any_blocked = any_blocked or blocked
                 last_error = error or last_error
+                if self._cacheable_result(result):
+                    result["cache_hit"] = False
+                    result["tentativasColeta"] = attempts
+                    self.cache.set(url, result, namespace=self.cache_namespace)
+                    return result
+
+        # 4) Ultimo fallback cloud: Browserless com proxy residencial.
+        # So consome unidades quando as tentativas HTTP/Chromium da Railway falharam.
+        if not no_browser:
+            browserless_candidates = [("ORIGINAL", url)] + alternative_candidates
+            for mode, candidate_url in browserless_candidates:
+                try:
+                    result, error, blocked = self._try_browserless_product(
+                        url,
+                        candidate_url,
+                        "MAGALU_BROWSERLESS_RESIDENCIAL",
+                    )
+                except Exception as exc:
+                    result, error, blocked = None, str(exc), False
+                # Se nao estiver configurado, nao repetir a mesma mensagem para cada URL.
+                if error == "BROWSERLESS_NAO_CONFIGURADO":
+                    break
+                attempts.append({
+                    "modo": f"BROWSERLESS_{mode}",
+                    "url": candidate_url,
+                    "bloqueado": blocked,
+                    "erro": clean_text(str(error)) if error else None,
+                })
+                any_blocked = any_blocked or blocked
+                last_error = error or last_error
+                # Falha de conexao/conta do Browserless nao melhora ao trocar a URL
+                # do mesmo produto; evita repetir conexoes e gastar unidades.
+                if error and (
+                    str(error).startswith("Falha no Browserless")
+                    or str(error).startswith("Timeout do Browserless")
+                ):
+                    break
                 if self._cacheable_result(result):
                     result["cache_hit"] = False
                     result["tentativasColeta"] = attempts

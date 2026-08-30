@@ -1,0 +1,26 @@
+CRIABYTE - PRODUTO IA V14.7 - BROWSERLESS CLOUD
+
+Objetivo
+- Manter a coleta 100% em nuvem quando Magalu bloquear IPs da Railway.
+
+Novo fallback
+1. HTTP original
+2. Chromium local da Railway
+3. URLs oficiais equivalentes Magalu/Magazine Luiza
+4. Browserless com proxy residencial configurado
+
+Variaveis Railway
+BROWSERLESS_TOKEN=<segredo>
+BROWSERLESS_PROXY=residential
+BROWSERLESS_PROXY_COUNTRY=BR
+
+Opcionais
+BROWSERLESS_WS_URL=wss://production-sfo.browserless.io
+BROWSERLESS_PROXY_STICKY=true
+BROWSERLESS_PROXY_LOCALE_MATCH=true
+BROWSERLESS_STEALTH=true
+
+Seguranca
+- O token nunca e devolvido pela API nem escrito nos logs.
+- Browserless so e chamado depois dos fallbacks gratuitos/locais falharem.
+- Se o Browserless tambem receber pagina de verificacao, a IA retorna COLETA_BLOQUEADA e nao cria produto falso.

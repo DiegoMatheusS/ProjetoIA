@@ -1,5 +1,10 @@
 # Produto IA — CriaByte (Python)
 
+## Atualização v14.7
+
+A v14.7 adiciona fallback 100% em nuvem com Browserless. Quando HTTP, Chromium da Railway e URLs oficiais equivalentes do Magalu/Magazine Luiza falham, a IA conecta a um navegador Browserless usando as variáveis `BROWSERLESS_TOKEN`, `BROWSERLESS_PROXY` e `BROWSERLESS_PROXY_COUNTRY`. O padrão recomendado é proxy residencial no Brasil, com IP sticky, locale compatível e modo stealth. O token não é retornado na API nem gravado nos logs.
+
+
 ## Atualização v14.6
 
 A v14.6 adiciona fallback de coleta para ambientes de nuvem: detecta páginas de verificação do Magalu/Magazine Você, tenta Chromium/Playwright e, quando aplicável, a página pública equivalente do Magazine Luiza. Se todos os caminhos estiverem bloqueados, retorna erro estruturado sem inventar dados de produto. O cache de Magalu foi versionado para descartar capturas inválidas antigas.

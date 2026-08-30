@@ -1,4 +1,4 @@
-# Produto IA v14.6 - Railway
+# Produto IA v14.7 - Railway
 
 ## Deploy
 
@@ -71,3 +71,18 @@ O cache foi versionado na v14.6, portanto respostas incorretas de verificação 
 ## Fallback adicional v14.6
 
 Para links Magazine Você bloqueados, além da página desktop do Magazine Luiza, a v14.6 tenta a mesma página sem `seller_id` e no domínio público móvel `m.magazineluiza.com.br`. Essas variações usam o mesmo código de produto. Se todas forem bloqueadas, a API continua retornando `MAGALU_COLETA_BLOQUEADA` sem criar dados falsos.
+
+## Browserless v14.7
+
+Para manter a coleta em nuvem quando o Magalu bloquear IPs da Railway, configure no serviço ProjetoIA:
+
+```env
+BROWSERLESS_TOKEN=SEU_TOKEN
+BROWSERLESS_PROXY=residential
+BROWSERLESS_PROXY_COUNTRY=BR
+BROWSERLESS_PROXY_STICKY=true
+BROWSERLESS_PROXY_LOCALE_MATCH=true
+BROWSERLESS_STEALTH=true
+```
+
+O Browserless só é acionado depois das tentativas normais falharem. O token é lido apenas do ambiente e não é escrito nos logs/respostas.
