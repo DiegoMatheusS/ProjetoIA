@@ -1,4 +1,4 @@
-# Produto IA v14.7 - Railway
+# Produto IA v14.8 - Railway
 
 ## Deploy
 
@@ -72,7 +72,7 @@ O cache foi versionado na v14.6, portanto respostas incorretas de verificação 
 
 Para links Magazine Você bloqueados, além da página desktop do Magazine Luiza, a v14.6 tenta a mesma página sem `seller_id` e no domínio público móvel `m.magazineluiza.com.br`. Essas variações usam o mesmo código de produto. Se todas forem bloqueadas, a API continua retornando `MAGALU_COLETA_BLOQUEADA` sem criar dados falsos.
 
-## Browserless v14.7
+## Browserless v14.8
 
 Para manter a coleta em nuvem quando o Magalu bloquear IPs da Railway, configure no serviço ProjetoIA:
 

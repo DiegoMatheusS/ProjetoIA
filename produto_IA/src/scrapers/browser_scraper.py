@@ -1,5 +1,8 @@
 import os
 from urllib.parse import urlencode
+
+import requests
+from bs4 import BeautifulSoup
 from loguru import logger
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from ..utils.rate_limiter import PoliteRateLimiter
@@ -21,14 +24,15 @@ class BrowserScraper:
     def fetch_browserless(self, url: str):
         """Abre a pagina no Browserless usando proxy residencial configurado.
 
-        So e chamado como fallback cloud depois das tentativas locais da Railway.
-        O token nunca e logado nem devolvido no resultado.
+        v14.8: tenta primeiro Playwright/CDP e, se a conexao WebSocket falhar,
+        usa a REST API /content. O token nunca e logado nem devolvido.
         """
         token = os.getenv("BROWSERLESS_TOKEN", "").strip()
         if not token:
-            return {"error": "BROWSERLESS_NAO_CONFIGURADO", "final_url": url}
+            return {"error": "BROWSERLESS_NAO_CONFIGURADO", "final_url": url, "browserless": True}
 
-        base = os.getenv("BROWSERLESS_WS_URL", "wss://production-sfo.browserless.io").strip().rstrip("/")
+        ws_base = os.getenv("BROWSERLESS_WS_URL", "wss://production-sfo.browserless.io").strip().rstrip("/")
+        http_base = os.getenv("BROWSERLESS_HTTP_URL", "https://production-sfo.browserless.io").strip().rstrip("/")
         proxy = os.getenv("BROWSERLESS_PROXY", "residential").strip() or "residential"
         country = os.getenv("BROWSERLESS_PROXY_COUNTRY", "BR").strip() or "BR"
         sticky = os.getenv("BROWSERLESS_PROXY_STICKY", "true").strip().lower() not in {"0", "false", "no", "nao"}
@@ -42,19 +46,23 @@ class BrowserScraper:
             "proxySticky": "true" if sticky else "false",
             "proxyLocaleMatch": "true" if locale_match else "false",
         }
-        path = "/chromium/stealth" if stealth else ""
-        endpoint = f"{base}{path}?{urlencode(params)}"
+
+        # Browserless BaaS v2 / Playwright CDP. O caminho stealth documentado e /stealth.
+        ws_host = ws_base
+        if stealth and not ws_host.endswith("/stealth"):
+            ws_host += "/stealth"
+        ws_endpoint = f"{ws_host}?{urlencode(params)}"
+        cdp_error = None
 
         with sync_playwright() as p:
             browser = None
-            context = None
             try:
-                safe_host = base.replace("wss://", "").replace("ws://", "")
+                safe_host = ws_host.replace("wss://", "").replace("ws://", "")
                 logger.info(
-                    f"Abrindo Browserless residencial: host={safe_host} "
-                    f"proxy={proxy} pais={country} sticky={sticky} stealth={stealth}"
+                    f"Abrindo Browserless: host={safe_host} proxy={proxy} "
+                    f"pais={country} sticky={sticky} stealth={stealth}"
                 )
-                browser = p.chromium.connect_over_cdp(endpoint, timeout=max(self.timeout_ms, 60000))
+                browser = p.chromium.connect_over_cdp(ws_endpoint, timeout=max(self.timeout_ms, 60000))
                 contexts = browser.contexts
                 context = contexts[0] if contexts else browser.new_context(
                     locale="pt-BR",
@@ -87,19 +95,74 @@ class BrowserScraper:
                     "final_url": final_url,
                     "blocked": blocked,
                     "browserless": True,
+                    "browserless_mode": "CDP",
                     "proxy": proxy,
                     "proxy_country": country,
                 }
-            except PlaywrightTimeoutError as exc:
-                return {"error": f"Timeout do Browserless: {exc}", "final_url": url, "browserless": True}
             except Exception as exc:
-                return {"error": f"Falha no Browserless: {exc}", "final_url": url, "browserless": True}
+                cdp_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(f"Browserless CDP falhou; tentando REST /content: {type(exc).__name__}")
             finally:
                 if browser is not None:
                     try:
                         browser.close()
                     except Exception:
                         pass
+
+        # Fallback REST oficial. Ajuda a distinguir problema de CDP de problema de token/plano/proxy.
+        rest_params = dict(params)
+        if stealth:
+            rest_params["stealth"] = "true"
+        endpoint = f"{http_base}/content?{urlencode(rest_params)}"
+        try:
+            response = requests.post(
+                endpoint,
+                json={
+                    "url": url,
+                    "gotoOptions": {"waitUntil": "domcontentloaded", "timeout": max(self.timeout_ms, 60000)},
+                },
+                timeout=max(90, int(self.timeout_ms / 1000) + 30),
+                headers={"Content-Type": "application/json"},
+            )
+            if response.status_code >= 400:
+                detail = (response.text or "").strip().replace("\n", " ")[:500]
+                return {
+                    "error": f"Browserless REST HTTP {response.status_code}: {detail or 'sem detalhe'}",
+                    "final_url": url,
+                    "browserless": True,
+                    "browserless_mode": "REST_CONTENT",
+                    "cdp_error": cdp_error,
+                }
+            html = response.text or ""
+            soup = BeautifulSoup(html, "html.parser")
+            title = soup.title.get_text(" ", strip=True) if soup.title else ""
+            body_text = soup.get_text("\n", strip=True)
+            sample = f"{title}\n{body_text[:5000]}".casefold()
+            blocked = (
+                "acessou nosso site de uma forma um pouco diferente do comum" in sample
+                or "para sua segurança precisamos de uma verificação rápida" in sample
+                or "para sua seguranca precisamos de uma verificacao rapida" in sample
+                or "access denied" in sample
+                or "403 forbidden" in sample
+            )
+            return {
+                "html": html,
+                "text": body_text,
+                "title": title,
+                "final_url": url,
+                "blocked": blocked,
+                "browserless": True,
+                "browserless_mode": "REST_CONTENT",
+                "proxy": proxy,
+                "proxy_country": country,
+                "cdp_error": cdp_error,
+            }
+        except Exception as exc:
+            return {
+                "error": f"Falha no Browserless CDP e REST: CDP={cdp_error}; REST={type(exc).__name__}: {exc}",
+                "final_url": url,
+                "browserless": True,
+            }
 
     def fetch(self, url: str):
         with sync_playwright() as p:

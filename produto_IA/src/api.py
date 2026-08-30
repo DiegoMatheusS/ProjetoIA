@@ -15,7 +15,7 @@ from .scrapers.generic_scraper import GenericScraper
 
 app = FastAPI(
     title="CriaByte Produto IA",
-    version="14.7-railway",
+    version="14.8-railway",
     docs_url="/docs" if os.getenv("PRODUTO_IA_DOCS", "false").lower() in {"1", "true", "yes", "sim"} else None,
     redoc_url=None,
 )
@@ -98,7 +98,7 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
             }
 
     result["servicoProdutoIa"] = {
-        "versao": "14.7-railway",
+        "versao": "14.8-railway",
         "modo": "HTTP_API",
     }
     return result
@@ -255,13 +255,13 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
                 "aplicaAlteracoesAutomaticamente": False,
             }
 
-    result["servicoProdutoIa"] = {"versao": "14.7-railway", "modo": "CAPTURA_LOCAL_HTTP_API"}
+    result["servicoProdutoIa"] = {"versao": "14.8-railway", "modo": "CAPTURA_LOCAL_HTTP_API"}
     return result
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(ok=True, service="criabyte-produto-ia", version="14.7-railway")
+    return HealthResponse(ok=True, service="criabyte-produto-ia", version="14.8-railway")
 
 
 @app.post("/analisar")

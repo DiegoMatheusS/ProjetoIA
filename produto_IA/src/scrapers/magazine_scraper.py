@@ -1242,8 +1242,14 @@ class MagazineScraper:
                     )
                 except Exception as exc:
                     result, error, blocked = None, str(exc), False
-                # Se nao estiver configurado, nao repetir a mesma mensagem para cada URL.
+                # Se nao estiver configurado, registrar explicitamente no diagnostico.
                 if error == "BROWSERLESS_NAO_CONFIGURADO":
+                    attempts.append({
+                        "modo": "BROWSERLESS_CONFIG",
+                        "url": candidate_url,
+                        "bloqueado": False,
+                        "erro": error,
+                    })
                     break
                 attempts.append({
                     "modo": f"BROWSERLESS_{mode}",

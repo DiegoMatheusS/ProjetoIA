@@ -1,0 +1,8 @@
+PRODUTO IA V14.8 - BROWSERLESS
+
+- Registra BROWSERLESS_CONFIG quando o token nao estiver visivel no processo.
+- Adiciona browserlessConfigurado/browserlessProxy/browserlessPais no diagnostico.
+- Atualiza CDP stealth para /stealth.
+- Adiciona fallback Browserless REST /content se CDP falhar.
+- Erros HTTP do Browserless ficam visiveis sem expor o token.
+- Mantem proxy residencial BR e sticky.
