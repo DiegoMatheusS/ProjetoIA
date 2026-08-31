@@ -1,8 +1,10 @@
 # Produto IA — CriaByte (Python)
 
-## Atualização v14.8
+## Atualização v14.9
 
-A v14.8 adiciona fallback 100% em nuvem com Browserless. Quando HTTP, Chromium da Railway e URLs oficiais equivalentes do Magalu/Magazine Luiza falham, a IA conecta a um navegador Browserless usando as variáveis `BROWSERLESS_TOKEN`, `BROWSERLESS_PROXY` e `BROWSERLESS_PROXY_COUNTRY`. O padrão recomendado é proxy residencial no Brasil, com IP sticky, locale compatível e modo stealth. O token não é retornado na API nem gravado nos logs.
+A v14.9 usa **Surfsky** como fallback cloud principal para páginas Magalu/Magazine Você que bloqueiam a Railway. A Produto IA cria um perfil one-time via `POST /profiles/one_time`, conecta o Playwright ao `ws_url` retornado e abre a página dentro do Chromium remoto. As variáveis são `SURFSKY_TOKEN`, `SURFSKY_API_URL` e `SURFSKY_PROXY_COUNTRY`. O token fica somente no ambiente da Railway e nunca é retornado pela API.
+
+O Browserless permanece apenas como compatibilidade legada quando suas variáveis antigas ainda existirem.
 
 
 ## Atualização v14.6

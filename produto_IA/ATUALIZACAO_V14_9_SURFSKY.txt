@@ -1,0 +1,38 @@
+CRIABYTE - PRODUTO IA V14.9 - SURFSKY CLOUD
+
+Objetivo
+- Trocar o fallback cloud principal do Magalu de Browserless para Surfsky.
+- Manter toda a coleta na nuvem quando a Railway for bloqueada.
+- Nunca colocar SURFSKY_TOKEN no codigo, frontend, backend ou banco.
+
+Variaveis Railway - servico ProjetoIA
+SURFSKY_TOKEN=<segredo>
+SURFSKY_API_URL=https://api-de2.surfsky.io
+SURFSKY_PROXY_COUNTRY=br
+
+Opcionais
+SURFSKY_PROXY_TIER=shared   # ou premium, apenas se a conta tiver esse tier
+SURFSKY_PROXY_URL=          # proxy proprio, se houver
+SURFSKY_INACTIVE_KILL_TIMEOUT=90
+SURFSKY_FINGERPRINT_OS=win
+
+Fluxo Magalu
+1. HTTP original
+2. Chromium Railway original
+3. URLs oficiais equivalentes Magalu/Magazine Luiza
+4. Surfsky one-time profile
+5. Playwright conecta no ws_url retornado pelo Surfsky
+6. Abre a pagina, captura HTML/texto e normaliza no Produto IA
+7. Browserless permanece apenas como compatibilidade legada se ainda configurado
+
+Diagnostico novo no JSON
+- surfskyConfigurado
+- surfskyApiUrl
+- surfskyPais
+- surfskyProxyTier
+- tentativas SURFSKY_*
+
+Seguranca
+- SURFSKY_TOKEN e enviado somente no header X-Cloud-Api-Token para a API Surfsky.
+- O token nao e retornado no JSON e nao e escrito nos logs.
+- A sessao one-time e encerrada ao final da captura.

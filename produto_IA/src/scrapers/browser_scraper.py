@@ -18,6 +18,157 @@ class BrowserScraper:
         )
 
 
+    def surfsky_configured(self):
+        return bool(os.getenv("SURFSKY_TOKEN", "").strip())
+
+    def fetch_surfsky(self, url: str):
+        """Abre a pagina em um Chromium cloud do Surfsky.
+
+        A sessao e criada pela API /profiles/one_time e o Playwright conecta
+        ao ws_url retornado. O token nunca e logado nem devolvido.
+        """
+        token = os.getenv("SURFSKY_TOKEN", "").strip()
+        if not token:
+            return {"error": "SURFSKY_NAO_CONFIGURADO", "final_url": url, "surfsky": True}
+
+        api_base = os.getenv("SURFSKY_API_URL", "https://api-public.surfsky.io").strip().rstrip("/")
+        country = (os.getenv("SURFSKY_PROXY_COUNTRY", "br").strip() or "br").lower()
+        tier = os.getenv("SURFSKY_PROXY_TIER", "").strip().lower()
+        proxy_url = os.getenv("SURFSKY_PROXY_URL", "").strip()
+        inactive_timeout = max(45, int(os.getenv("SURFSKY_INACTIVE_KILL_TIMEOUT", "90")))
+
+        if proxy_url:
+            proxy_payload = proxy_url
+            proxy_label = "custom"
+        else:
+            proxy_payload = {"country": country} if country else {}
+            if tier:
+                proxy_payload["tier"] = tier
+            proxy_label = tier or "auto"
+
+        payload = {
+            "fingerprint": {"os": os.getenv("SURFSKY_FINGERPRINT_OS", "win").strip() or "win"},
+            "browser_settings": {"inactive_kill_timeout": inactive_timeout},
+        }
+        if proxy_payload:
+            payload["proxy"] = proxy_payload
+
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Cloud-Api-Token": token,
+        }
+        profile_uuid = None
+        browser = None
+
+        try:
+            logger.info(
+                f"Iniciando Surfsky: host={api_base.replace('https://', '').replace('http://', '')} "
+                f"proxy={proxy_label} pais={country or 'auto'}"
+            )
+            response = requests.post(
+                f"{api_base}/profiles/one_time",
+                headers=headers,
+                json=payload,
+                timeout=max(60, int(self.timeout_ms / 1000) + 30),
+            )
+            if response.status_code >= 400:
+                detail = (response.text or "").strip().replace("\n", " ")[:500]
+                return {
+                    "error": f"Surfsky API HTTP {response.status_code}: {detail or 'sem detalhe'}",
+                    "final_url": url,
+                    "surfsky": True,
+                }
+
+            try:
+                started = response.json()
+            except ValueError:
+                return {
+                    "error": "Surfsky API retornou resposta nao-JSON ao iniciar navegador",
+                    "final_url": url,
+                    "surfsky": True,
+                }
+
+            if not started.get("success", True):
+                code = started.get("code") or "SURFSKY_START_FALHOU"
+                msg = started.get("msg") or "falha ao iniciar navegador"
+                return {
+                    "error": f"Surfsky API {code}: {msg}",
+                    "final_url": url,
+                    "surfsky": True,
+                }
+
+            ws_url = str(started.get("ws_url") or "").strip()
+            profile_uuid = str(started.get("internal_uuid") or "").strip() or None
+            if not ws_url:
+                return {
+                    "error": "Surfsky API nao retornou ws_url",
+                    "final_url": url,
+                    "surfsky": True,
+                }
+
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(ws_url, timeout=max(self.timeout_ms, 60000))
+                contexts = browser.contexts
+                context = contexts[0] if contexts else browser.new_context(
+                    locale="pt-BR",
+                    timezone_id="America/Sao_Paulo",
+                    viewport={"width": 1365, "height": 900},
+                    color_scheme="light",
+                )
+                pages = context.pages
+                page = pages[0] if pages else context.new_page()
+                self.rate_limiter.wait(url)
+                page.goto(url, wait_until="domcontentloaded", timeout=max(self.timeout_ms, 60000))
+                page.wait_for_timeout(4000)
+                final_url = page.url
+                title = page.title()
+                html = page.content()
+                body_text = page.locator("body").inner_text(timeout=10000)
+                sample = f"{title}\n{body_text[:5000]}".casefold()
+                blocked = (
+                    "account-verification" in final_url.lower()
+                    or "az-request-verify" in final_url.lower()
+                    or "acessou nosso site de uma forma um pouco diferente do comum" in sample
+                    or "para sua segurança precisamos de uma verificação rápida" in sample
+                    or "para sua seguranca precisamos de uma verificacao rapida" in sample
+                    or "access denied" in sample
+                    or "403 forbidden" in sample
+                )
+                return {
+                    "html": html,
+                    "text": body_text,
+                    "title": title,
+                    "final_url": final_url,
+                    "blocked": blocked,
+                    "surfsky": True,
+                    "surfsky_mode": "CDP_ONE_TIME",
+                    "proxy": proxy_label,
+                    "proxy_country": country or None,
+                }
+        except Exception as exc:
+            return {
+                "error": f"Falha no Surfsky: {type(exc).__name__}: {exc}",
+                "final_url": url,
+                "surfsky": True,
+            }
+        finally:
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if profile_uuid:
+                try:
+                    requests.post(
+                        f"{api_base}/profiles/{profile_uuid}/stop",
+                        headers=headers,
+                        json={},
+                        timeout=15,
+                    )
+                except Exception:
+                    pass
+
     def browserless_configured(self):
         return bool(os.getenv("BROWSERLESS_TOKEN", "").strip())
 

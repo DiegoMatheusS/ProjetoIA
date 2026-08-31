@@ -33,7 +33,7 @@ class MagazineScraper:
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
         # Namespace versionado para nunca reaproveitar capturas de páginas de
         # verificação que versões antigas tenham salvo como se fossem produto.
-        self.cache_namespace = "magalu_result_v14_7"
+        self.cache_namespace = "magalu_result_v14_9"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
@@ -1065,6 +1065,43 @@ class MagazineScraper:
         result["url_original"] = original_url
         return result, None, False
 
+    def _try_surfsky_product(self, original_url: str, candidate_url: str, source: str):
+        from .browser_scraper import BrowserScraper
+
+        scraper = BrowserScraper()
+        if not scraper.surfsky_configured():
+            return None, "SURFSKY_NAO_CONFIGURADO", False
+        browser = scraper.fetch_surfsky(candidate_url)
+        if browser.get("error"):
+            return None, browser.get("error"), False
+        title = browser.get("title") or ""
+        body_text = browser.get("text") or ""
+        final_url = browser.get("final_url") or candidate_url
+        blocked = bool(browser.get("blocked")) or self._is_access_error_page(title, body_text, final_url)
+        if blocked:
+            return None, None, True
+        if not self._capture_has_product_evidence(
+            final_url if self.is_product_url(final_url) else candidate_url,
+            browser.get("html") or "",
+            title,
+            body_text,
+        ):
+            return None, "MAGALU_SURFSKY_SEM_EVIDENCIA_DE_PRODUTO", False
+
+        result = self._parse_magazine_html(
+            original_url,
+            final_url,
+            browser.get("html") or "",
+            body_text=body_text,
+            source=source,
+        )
+        result["blocked"] = False
+        result["url_original"] = original_url
+        result["surfsky"] = True
+        result["proxy_network"] = browser.get("proxy")
+        result["proxy_country"] = browser.get("proxy_country")
+        return result, None, False
+
     def _try_browserless_product(self, original_url: str, candidate_url: str, source: str):
         from .browser_scraper import BrowserScraper
 
@@ -1229,8 +1266,59 @@ class MagazineScraper:
                     self.cache.set(url, result, namespace=self.cache_namespace)
                     return result
 
-        # 4) Ultimo fallback cloud: Browserless com proxy residencial.
-        # So consome unidades quando as tentativas HTTP/Chromium da Railway falharam.
+        # 4) Fallback cloud principal: Surfsky. Cria um Chromium remoto com
+        # fingerprint consistente e proxy geolocalizado conforme SURFSKY_PROXY_COUNTRY.
+        # So consome sessao cloud depois das tentativas HTTP/Chromium da Railway.
+        if not no_browser:
+            surfsky_candidates = [("ORIGINAL", url)] + alternative_candidates
+            surfsky_configured = False
+            try:
+                from .browser_scraper import BrowserScraper
+                surfsky_configured = BrowserScraper().surfsky_configured()
+            except Exception:
+                surfsky_configured = False
+
+            if surfsky_configured:
+                for mode, candidate_url in surfsky_candidates:
+                    try:
+                        result, error, blocked = self._try_surfsky_product(
+                            url,
+                            candidate_url,
+                            "MAGALU_SURFSKY_CLOUD",
+                        )
+                    except Exception as exc:
+                        result, error, blocked = None, str(exc), False
+                    attempts.append({
+                        "modo": f"SURFSKY_{mode}",
+                        "url": candidate_url,
+                        "bloqueado": blocked,
+                        "erro": clean_text(str(error)) if error else None,
+                    })
+                    any_blocked = any_blocked or blocked
+                    last_error = error or last_error
+                    if error and (
+                        str(error).startswith("Surfsky API HTTP 401")
+                        or str(error).startswith("Surfsky API HTTP 403")
+                        or str(error).startswith("Surfsky API HTTP 429")
+                        or str(error).startswith("Surfsky API ")
+                        or str(error).startswith("Falha no Surfsky")
+                    ):
+                        break
+                    if self._cacheable_result(result):
+                        result["cache_hit"] = False
+                        result["tentativasColeta"] = attempts
+                        self.cache.set(url, result, namespace=self.cache_namespace)
+                        return result
+            else:
+                attempts.append({
+                    "modo": "SURFSKY_CONFIG",
+                    "url": url,
+                    "bloqueado": False,
+                    "erro": "SURFSKY_NAO_CONFIGURADO",
+                })
+
+        # 5) Compatibilidade com instalacoes antigas que ainda tenham Browserless.
+        # Na configuracao atual do CriaByte o provedor principal e o Surfsky.
         if not no_browser:
             browserless_candidates = [("ORIGINAL", url)] + alternative_candidates
             for mode, candidate_url in browserless_candidates:

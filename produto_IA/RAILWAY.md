@@ -1,4 +1,4 @@
-# Produto IA v14.8 - Railway
+# Produto IA v14.9 - Railway
 
 ## Deploy
 
@@ -29,6 +29,7 @@ A API key é opcional, mas recomendada. Se definida, `POST /analisar` exige:
 
 - `GET /health`
 - `POST /analisar`
+- `POST /analisar-captura`
 
 Exemplo de corpo:
 
@@ -72,17 +73,25 @@ O cache foi versionado na v14.6, portanto respostas incorretas de verificação 
 
 Para links Magazine Você bloqueados, além da página desktop do Magazine Luiza, a v14.6 tenta a mesma página sem `seller_id` e no domínio público móvel `m.magazineluiza.com.br`. Essas variações usam o mesmo código de produto. Se todas forem bloqueadas, a API continua retornando `MAGALU_COLETA_BLOQUEADA` sem criar dados falsos.
 
-## Browserless v14.8
+## Surfsky v14.9
 
-Para manter a coleta em nuvem quando o Magalu bloquear IPs da Railway, configure no serviço ProjetoIA:
+Configure no serviço `ProjetoIA` da Railway:
 
 ```env
-BROWSERLESS_TOKEN=SEU_TOKEN
-BROWSERLESS_PROXY=residential
-BROWSERLESS_PROXY_COUNTRY=BR
-BROWSERLESS_PROXY_STICKY=true
-BROWSERLESS_PROXY_LOCALE_MATCH=true
-BROWSERLESS_STEALTH=true
+SURFSKY_TOKEN=SEU_TOKEN
+SURFSKY_API_URL=https://api-de2.surfsky.io
+SURFSKY_PROXY_COUNTRY=br
 ```
 
-O Browserless só é acionado depois das tentativas normais falharem. O token é lido apenas do ambiente e não é escrito nos logs/respostas.
+O Surfsky é acionado somente depois das tentativas normais da Railway falharem. A v14.9 cria um perfil one-time, recebe `ws_url`, conecta o Playwright por CDP e encerra a sessão ao terminar. O token é enviado apenas no header `X-Cloud-Api-Token`.
+
+Variáveis opcionais:
+
+```env
+# SURFSKY_PROXY_TIER=shared
+# SURFSKY_PROXY_URL=
+# SURFSKY_INACTIVE_KILL_TIMEOUT=90
+# SURFSKY_FINGERPRINT_OS=win
+```
+
+`SURFSKY_PROXY_TIER` deve ser usado apenas se você quiser fixar explicitamente um tier habilitado na conta. Sem ele, o Surfsky escolhe o tier disponível conforme a conta.
