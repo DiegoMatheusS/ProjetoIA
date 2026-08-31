@@ -1,3 +1,7 @@
+## Atualização v14.10
+
+A v14.10 mantém o Surfsky como fallback cloud e corrige os detalhes encontrados no primeiro teste real bem-sucedido: GPU exata em vez de família genérica, remoção de variante falsa de galeria, falso positivo de ventoinha em GPU e metadados de versão para o backend usar sem hardcode.
+
 # Produto IA — CriaByte (Python)
 
 ## Atualização v14.9

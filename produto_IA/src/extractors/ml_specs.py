@@ -672,6 +672,17 @@ def extract_gpu(mapping, text):
     specs = {}
     set_if(specs, "chipset", attr(mapping, "CHIPSET", "GPU_CHIPSET", "Chipset"))
     gpu = attr(mapping, "GPU_MODEL", "GRAPHICS_PROCESSOR", "GPU", "Modelo da GPU")
+
+    # A ficha pode trazer só a família (ex.: "AMD Radeon RX série 9000")
+    # enquanto o título informa o chip exato (ex.: "AMD Radeon RX 9070 XT").
+    exact_gpu = (
+        first_match(text, r"\b(AMD\s+Radeon\s+RX\s*\d{4}(?:\s*(?:XTX|XT|GRE))?)\b")
+        or first_match(text, r"\b(NVIDIA\s+GeForce\s+(?:RTX|GTX)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
+        or first_match(text, r"\b((?:RX|RTX|GTX)\s*\d{3,4}(?:\s*(?:XTX|XT|GRE|Ti|SUPER))?)\b")
+    )
+    generic_family = bool(gpu and re.search(r"\b(?:s[eé]rie|series)\b", str(gpu), re.I))
+    if exact_gpu and (not gpu or generic_family):
+        gpu = exact_gpu
     if not gpu:
         gpu = first_match(text, r"\b((?:AMD\s+Radeon|NVIDIA\s+GeForce)\s+(?:RX|RTX|GTX)?\s*\d{3,5}(?:\s*XT|\s*Ti|\s*SUPER)?)\b")
     set_if(specs, "gpu", gpu)

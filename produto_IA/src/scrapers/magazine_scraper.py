@@ -33,7 +33,7 @@ class MagazineScraper:
         self.cache_ttl = int(os.getenv("MAGAZINE_CACHE_TTL_SECONDS", "600"))
         # Namespace versionado para nunca reaproveitar capturas de páginas de
         # verificação que versões antigas tenham salvo como se fossem produto.
-        self.cache_namespace = "magalu_result_v14_9"
+        self.cache_namespace = "magalu_result_v14_10"
         self.generic = GenericScraper()
         self.session = requests.Session()
         self.session.headers.update({
@@ -576,6 +576,12 @@ class MagazineScraper:
             value = clean_text(value)
             if not value or len(value) > 160:
                 return
+            # Controles de galeria/acessibilidade do Magalu podem aparecer como
+            # aria-selected mesmo sem representarem uma variante de produto.
+            if re.search(r"^selecionar\s+(?:imagem|vídeo|video)$", value, re.I):
+                return
+            if name.casefold() in {"base-button", "image-button", "gallery-button"}:
+                return
             key = (name.casefold(), value.casefold())
             if key in seen:
                 return
@@ -614,7 +620,6 @@ class MagazineScraper:
         patterns = [
             r"\bkit\s+(?:com|de)\s+(\d+)\b",
             r"\b(\d+)\s*x\s*(?:8|16|24|32|48|64)\s*gb\b",
-            r"\b(\d+)\s*(?:fans?|ventoinhas?)\b",
         ]
         for pattern in patterns:
             m = re.search(pattern, low, re.I)
@@ -622,6 +627,13 @@ class MagazineScraper:
                 quantity = int(m.group(1))
                 is_kit = True
                 break
+
+        # Contagem de fans numa GPU/cooler descreve refrigeração, não kit.
+        # Só usa essa quantidade se o próprio título já declarou kit/combo.
+        if is_kit and quantity is None:
+            m = re.search(r"\b(\d+)\s*(?:fans?|ventoinhas?)\b", low, re.I)
+            if m:
+                quantity = int(m.group(1))
 
         components = []
         component_terms = (
@@ -635,6 +647,8 @@ class MagazineScraper:
                 components.append(category)
         if len(components) > 1:
             is_kit = True
+        if not is_kit:
+            components = []
         return {"ehKitCombo": is_kit, "quantidadeDetectada": quantity, "componentesDetectados": components}
 
     @staticmethod
