@@ -1,0 +1,16 @@
+PRODUTO IA v14.13 - MERCADO LIVRE ROBUSTO
+
+Correções:
+- Mercado Livre não encerra mais o fluxo só porque a API retornou um objeto parcial.
+- Se faltarem preço, imagem, marca/modelo/MPN ou ficha técnica suficiente, usa Surfsky na mesma PDP.
+- Parser dedicado para preço principal do Mercado Livre (andes-money-amount), evitando confundir parcela e separador de milhar.
+- Parser dedicado para características em tabelas e linhas ui-vpp-striped-specs / ui-pdp-specs.
+- Surfsky tenta expandir Características e Descrição antes de capturar o HTML.
+- Mescla API + Surfsky de forma conservadora: API mantém precedência e navegador preenche ausências.
+- Links curtos meli.la são reconhecidos como Mercado Livre.
+- codigoMarketplace passa a receber item_id/catalog_product_id quando disponível.
+- Mantém enriquecimento técnico automático da v14.12 após a coleta comercial.
+
+Variáveis: nenhuma nova. Usa SURFSKY_TOKEN, SURFSKY_API_URL e SURFSKY_PROXY_COUNTRY já existentes.
+
+Versão: 14.13-railway

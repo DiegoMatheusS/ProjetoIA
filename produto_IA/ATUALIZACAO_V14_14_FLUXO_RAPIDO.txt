@@ -1,0 +1,50 @@
+PROJETO IA v14.14 - COLETA CLOUD RÁPIDA E FILA PROTEGIDA
+
+Objetivo:
+Corrigir casos em que Magalu e Mercado Livre pareciam não responder porque uma
+análise podia ficar muito tempo ocupando a única vaga de PRODUTO_IA_CONCURRENCY.
+
+Principais mudanças:
+
+1. MAGALU / MAGAZINE VOCE
+- Tenta HTTP original primeiro (barato).
+- Se Surfsky estiver configurado, tenta SURFSKY_ORIGINAL imediatamente.
+- Não espera o Chromium de datacenter da Railway antes do Surfsky.
+- Se Surfsky original falhar, limita as tentativas cloud alternativas.
+- Mantém diagnóstico em tentativasColeta.
+
+2. MERCADO LIVRE
+- Quando ML_ACCESS_TOKEN não está configurado e Surfsky está disponível,
+  prioriza a PDP pública pelo Surfsky.
+- Não fica preso em vários endpoints da API do Mercado Livre antes do browser.
+- Se Surfsky falhar, o fluxo antigo de API/fallback continua disponível.
+- Links que redirecionam podem recuperar o MLB a partir da URL final.
+
+3. ENRIQUECIMENTO AUTOMÁTICO
+- Não dispara apenas porque falta qualquer campo opcional.
+- Dispara se faltar campo obrigatório OU se cobertura técnica ficar abaixo de 45%.
+- Modo automático consulta no máximo 3 fontes relevantes por padrão.
+- Timeout por fonte automático padrão: 5 segundos.
+- Orçamento total automático padrão: 18 segundos entre fontes.
+- Enriquecimento automático NÃO abre sessões Surfsky extras para sites técnicos.
+- Para cedo quando chega a 70% de cobertura e obrigatórios estão preenchidos.
+- enrich=true continua sendo o modo completo, quando solicitado explicitamente.
+
+Variáveis opcionais novas (não precisam ser criadas para funcionar):
+ENRICHMENT_AUTO_MIN_COVERAGE=0.45
+ENRICHMENT_AUTO_TARGET_COVERAGE=0.70
+ENRICHMENT_AUTO_MAX_SOURCES=3
+ENRICHMENT_AUTO_SOURCE_TIMEOUT=5
+ENRICHMENT_AUTO_TOTAL_TIMEOUT_SECONDS=18
+
+As variáveis Surfsky existentes continuam as mesmas:
+SURFSKY_TOKEN
+SURFSKY_API_URL
+SURFSKY_PROXY_COUNTRY
+
+Versão:
+14.14-railway
+
+Testes:
+147 testes aprovados na estrutura raiz.
+147 testes aprovados no diretório /produto_IA usado pela Railway.

@@ -1,0 +1,43 @@
+CRIABYTE - PRODUTO IA V14.6 - CAPTURA LOCAL + RAILWAY
+======================================================
+
+OBJETIVO
+Quando Magalu/Magazine bloquear IP de datacenter da Railway, a pagina pode ser
+capturada pelo Chrome no computador do ADMIN e enviada para a Produto IA para
+normalizacao.
+
+NOVO ENDPOINT
+POST /analisar-captura
+Header: X-API-Key: mesma PRODUTO_IA_API_KEY configurada na Railway
+
+Body:
+{
+  "url": "https://...",
+  "categoria": null,
+  "captura": { ... dados da captura local ... },
+  "enrich": false,
+  "criabytePlan": false
+}
+
+O endpoint aceita:
+- captura completa com HTML; ou
+- captura estruturada do capturador Windows do CriaByte.
+
+REGRAS
+- a pagina e aberta localmente; a inteligencia/normalizacao continua na Railway;
+- SKU da loja nao vira MPN automaticamente;
+- parcelas sao removidas da ficha tecnica;
+- marca/modelo/MPN passam pelas mesmas regras da Produto IA;
+- resultado marca origemColeta.capturaLocal=true;
+- modo do servico: CAPTURA_LOCAL_HTTP_API;
+- cache Magalu foi versionado novamente para v14.6.
+
+VALIDACAO
+- Suite completa: 119 testes passando.
+- Validado com captura real da XFX RX 9070 XT enviada anteriormente:
+  Marca: XFX
+  Modelo: Swift RX 9070 XT
+  MPN: RX-97TSWF3W9
+  Preco: 5694.10
+  Disponivel: true
+  Ficha tecnica de GPU preenchida.

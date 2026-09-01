@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node legado
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Segredos
+.env
+
+# Dados gerados
+data/raw/*
+!data/raw/.gitkeep
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OAuth temporário
+.ml_oauth_pending.json
+
+# Cache HTTP local
+.cache/
+
+# Capturas locais temporárias
+magalu_capture.json
+data/local/*.json

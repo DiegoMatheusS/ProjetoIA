@@ -1,0 +1,12 @@
+{
+  "ofertas": [
+    {
+      "produtoId": "produto-exemplo-1",
+      "ofertaId": "oferta-exemplo-1",
+      "nome": "Produto de exemplo",
+      "url": "https://exemplo.invalid/produto",
+      "precoAtual": 999.9,
+      "disponivelAtual": true
+    }
+  ]
+}

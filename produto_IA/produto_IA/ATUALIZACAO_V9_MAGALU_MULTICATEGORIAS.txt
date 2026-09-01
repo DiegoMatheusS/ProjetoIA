@@ -1,0 +1,30 @@
+CriaByte Produto IA - v9
+
+Versão cumulativa: inclui tudo das versões v7 e v8.
+Quando o Codespaces voltar, basta aplicar a v9; não é necessário aplicar v7/v8 antes.
+
+Validada com capturas reais do Magazine Você/Magalu para:
+- SSD / armazenamento
+- fonte
+- gabinete
+- air cooler
+- water cooler
+- notebook
+- monitor
+
+Principais correções:
+- SSD: leitura/gravação sequencial, PCIe x4 e dimensões M.2 22x80x2,3 mm.
+- Fonte: corrige Modular Não -> NAO_MODULAR; dimensões PxLxA; conectores; tensão de entrada; proteções; MPN de fabricante.
+- Gabinete: Micro-ATX/ITX sem falso ATX; fonte ATX; GPU/cooler máximos; baias; slots; posições/quantidades de fans.
+- Gabinete: não inventa altura/largura/profundidade quando a página não informa dimensões externas.
+- Coolers: sockets Intel/AMD, inclusive listas como LGA115X / 1200 / 1700; TDP; fan; RPM; ruído; radiador; ARGB.
+- Notebook: CPU/GPU, turbo, tela/painel, peso, conversão cm -> mm, Wi-Fi/Bluetooth, USB A/C, webcam e teclado numérico.
+- Monitor: painel HVA separado de QD-Mini LED; VESA; HDR/FreeSync/G-SYNC. HDMI 2.1 não é confundido com 2 portas HDMI.
+- Identidade: Referência explícita do Magalu pode alimentar MPN; códigos de fabricante presentes em Características/título têm prioridade sobre MPN genérico ruim do JSON-LD.
+- Descrições HTML são convertidas para texto limpo.
+- Continua sem vendedor, entregue por, frete ou dados de pagamento no resultado de produto.
+- Continua sem inventar especificações ausentes.
+
+Validação desta versão:
+- 35 testes automatizados aprovados.
+- 7 capturas reais adicionais validadas ponta a ponta.
