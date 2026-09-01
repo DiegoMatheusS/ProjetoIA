@@ -1,7 +1,10 @@
 from copy import deepcopy
 
 from .identity import build_identity, identity_is_strong
-from .providers import ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider
+from .providers import (
+    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
+    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+)
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED
 from ..extractors.ml_specs import extract_specs
 
@@ -18,6 +21,29 @@ def _normalized_for_compare(value):
     return value
 
 
+def technical_missing_fields(result):
+    """Retorna campos técnicos esperados ainda ausentes.
+
+    A v14.12 usa isso para disparar enriquecimento automaticamente quando a
+    página comercial (Magalu/ML) não possui a ficha completa. Não se limita aos
+    campos mínimos obrigatórios do cadastro.
+    """
+    category = (result or {}).get("categoriaDetectada")
+    schema = SCHEMAS.get(category) if category else None
+    if not schema or not schema[1]:
+        return []
+    expected = schema[2] or []
+    specs = (result or {}).get("especificacoesEncontradas") or {}
+    return [field for field in expected if _missing(specs.get(field))]
+
+
+def should_auto_enrich(result):
+    """Enriquecimento obrigatório quando existe identidade forte e lacuna técnica."""
+    if not technical_missing_fields(result):
+        return False
+    return identity_is_strong(build_identity(result or {}))
+
+
 class TechnicalEnricher:
     """Complementa apenas campos técnicos ausentes.
 
@@ -31,6 +57,9 @@ class TechnicalEnricher:
     def __init__(self, providers=None):
         self.providers = providers or [
             ManufacturerProvider(),
+            CPUWorldProvider(),
+            CPUMonkeyProvider(),
+            WikiChipProvider(),
             TechPowerUpProvider(),
             PCKomboProvider(),
             GeizhalsProvider(),
@@ -51,6 +80,8 @@ class TechnicalEnricher:
             "origemPorCampo": {},
             "conflitos": [],
             "motivoIgnorado": None,
+            "camposAusentesAntes": technical_missing_fields(output),
+            "camposAusentesDepois": [],
         }
 
         if not identity_is_strong(identity):
@@ -111,6 +142,7 @@ class TechnicalEnricher:
         output["camposObrigatoriosAusentes"] = [
             field for field in REQUIRED.get(category, []) if _missing(specs.get(field))
         ]
+        info["camposAusentesDepois"] = technical_missing_fields(output)
         output["enriquecimentoTecnico"] = info
         return output
 

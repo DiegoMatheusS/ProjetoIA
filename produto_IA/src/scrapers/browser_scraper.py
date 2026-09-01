@@ -21,7 +21,7 @@ class BrowserScraper:
     def surfsky_configured(self):
         return bool(os.getenv("SURFSKY_TOKEN", "").strip())
 
-    def fetch_surfsky(self, url: str):
+    def fetch_surfsky(self, url: str, interaction_profile: str | None = None):
         """Abre a pagina em um Chromium cloud do Surfsky.
 
         A sessao e criada pela API /profiles/one_time e o Playwright conecta
@@ -121,6 +121,56 @@ class BrowserScraper:
                 self.rate_limiter.wait(url)
                 page.goto(url, wait_until="domcontentloaded", timeout=max(self.timeout_ms, 60000))
                 page.wait_for_timeout(4000)
+
+                # v14.13: algumas PDPs do Mercado Livre deixam a ficha técnica
+                # atrás de conteúdo preguiçoso/expansível. O perfil de interação
+                # só rola a própria PDP e tenta expandir botões de características/
+                # descrição. Não navega por resultados nem por outras ofertas.
+                if interaction_profile == "mercadolivre":
+                    try:
+                        page.locator("h1").first.wait_for(state="visible", timeout=12000)
+                    except Exception:
+                        pass
+                    try:
+                        page.evaluate("window.scrollTo(0, Math.max(700, document.body.scrollHeight * 0.45))")
+                        page.wait_for_timeout(900)
+                    except Exception:
+                        pass
+
+                    expand_labels = [
+                        "Ver características do produto",
+                        "Ver caracteristicas do produto",
+                        "Ver características",
+                        "Ver caracteristicas",
+                        "Ver todas as características",
+                        "Ver todas as caracteristicas",
+                        "Mostrar todas as características",
+                        "Mostrar todas as caracteristicas",
+                        "Ver mais características",
+                        "Ver mais caracteristicas",
+                        "Ver descrição completa",
+                        "Ver descricao completa",
+                    ]
+                    for label in expand_labels:
+                        for selector in (
+                            f'button:has-text("{label}")',
+                            f'a:has-text("{label}")',
+                            f'[role="button"]:has-text("{label}")',
+                        ):
+                            try:
+                                locator = page.locator(selector).first
+                                if locator.count() and locator.is_visible():
+                                    locator.click(timeout=2500)
+                                    page.wait_for_timeout(700)
+                                    break
+                            except Exception:
+                                continue
+                    try:
+                        page.evaluate("window.scrollTo(0, Math.max(1200, document.body.scrollHeight * 0.72))")
+                        page.wait_for_timeout(1200)
+                    except Exception:
+                        pass
+
                 final_url = page.url
                 title = page.title()
                 html = page.content()

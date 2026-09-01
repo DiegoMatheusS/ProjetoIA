@@ -1,4 +1,4 @@
-# Produto IA v14.10 - Railway
+# Produto IA v14.13 - Railway
 
 ## Deploy
 
@@ -17,7 +17,8 @@ HEADLESS=true
 PRODUTO_IA_CONCURRENCY=1
 PRODUTO_IA_API_KEY=COLOQUE_UMA_CHAVE_FORTE_AQUI
 PRODUTO_IA_DOCS=false
-ENRICHMENT_AUTO=false
+ENRICHMENT_AUTO=false  # opcional; v14.12 enriquece automaticamente quando faltarem campos técnicos
+ENRICHMENT_DISABLE=false
 CRIABYTE_API_URL=https://api.criabyte.com.br/api
 ```
 
@@ -95,3 +96,23 @@ Variáveis opcionais:
 ```
 
 `SURFSKY_PROXY_TIER` deve ser usado apenas se você quiser fixar explicitamente um tier habilitado na conta. Sem ele, o Surfsky escolhe o tier disponível conforme a conta.
+
+
+
+## Mercado Livre v14.13
+
+Quando a API do Mercado Livre vier parcial ou sem dados, a Produto IA usa o Surfsky já configurado para abrir a PDP real. A coleta tenta expandir características e descrição, lê o preço principal sem confundir parcelas e mescla apenas campos ausentes com os dados da API. Links `meli.la` também são reconhecidos. Não é necessária variável nova além das `SURFSKY_*` já usadas.
+
+## Enriquecimento técnico automático v14.12
+
+A partir da v14.12, `ENRICHMENT_AUTO=false` **não impede** o fallback necessário quando Magalu/Mercado Livre entregam uma ficha técnica incompleta. Se a identidade do produto estiver confirmada (GTIN, marca+MPN ou marca+modelo forte) e houver campos técnicos ausentes, a IA consulta automaticamente, nesta prioridade:
+
+1. fabricante oficial;
+2. CPU-World (processadores);
+3. CPU-Monkey (processadores);
+4. WikiChip (CPU/GPU);
+5. TechPowerUp (GPU);
+6. PC-Kombo;
+7. Geizhals.
+
+Somente campos ausentes são preenchidos. Valores conflitantes são registrados em `enriquecimentoTecnico.conflitos` e não substituem silenciosamente o valor principal. Para desativar completamente esse fallback, use `ENRICHMENT_DISABLE=true`.

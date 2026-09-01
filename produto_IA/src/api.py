@@ -79,9 +79,14 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     auto_enrich = os.getenv("ENRICHMENT_AUTO", "false").strip().casefold() in {
         "1", "true", "sim", "yes"
     }
-    if payload.enrich or auto_enrich:
-        from .enrichment.core import apply_enrichment
+    enrichment_disabled = os.getenv("ENRICHMENT_DISABLE", "false").strip().casefold() in {
+        "1", "true", "sim", "yes"
+    }
+    from .enrichment.core import apply_enrichment, should_auto_enrich
+    mandatory_missing_enrichment = should_auto_enrich(result) and not enrichment_disabled
+    if payload.enrich or auto_enrich or mandatory_missing_enrichment:
         result = apply_enrichment(result)
+        result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient
@@ -240,9 +245,12 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
 
     result = build_result(raw, payload.categoria)
     auto_enrich = os.getenv("ENRICHMENT_AUTO", "false").strip().casefold() in {"1", "true", "sim", "yes"}
-    if payload.enrich or auto_enrich:
-        from .enrichment.core import apply_enrichment
+    enrichment_disabled = os.getenv("ENRICHMENT_DISABLE", "false").strip().casefold() in {"1", "true", "sim", "yes"}
+    from .enrichment.core import apply_enrichment, should_auto_enrich
+    mandatory_missing_enrichment = should_auto_enrich(result) and not enrichment_disabled
+    if payload.enrich or auto_enrich or mandatory_missing_enrichment:
         result = apply_enrichment(result)
+        result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient

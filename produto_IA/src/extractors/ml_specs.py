@@ -112,6 +112,11 @@ def size_mb(value):
 def boolean(value):
     if value is None:
         return None
+    raw = str(value).strip()
+    if raw in {"✓", "✔", "✅"}:
+        return True
+    if raw in {"✗", "✘", "❌"}:
+        return False
     token = normalize_key(value)
     yes = {"sim", "yes", "true", "possui", "incluso", "incluido", "com", "compativel"}
     no = {"nao", "no", "false", "sem", "nao_possui", "nao_incluso", "nao_incluido"}
@@ -375,37 +380,56 @@ def resolution(value):
 
 def extract_processor(mapping, text):
     specs = {}
-    socket_raw = attr(mapping, "CPU_SOCKET", "PROCESSOR_SOCKET", "SOCKET", "Socket", "Soquete", "Soquetes compatíveis", "Soquetes compativeis") or first_match(text, r"(?:Socket|Soquete)\s*:\s*([A-Za-z0-9+\-]+)")
+    socket_raw = attr(mapping, "CPU_SOCKET", "PROCESSOR_SOCKET", "SOCKET", "Socket", "Soquete", "Soquetes compatíveis", "Soquetes compativeis", "Sockets Supported") or first_match(text, r"(?:Socket|Soquete)\s*:\s*([A-Za-z0-9+\-]+)")
     set_if(specs, "socket", normalize_cpu_socket(socket_raw))
-    set_if(specs, "familia", attr(mapping, "PROCESSOR_FAMILY", "CPU_FAMILY", "Família do processador"))
-    set_if(specs, "linha", attr(mapping, "LINE", "PROCESSOR_LINE", "Linha do processador"))
-    set_if(specs, "geracao", attr(mapping, "PROCESSOR_GENERATION", "Geração do processador"))
+    family_attr = attr(mapping, "PROCESSOR_FAMILY", "CPU_FAMILY", "Família do processador", "Family")
+    if family_attr:
+        # CPU-Monkey costuma usar "Intel Core i5"/"AMD Ryzen 5" em Family.
+        # Mantemos a família completa quando ela é explicitamente rotulada.
+        set_if(specs, "familia", family_attr)
+    set_if(specs, "linha", attr(mapping, "LINE", "PROCESSOR_LINE", "Linha do processador", "CPU group"))
+    set_if(specs, "geracao", attr(mapping, "PROCESSOR_GENERATION", "Geração do processador", "Generation"))
 
-    architecture = attr(mapping, "MICROARCHITECTURE", "PROCESSOR_MICROARCHITECTURE", "Microarquitetura", "Arquitetura")
+    architecture = attr(mapping, "MICROARCHITECTURE", "PROCESSOR_MICROARCHITECTURE", "Microarquitetura", "Arquitetura", "Architecture")
     if architecture and normalize_key(architecture) not in {"x86_64", "x64", "amd64", "x86", "ia_32"}:
         specs["arquitetura"] = architecture
 
-    set_if(specs, "litografiaNm", integer(attr(mapping, "LITHOGRAPHY", "PROCESSOR_LITHOGRAPHY", "Litografia", "Processo de fabricação")))
-    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos")))
-    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads")))
-    set_if(specs, "frequenciaBaseMhz", frequency_mhz(attr(mapping, "PROCESSOR_BASE_FREQUENCY", "BASE_CLOCK_FREQUENCY", "Frequência base", "Clock base")))
-    set_if(specs, "frequenciaTurboMhz", frequency_mhz(attr(mapping, "MAX_TURBO_FREQUENCY", "PROCESSOR_MAX_FREQUENCY", "Frequência turbo máxima", "Frequência máxima")))
-    set_if(specs, "cacheL2Mb", size_mb(attr(mapping, "L2_CACHE", "PROCESSOR_L2_CACHE", "Cache L2")))
-    set_if(specs, "cacheL3Mb", size_mb(attr(mapping, "L3_CACHE", "PROCESSOR_L3_CACHE", "Cache L3")))
-    set_if(specs, "tdpWatts", integer(attr(mapping, "THERMAL_DESIGN_POWER", "PROCESSOR_TDP", "TDP")))
+    set_if(specs, "litografiaNm", integer(attr(mapping, "LITHOGRAPHY", "PROCESSOR_LITHOGRAPHY", "Litografia", "Processo de fabricação", "Lithography", "Technology")))
+    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos", "Total Cores", "Cores", "Core Count")))
+    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads", "Total Threads", "Threads", "Thread Count")))
+    cores_threads = attr(mapping, "CPU Cores / Threads", "Cores / Threads")
+    if cores_threads:
+        pair = re.search(r"(\d{1,3})\s*/\s*(\d{1,3})", cores_threads)
+        if pair:
+            if "nucleos" not in specs:
+                specs["nucleos"] = int(pair.group(1))
+            if "threads" not in specs:
+                specs["threads"] = int(pair.group(2))
+    set_if(specs, "frequenciaBaseMhz", frequency_mhz(attr(mapping, "PROCESSOR_BASE_FREQUENCY", "BASE_CLOCK_FREQUENCY", "Frequência base", "Clock base", "Processor Base Frequency", "Base Frequency", "Base Clock", "Frequency")))
+    set_if(specs, "frequenciaTurboMhz", frequency_mhz(attr(mapping, "MAX_TURBO_FREQUENCY", "PROCESSOR_MAX_FREQUENCY", "Frequência turbo máxima", "Frequência máxima", "Max Turbo Frequency", "Maximum Turbo Frequency", "Turbo Frequency (1 Core)", "Turbo Frequency", "Boost Clock")))
+    set_if(specs, "cacheL2Mb", size_mb(attr(mapping, "L2_CACHE", "PROCESSOR_L2_CACHE", "Cache L2", "L2-Cache", "L2 Cache")))
+    set_if(specs, "cacheL3Mb", size_mb(attr(mapping, "L3_CACHE", "PROCESSOR_L3_CACHE", "Cache L3", "L3-Cache", "L3 Cache", "Intel Smart Cache", "Cache")))
+    set_if(specs, "tdpWatts", integer(attr(mapping, "THERMAL_DESIGN_POWER", "PROCESSOR_TDP", "TDP", "Thermal Design Power")))
 
-    mem = attr(mapping, "RAM_MEMORY_TYPE", "SUPPORTED_RAM_MEMORY_TYPES", "Tipos de memória RAM suportados", "Tipos de memória RAM suportadas", "Tipo de memória RAM", "Tipo de Memória")
+    mem = attr(mapping, "RAM_MEMORY_TYPE", "SUPPORTED_RAM_MEMORY_TYPES", "Tipos de memória RAM suportados", "Tipos de memória RAM suportadas", "Tipo de memória RAM", "Tipo de Memória", "Memory Types", "Supported Memory Types", "Memory type")
     if memory_types(mem):
         specs["tiposMemoriaSuportados"] = memory_types(mem)
-    set_if(specs, "frequenciaMemoriaMaximaMhz", frequency_mhz(attr(mapping, "MAX_RAM_MEMORY_FREQUENCY", "MAX_MEMORY_FREQUENCY", "Frequência máxima da memória")))
-    set_if(specs, "capacidadeMemoriaMaximaGb", capacity_gb(attr(mapping, "MAX_RAM_MEMORY_CAPACITY", "MAX_MEMORY_CAPACITY", "Capacidade máxima de memória")))
-    set_if(specs, "canaisMemoria", integer(attr(mapping, "MEMORY_CHANNELS_NUMBER", "MEMORY_CHANNELS", "Canais de memória")))
-    set_if(specs, "suportaEcc", boolean(attr(mapping, "ECC_SUPPORT", "WITH_ECC", "Suporta ECC")))
-    set_if(specs, "temperaturaMaximaC", number(attr(mapping, "MAX_OPERATING_TEMPERATURE", "MAX_TEMPERATURE", "Temperatura máxima")))
-    pcie = attr(mapping, "PCIE_VERSION", "PCI_EXPRESS_VERSION", "Versão PCI Express", "Versão PCIe", "Interface")
+    set_if(specs, "frequenciaMemoriaMaximaMhz", frequency_mhz(attr(mapping, "MAX_RAM_MEMORY_FREQUENCY", "MAX_MEMORY_FREQUENCY", "Frequência máxima da memória", "Max Memory Frequency")))
+    # Em Intel ARK e CPU-Monkey a velocidade costuma vir embutida em DDR4-2666/DDR5-5600.
+    if "frequenciaMemoriaMaximaMhz" not in specs and mem:
+        mem_clock = first_match(mem, r"DDR[345]\s*[- ]\s*(\d{3,5})")
+        set_if(specs, "frequenciaMemoriaMaximaMhz", integer(mem_clock))
+    set_if(specs, "capacidadeMemoriaMaximaGb", capacity_gb(attr(mapping, "MAX_RAM_MEMORY_CAPACITY", "MAX_MEMORY_CAPACITY", "Capacidade máxima de memória", "Max Memory Size (dependent on memory type)", "Max Memory Size", "Max. Memory", "Maximum Memory")))
+    set_if(specs, "canaisMemoria", integer(attr(mapping, "MEMORY_CHANNELS_NUMBER", "MEMORY_CHANNELS", "Canais de memória", "Max # of Memory Channels", "Memory channels")))
+    set_if(specs, "suportaEcc", boolean(attr(mapping, "ECC_SUPPORT", "WITH_ECC", "Suporta ECC", "ECC Memory Supported", "ECC")))
+    set_if(specs, "temperaturaMaximaC", number(attr(mapping, "MAX_OPERATING_TEMPERATURE", "MAX_TEMPERATURE", "Temperatura máxima", "T_JUNCTION", "T. junction max.")))
+    pcie = attr(mapping, "PCIE_VERSION", "PCI_EXPRESS_VERSION", "Versão PCI Express", "Versão PCIe", "Interface", "PCI Express Revision", "PCIe")
     if pcie:
         set_if(specs, "versaoPcie", first_match(pcie, r"(\d+(?:[.,]\d+)?)") or pcie)
-    set_if(specs, "lanesPcie", integer(attr(mapping, "PCIE_LANES_NUMBER", "PCI_EXPRESS_LANES_NUMBER", "Lanes PCIe")))
+    set_if(specs, "lanesPcie", integer(attr(mapping, "PCIE_LANES_NUMBER", "PCI_EXPRESS_LANES_NUMBER", "Lanes PCIe", "Max # of PCI Express Lanes")))
+    if "lanesPcie" not in specs and pcie:
+        lanes = first_match(pcie, r"(?:x|×)\s*(\d{1,2})\b")
+        set_if(specs, "lanesPcie", integer(lanes))
     cooler_incluso = boolean(attr(mapping, "COOLER_INCLUDED", "INCLUDES_CPU_COOLER", "Cooler incluso"))
     if cooler_incluso is None:
         cooler_incluso = explicit_keyword_bool(
@@ -414,9 +438,26 @@ def extract_processor(mapping, text):
             negative_patterns=(r"\bsem\s+cooler\b", r"\bS(?:/|\s)\s*Cooler\b"),
         )
     set_if(specs, "coolerIncluso", cooler_incluso)
-    set_if(specs, "multiplicadorDesbloqueado", boolean(attr(mapping, "UNLOCKED_MULTIPLIER", "Multiplicador desbloqueado")))
-    set_if(specs, "suporteOverclock", boolean(attr(mapping, "OVERCLOCK_SUPPORT", "Suporta overclock")))
-    set_if(specs, "dataLancamento", attr(mapping, "RELEASE_DATE", "LAUNCH_DATE", "Data de lançamento"))
+    set_if(specs, "multiplicadorDesbloqueado", boolean(attr(mapping, "UNLOCKED_MULTIPLIER", "Multiplicador desbloqueado", "Unlocked Multiplier", "Multiplier unlocked")))
+    set_if(specs, "suporteOverclock", boolean(attr(mapping, "OVERCLOCK_SUPPORT", "Suporta overclock", "Overclocking", "Overclock Support")))
+    set_if(specs, "dataLancamento", attr(mapping, "RELEASE_DATE", "LAUNCH_DATE", "Data de lançamento", "Launch Date", "Release date"))
+
+    # Vídeo integrado explícito em fontes técnicas em inglês.
+    gpu_name = attr(mapping, "Processor Graphics", "Integrated Graphics", "GPU name", "iGPU")
+    if gpu_name and "possuiVideoIntegrado" not in specs:
+        low_gpu = normalize_key(gpu_name)
+        if low_gpu in {"no_igpu", "no_integrated_graphics", "none", "nao", "no"} or "no_igpu" in low_gpu:
+            specs["possuiVideoIntegrado"] = False
+        else:
+            specs["possuiVideoIntegrado"] = True
+            specs["modeloVideoIntegrado"] = clean_text(gpu_name)
+    if "possuiVideoIntegrado" not in specs:
+        integrated_en = explicit_keyword_bool(
+            text,
+            positive_patterns=(r"\bintegrated\s+graphics\s*:?\s*(?!no\b|none\b)[A-Za-z0-9]", r"\bprocessor\s+graphics\s*:?\s*(?!no\b|none\b)[A-Za-z0-9]"),
+            negative_patterns=(r"\bwithout\s+(?:an\s+)?integrated\s+graphics(?:\s+unit)?\b", r"\bno\s+iGPU\b", r"\bintegrated\s+graphics\s*:?\s*(?:no|none)\b"),
+        )
+        set_if(specs, "possuiVideoIntegrado", integrated_en)
 
     # Complementos explícitos no título/ficha. Estes padrões só rodam depois
     # que a categoria já foi identificada como PROCESSADOR.
@@ -473,6 +514,62 @@ def extract_processor(mapping, text):
     if "familia" not in specs:
         family = first_match(text, r"\b(?:AMD\s+)?(Ryzen)\s+[3579]\b") or first_match(text, r"\b(Intel\s+Core)\s+(?:Ultra\s+)?[3579i]")
         set_if(specs, "familia", family)
+
+    # v14.12: rótulos usados em páginas técnicas em inglês (Intel ARK,
+    # CPU-World, CPU-Monkey/WikiChip). Só aceita valores junto a um rótulo
+    # explícito, mantendo a regra de não inventar especificações.
+    if "litografiaNm" not in specs:
+        set_if(specs, "litografiaNm", text_integer(text, r"(?:Lithography|Process(?:\s+Technology)?|Manufacturing\s+Process)\s*:?\s*(\d+)\s*nm"))
+    if "nucleos" not in specs:
+        set_if(specs, "nucleos", text_integer(text, r"(?:^|\n)\s*(?:Total\s+Cores|Core\s+Count)\s*:?\s*(\d{1,3})(?!\s*(?:GHz|MHz))"))
+    if "threads" not in specs:
+        set_if(specs, "threads", text_integer(text, r"(?:^|\n)\s*(?:Total\s+Threads|Thread\s+Count)\s*:?\s*(\d{1,3})"))
+    if "frequenciaBaseMhz" not in specs:
+        set_if(specs, "frequenciaBaseMhz", text_frequency(text, r"(?:Processor\s+Base\s+Frequency|Base\s+Frequency|Base\s+Clock)\s*:?\s*([0-9.,]+\s*(?:GHz|MHz))"))
+    if "frequenciaTurboMhz" not in specs:
+        set_if(specs, "frequenciaTurboMhz", text_frequency(text, r"(?:Max\s+Turbo\s+Frequency|Maximum\s+Turbo\s+Frequency|Turbo\s+Frequency|Boost\s+Clock)\s*:?\s*([0-9.,]+\s*(?:GHz|MHz))"))
+    if "cacheL3Mb" not in specs:
+        smart_cache = first_match(text, r"(?:Intel(?:®|\s)*Smart\s+Cache|L3\s+Cache)\s*:?\s*([0-9.,]+\s*(?:KB|MB|GB))")
+        if smart_cache:
+            specs["cacheL3Mb"] = size_mb(smart_cache)
+    if "tdpWatts" not in specs:
+        set_if(specs, "tdpWatts", text_integer(text, r"(?:TDP|Thermal\s+Design\s+Power)\s*:?\s*([0-9.,]+)\s*W"))
+    if "tiposMemoriaSuportados" not in specs:
+        mem_en = first_match(text, r"(?:^|\n)\s*(?:Memory\s+Types?|Supported\s+Memory\s+Types?)\s*:?\s*([^;\n]{1,120})", flags=re.I | re.M)
+        types = memory_types(mem_en or "")
+        if types:
+            specs["tiposMemoriaSuportados"] = types
+            if "frequenciaMemoriaMaximaMhz" not in specs:
+                mem_freq = first_match(mem_en or "", r"DDR[345]\s*[- ]\s*(\d{3,5})")
+                set_if(specs, "frequenciaMemoriaMaximaMhz", integer(mem_freq))
+    if "capacidadeMemoriaMaximaGb" not in specs:
+        set_if(specs, "capacidadeMemoriaMaximaGb", text_capacity(text, r"(?:Max\s+Memory\s+Size|Maximum\s+Memory(?:\s+Size)?)\s*(?:\([^)]*\))?\s*:?\s*([0-9.,]+\s*(?:GB|TB))"))
+    if "canaisMemoria" not in specs:
+        set_if(specs, "canaisMemoria", text_integer(text, r"(?:Max\s*#?\s*of\s+Memory\s+Channels|Memory\s+Channels)\s*:?\s*(\d+)"))
+    if "suportaEcc" not in specs:
+        ecc_en = first_match(text, r"ECC\s+Memory\s+Supported[^A-Za-z]*(Yes|No)")
+        set_if(specs, "suportaEcc", boolean(ecc_en))
+    if "versaoPcie" not in specs:
+        pcie_en = first_match(text, r"(?:PCI\s+Express\s+Revision|PCIe?\s+Version)\s*:?\s*([0-9.]+)")
+        set_if(specs, "versaoPcie", pcie_en)
+    if "lanesPcie" not in specs:
+        set_if(specs, "lanesPcie", text_integer(text, r"(?:Max\s*#?\s*of\s+PCI\s+Express\s+Lanes|PCIe?\s+Lanes)\s*:?\s*(\d+)"))
+    if "socket" not in specs:
+        socket_en = first_match(text, r"(?:Sockets?\s+Supported|Socket)\s*:?\s*((?:FC)?LGA\s*\d{3,4}|AM[345]|sTRX4|TR4|sWRX8)")
+        set_if(specs, "socket", normalize_cpu_socket(socket_en))
+    if "temperaturaMaximaC" not in specs:
+        set_if(specs, "temperaturaMaximaC", text_number(text, r"(?:T[_ ]?JUNCTION|Tjunction|Maximum\s+Operating\s+Temperature)\s*:?\s*([0-9.,]+)\s*[°º]?\s*C"))
+    if "dataLancamento" not in specs:
+        set_if(specs, "dataLancamento", first_match(text, r"(?:Launch\s+Date|Release\s+Date)\s*:?\s*([A-Za-z0-9' ./-]{2,30})"))
+    if "arquitetura" not in specs:
+        codename = first_match(text, r"Code\s+Name\s+(?:Products\s+formerly\s+)?([A-Za-z][A-Za-z0-9 -]{2,40}?)(?=\s+(?:Vertical\s+Segment|Processor\s+Number|Lithography|CPU\s+Specifications)|$)")
+        set_if(specs, "arquitetura", codename)
+    if "geracao" not in specs:
+        generation = first_match(text, r"(?:Product\s+Collection\s*)?(\d{1,2})(?:st|nd|rd|th)\s+Generation\s+(?:Intel|AMD)") or first_match(text, r"(?:^|\n)\s*Generation\s*:?\s*(\d{1,2})", flags=re.I | re.M)
+        set_if(specs, "geracao", generation)
+    if "linha" not in specs:
+        line = first_match(text, r"(?:Product\s+Collection\s*)?\d{1,2}(?:st|nd|rd|th)\s+Generation\s+(Intel\s+Core(?:\s+Ultra)?\s+[3579i]+)")
+        set_if(specs, "linha", line)
     return specs
 
 

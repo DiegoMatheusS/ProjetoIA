@@ -1,0 +1,16 @@
+PRODUTO IA v14.11 - MERCADO LIVRE + SURFSKY
+
+Correção principal:
+- Mercado Livre agora usa Surfsky como primeiro fallback cloud quando a API oficial não entrega dados suficientes.
+- Mantém a API oficial como prioridade quando ML_ACCESS_TOKEN estiver configurado.
+- Sem token, ou em caso de 401/403/sem dados, pode coletar a página pública via Chromium Surfsky.
+- Chromium genérico da Railway fica apenas como último fallback.
+- Adiciona diagnóstico em marketplace.tentativasColeta com SURFSKY_ORIGINAL.
+- Não envia SURFSKY_TOKEN ao frontend/backend/banco.
+
+Variáveis já usadas no ProjetoIA:
+SURFSKY_TOKEN
+SURFSKY_API_URL
+SURFSKY_PROXY_COUNTRY=br
+
+Versão: 14.11-railway

@@ -315,9 +315,12 @@ def main():
     # quando solicitado (ou habilitado por ambiente) e nunca sobrescreve
     # silenciosamente especificação já coletada da fonte principal.
     auto_enrich = os.getenv("ENRICHMENT_AUTO", "false").strip().casefold() in {"1", "true", "sim", "yes"}
-    if args.enrich or auto_enrich:
-        from .enrichment.core import apply_enrichment
+    enrichment_disabled = os.getenv("ENRICHMENT_DISABLE", "false").strip().casefold() in {"1", "true", "sim", "yes"}
+    from .enrichment.core import apply_enrichment, should_auto_enrich
+    mandatory_missing_enrichment = should_auto_enrich(result) and not enrichment_disabled
+    if args.enrich or auto_enrich or mandatory_missing_enrichment:
         result = apply_enrichment(result)
+        result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
     # v14: consulta conservadora do banco real do CriaByte. O modo apenas
     # PLANEJA ações; não grava nada automaticamente no backend de produção.

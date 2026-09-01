@@ -5,6 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from ..utils.rate_limiter import PoliteRateLimiter
+from ..scrapers.browser_scraper import BrowserScraper
 
 
 class WebSearchResolver:
@@ -39,23 +40,9 @@ class WebSearchResolver:
             return unquote(uddg) if uddg else None
         return href if parsed.scheme in {"http", "https"} else None
 
-    def first_result(self, query, allowed_domains):
-        if not query or not allowed_domains:
-            return None
-        domains = [d.casefold().removeprefix("www.") for d in allowed_domains]
-        q = f"{query} " + " OR ".join(f"site:{d}" for d in domains)
-        url = "https://html.duckduckgo.com/html/?q=" + quote_plus(q)
-        try:
-            self.rate_limiter.wait(url)
-            response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
-            if response.status_code in {403, 429}:
-                return None
-            response.raise_for_status()
-        except requests.RequestException:
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        links = soup.select("a.result__a, .result a[href]")[:20]
+    def _candidate_from_html(self, html, domains):
+        soup = BeautifulSoup(html or "", "html.parser")
+        links = soup.select("a.result__a, .result a[href], li.b_algo h2 a[href], a[href]")[:120]
         for link in links:
             candidate = self._decode_ddg_url(link.get("href"))
             if not candidate:
@@ -64,3 +51,42 @@ class WebSearchResolver:
             if any(host == d or host.endswith("." + d) for d in domains):
                 return candidate
         return None
+
+    def first_result(self, query, allowed_domains):
+        if not query or not allowed_domains:
+            return None
+        domains = [d.casefold().removeprefix("www.") for d in allowed_domains]
+        q = f"{query} " + " OR ".join(f"site:{d}" for d in domains)
+        search_urls = [
+            "https://html.duckduckgo.com/html/?q=" + quote_plus(q),
+            "https://www.bing.com/search?q=" + quote_plus(q),
+        ]
+
+        # Primeiro tenta busca HTTP barata.
+        for url in search_urls:
+            try:
+                self.rate_limiter.wait(url)
+                response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+                if response.status_code in {403, 429}:
+                    continue
+                response.raise_for_status()
+                candidate = self._candidate_from_html(response.text, domains)
+                if candidate:
+                    return candidate
+            except requests.RequestException:
+                continue
+
+        # Em cloud, buscadores também podem bloquear IP de datacenter. Se o
+        # Surfsky estiver configurado, usa o mesmo Chromium residencial apenas
+        # para descobrir uma página técnica candidata.
+        browser = BrowserScraper()
+        if browser.surfsky_configured():
+            for url in search_urls:
+                remote = browser.fetch_surfsky(url)
+                if remote.get("error") or remote.get("blocked"):
+                    continue
+                candidate = self._candidate_from_html(remote.get("html") or "", domains)
+                if candidate:
+                    return candidate
+        return None
+

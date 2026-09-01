@@ -1,3 +1,11 @@
+## Atualização v14.13
+
+O Mercado Livre ganhou um fluxo de coleta dedicado para páginas renderizadas. A IA não encerra mais a coleta só porque a API oficial respondeu parcialmente: se faltarem preço, imagem, identidade ou ficha técnica, o Surfsky abre a mesma PDP, expande características/descrição e complementa os campos ausentes. O parser entende `andes-money-amount`, tabelas/linhas `ui-*-specs`, links curtos `meli.la` e preserva os dados da API como fonte prioritária quando existirem.
+
+## Atualização v14.12
+
+O enriquecimento técnico agora entra automaticamente quando Magalu/Mercado Livre deixam lacunas na ficha. A rotina usa fabricante oficial e fontes técnicas secundárias (CPU-World, CPU-Monkey, WikiChip, TechPowerUp, PC-Kombo e Geizhals), preserva proveniência e conflitos, e ganhou padrões em inglês para páginas como Intel ARK. `ENRICHMENT_AUTO=false` não bloqueia mais esse fallback obrigatório por lacunas; use `ENRICHMENT_DISABLE=true` somente se quiser desligá-lo por completo.
+
 ## Atualização v14.10
 
 A v14.10 mantém o Surfsky como fallback cloud e corrige os detalhes encontrados no primeiro teste real bem-sucedido: GPU exata em vez de família genérica, remoção de variante falsa de galeria, falso positivo de ventoinha em GPU e metadados de versão para o backend usar sem hardcode.
@@ -460,3 +468,7 @@ Quando a coleta cloud do Magalu retornar `MAGALU_COLETA_BLOQUEADA`, o serviço
 pode receber uma captura feita no Chrome do ADMIN via `POST /analisar-captura`.
 A captura local resolve apenas o acesso à página; toda a normalização continua
 centralizada na Produto IA da Railway.
+
+
+## v14.11
+Mercado Livre passa a usar Surfsky como fallback cloud antes do navegador genérico da Railway.
