@@ -53,26 +53,19 @@ def required_missing_fields(result):
 
 
 def should_auto_enrich(result):
-    """Enriquece automaticamente só quando a ficha está realmente incompleta.
+    """Regra v14.15: QUALQUER lacuna técnica esperada dispara enriquecimento.
 
-    v14.12/v14.13 acionavam enriquecimento quando faltava qualquer campo esperado.
-    Em produção isso podia abrir várias consultas externas para praticamente toda URL
-    e segurar a única vaga de PRODUTO_IA_CONCURRENCY.
+    A regra funcional do CriaByte é simples: se o marketplace não trouxe um campo
+    técnico esperado e a identidade do produto é forte, a Produto IA deve tentar
+    completar esse campo em fontes técnicas confiáveis.
 
-    v14.14 dispara automaticamente quando:
-    - existe identidade forte; e
-    - falta campo obrigatório OU a cobertura técnica está abaixo do limite.
+    A proteção contra fila travada não é feita pulando o enriquecimento; ela é feita
+    dentro do TechnicalEnricher, com orçamento de tempo, poucas fontes por rodada,
+    timeouts curtos e parada assim que não houver mais campos ausentes.
     """
     if not identity_is_strong(build_identity(result or {})):
         return False
-    if required_missing_fields(result):
-        return True
-    try:
-        threshold = float(os.getenv("ENRICHMENT_AUTO_MIN_COVERAGE", "0.45"))
-    except ValueError:
-        threshold = 0.45
-    threshold = min(1.0, max(0.0, threshold))
-    return technical_coverage(result) < threshold
+    return bool(technical_missing_fields(result))
 
 
 class TechnicalEnricher:
@@ -103,34 +96,51 @@ class TechnicalEnricher:
 
         if self.auto_mode:
             try:
-                self.total_timeout = max(3.0, float(os.getenv("ENRICHMENT_AUTO_TOTAL_TIMEOUT_SECONDS", "18")))
+                self.total_timeout = max(3.0, float(os.getenv("ENRICHMENT_AUTO_TOTAL_TIMEOUT_SECONDS", "20")))
             except ValueError:
-                self.total_timeout = 18.0
+                self.total_timeout = 20.0
             try:
-                self.max_sources = max(1, int(os.getenv("ENRICHMENT_AUTO_MAX_SOURCES", "3")))
+                self.max_sources = max(1, int(os.getenv("ENRICHMENT_AUTO_MAX_SOURCES", "4")))
             except ValueError:
-                self.max_sources = 3
+                self.max_sources = 4
             try:
-                self.target_coverage = float(os.getenv("ENRICHMENT_AUTO_TARGET_COVERAGE", "0.70"))
+                self.target_coverage = float(os.getenv("ENRICHMENT_AUTO_TARGET_COVERAGE", "1.0"))
             except ValueError:
-                self.target_coverage = 0.70
+                self.target_coverage = 1.0
             self.target_coverage = min(1.0, max(0.0, self.target_coverage))
             try:
-                per_source_timeout = max(2, int(os.getenv("ENRICHMENT_AUTO_SOURCE_TIMEOUT", "5")))
+                per_source_timeout = max(2, int(os.getenv("ENRICHMENT_AUTO_SOURCE_TIMEOUT", "4")))
             except ValueError:
-                per_source_timeout = 5
+                per_source_timeout = 4
 
-            # No automático, a captura comercial já teve acesso ao Surfsky quando
-            # necessário. Não abrir várias novas sessões cloud para cada fonte técnica.
+            # v14.15: não desliga o fallback cloud por completo, porque isso fazia
+            # a regra "faltou no marketplace -> buscar nas fontes técnicas" falhar
+            # justamente quando fabricante/buscador bloqueavam a Railway.
+            #
+            # Para controlar custo/latência:
+            # - fabricante oficial pode usar Surfsky como fallback;
+            # - provedores técnicos especializados ficam em HTTP no automático;
+            # - o resolver do fabricante também pode usar Surfsky para descobrir a
+            #   página oficial;
+            # - demais resolvers não abrem sessões cloud extras.
             for provider in self.providers:
-                provider.allow_browser_fallback = False
+                is_manufacturer = isinstance(provider, ManufacturerProvider)
+                provider.allow_browser_fallback = bool(is_manufacturer)
                 if hasattr(provider, "timeout"):
                     provider.timeout = min(int(provider.timeout), per_source_timeout)
+                rate_limiter = getattr(provider, "rate_limiter", None)
+                if rate_limiter is not None:
+                    rate_limiter.min_delay = min(rate_limiter.min_delay, 0.35)
+                    rate_limiter.jitter = min(rate_limiter.jitter, 0.15)
                 resolver = getattr(provider, "resolver", None)
                 if resolver is not None:
-                    resolver.allow_browser_fallback = False
+                    resolver.allow_browser_fallback = bool(is_manufacturer)
                     if hasattr(resolver, "timeout"):
                         resolver.timeout = min(int(resolver.timeout), per_source_timeout)
+                    resolver_limiter = getattr(resolver, "rate_limiter", None)
+                    if resolver_limiter is not None:
+                        resolver_limiter.min_delay = min(resolver_limiter.min_delay, 0.35)
+                        resolver_limiter.jitter = min(resolver_limiter.jitter, 0.15)
         else:
             self.total_timeout = None
             self.max_sources = None
@@ -233,7 +243,15 @@ class TechnicalEnricher:
             # Atualiza uma visão temporária para decidir se já podemos parar.
             temp = dict(output)
             temp["especificacoesEncontradas"] = specs
-            if self.auto_mode and not required_missing_fields(temp) and technical_coverage(temp) >= self.target_coverage:
+            missing_now = technical_missing_fields(temp)
+            if self.auto_mode and not missing_now:
+                info["interrompidoPorCobertura"] = True
+                break
+            # Permite reduzir o alvo por variável em ambientes que precisem de um
+            # orçamento ainda mais agressivo, mas o padrão v14.15 é 100%.
+            if self.auto_mode and self.target_coverage < 1.0 \
+                    and not required_missing_fields(temp) \
+                    and technical_coverage(temp) >= self.target_coverage:
                 info["interrompidoPorCobertura"] = True
                 break
 

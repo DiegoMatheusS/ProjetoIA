@@ -10,14 +10,23 @@ MAGALU_URL = (
 
 
 def test_v14_14_auto_enrichment_is_bounded_and_does_not_open_extra_cloud_browsers(monkeypatch):
-    monkeypatch.setenv("ENRICHMENT_AUTO_MAX_SOURCES", "3")
+    monkeypatch.setenv("ENRICHMENT_AUTO_MAX_SOURCES", "4")
     enricher = TechnicalEnricher(auto_mode=True)
-    assert enricher.max_sources == 3
-    assert all(getattr(provider, "allow_browser_fallback", True) is False for provider in enricher.providers)
-    assert all(getattr(provider.resolver, "allow_browser_fallback", True) is False for provider in enricher.providers)
+    assert enricher.max_sources == 4
+    # Apenas fabricante oficial pode recorrer ao Surfsky no automático; fontes
+    # técnicas secundárias ficam em HTTP para limitar custo/latência.
+    from src.enrichment.providers import ManufacturerProvider
+    manufacturer = next(p for p in enricher.providers if isinstance(p, ManufacturerProvider))
+    assert manufacturer.allow_browser_fallback is True
+    assert manufacturer.resolver.allow_browser_fallback is True
+    for provider in enricher.providers:
+        if provider is manufacturer:
+            continue
+        assert getattr(provider, "allow_browser_fallback", True) is False
+        assert getattr(provider.resolver, "allow_browser_fallback", True) is False
 
 
-def test_v14_14_does_not_auto_enrich_high_coverage_when_required_fields_present(monkeypatch):
+def test_v14_15_auto_enriches_even_one_optional_missing_field(monkeypatch):
     category = "PLACA_VIDEO"
     expected = list(SCHEMAS[category][2])
     required = list(REQUIRED.get(category, []))
@@ -36,8 +45,9 @@ def test_v14_14_does_not_auto_enrich_high_coverage_when_required_fields_present(
         },
         "especificacoesEncontradas": specs,
     }
-    monkeypatch.setenv("ENRICHMENT_AUTO_MIN_COVERAGE", "0.45")
-    assert should_auto_enrich(result) is False
+    # v14.15: qualquer campo técnico esperado ausente deve disparar busca
+    # complementar, mesmo com cobertura alta e campos obrigatórios presentes.
+    assert should_auto_enrich(result) is True
 
 
 def test_v14_14_magalu_tries_surfsky_before_railway_browser(monkeypatch):

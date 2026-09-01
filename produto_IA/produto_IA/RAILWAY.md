@@ -17,7 +17,7 @@ HEADLESS=true
 PRODUTO_IA_CONCURRENCY=1
 PRODUTO_IA_API_KEY=SUA_CHAVE_PRODUTO_IA
 PRODUTO_IA_DOCS=false
-ENRICHMENT_AUTO=false  # opcional; v14.12 enriquece automaticamente quando faltarem campos técnicos
+ENRICHMENT_AUTO=false  # opcional; v14.15 enriquece automaticamente sempre que faltar campo técnico esperado
 ENRICHMENT_DISABLE=false
 CRIABYTE_API_URL=https://api.criabyte.com.br/api
 ```

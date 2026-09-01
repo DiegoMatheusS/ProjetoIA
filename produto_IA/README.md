@@ -1,3 +1,12 @@
+## Atualização v14.15
+
+- Regra obrigatória de enriquecimento restaurada: se **qualquer campo técnico esperado** estiver ausente e a identidade for forte, a IA tenta completar nas fontes técnicas.
+- O enriquecimento automático não depende mais de um percentual mínimo de cobertura para decidir se deve rodar.
+- Proteção contra fila travada permanece: orçamento global de tempo, até 4 fontes no automático, timeout curto por fonte e parada assim que as lacunas forem resolvidas.
+- Fabricante oficial pode usar Surfsky como fallback no enriquecimento automático quando HTTP/buscadores bloquearem a Railway.
+- Fontes especializadas continuam em HTTP no modo automático para controlar custo e latência; `enrich=true` mantém modo completo.
+- Health: `14.15-railway`.
+
 ## Atualização v14.14
 
 - Magalu prioriza Surfsky logo após a tentativa HTTP original.
