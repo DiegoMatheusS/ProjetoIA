@@ -12,6 +12,7 @@ from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
+from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 
 
 app = FastAPI(
@@ -24,6 +25,11 @@ app = FastAPI(
 # Navegador/Playwright consome muita memória; por padrão processamos uma URL por vez.
 _ANALYZE_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_CONCURRENCY", "1")))
 _analyze_semaphore = asyncio.Semaphore(_ANALYZE_CONCURRENCY)
+# Descoberta em lote também pode usar navegador/fontes externas. Mantemos fila
+# separada, mas igualmente conservadora para não derrubar a Railway.
+_DISCOVERY_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_DISCOVERY_CONCURRENCY", "1")))
+_discovery_semaphore = asyncio.Semaphore(_DISCOVERY_CONCURRENCY)
+_discovery_service = HardwareDiscoveryService()
 
 
 class AnalyzeRequest(BaseModel):
@@ -40,6 +46,28 @@ class CaptureAnalyzeRequest(BaseModel):
     captura: dict[str, Any]
     enrich: bool = False
     criabytePlan: bool = False
+
+
+class HardwareDiscoveryRequest(BaseModel):
+    categoria: str = Field(min_length=3, max_length=80)
+    marca: str | None = Field(default=None, max_length=120)
+    consulta: str | None = Field(default=None, max_length=240)
+    fontes: list[str] | None = None
+    pagina: int = Field(default=1, ge=1, le=100)
+    limite: int = Field(default=20, ge=1, le=50)
+    detalhar: bool = True
+    enriquecer: bool = True
+    noBrowser: bool = False
+
+
+class HardwareDiscoveryDetailRequest(BaseModel):
+    categoria: str = Field(min_length=3, max_length=80)
+    nome: str = Field(min_length=2, max_length=500)
+    url: str = Field(min_length=8, max_length=4096)
+    fonte: str = Field(min_length=2, max_length=80)
+    marca: str | None = Field(default=None, max_length=120)
+    enriquecer: bool = True
+    noBrowser: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -273,6 +301,100 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(ok=True, service="criabyte-produto-ia", version=SERVICE_VERSION)
+
+
+@app.get("/descobrir-hardwares/fontes")
+def descobrir_hardwares_fontes(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    return {
+        **_discovery_service.source_capabilities(),
+        "servicoProdutoIa": {
+            "versao": SERVICE_VERSION,
+            "integracao": INTEGRATION_ID,
+            "proveniencia": PROVENANCE_ID,
+        },
+    }
+
+
+@app.post("/descobrir-hardwares")
+async def descobrir_hardwares(
+    payload: HardwareDiscoveryRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    category = payload.categoria.strip().upper()
+    if category not in SUPPORTED_DISCOVERY_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "erro": "CATEGORIA_NAO_SUPORTADA_PARA_DESCOBERTA",
+                "categoria": category,
+                "categoriasSuportadas": list(SUPPORTED_DISCOVERY_CATEGORIES),
+            },
+        )
+    async with _discovery_semaphore:
+        try:
+            result = await asyncio.to_thread(
+                _discovery_service.discover,
+                category,
+                payload.marca,
+                payload.consulta,
+                payload.fontes,
+                payload.pagina,
+                payload.limite,
+                payload.detalhar,
+                payload.enriquecer,
+                payload.noBrowser,
+            )
+            result["servicoProdutoIa"] = {
+                "versao": SERVICE_VERSION,
+                "modo": "DESCOBERTA_HARDWARES",
+                "integracao": INTEGRATION_ID,
+                "proveniencia": PROVENANCE_ID,
+            }
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Falha ao descobrir Hardwares: {exc}") from exc
+
+
+@app.post("/descobrir-hardwares/detalhar")
+async def detalhar_hardware_descoberto(
+    payload: HardwareDiscoveryDetailRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    category = payload.categoria.strip().upper()
+    async with _discovery_semaphore:
+        try:
+            item = await asyncio.to_thread(
+                _discovery_service.detail,
+                category,
+                payload.nome,
+                payload.url,
+                payload.fonte,
+                payload.marca,
+                payload.enriquecer,
+                payload.noBrowser,
+            )
+            return {
+                "modo": "DETALHE_HARDWARE_DESCOBERTO",
+                "categoria": category,
+                "item": item,
+                "servicoProdutoIa": {
+                    "versao": SERVICE_VERSION,
+                    "modo": "DESCOBERTA_HARDWARES",
+                    "integracao": INTEGRATION_ID,
+                    "proveniencia": PROVENANCE_ID,
+                },
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Falha ao detalhar Hardware: {exc}") from exc
 
 
 @app.post("/analisar")

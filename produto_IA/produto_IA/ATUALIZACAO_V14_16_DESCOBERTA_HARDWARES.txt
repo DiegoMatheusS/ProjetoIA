@@ -1,0 +1,146 @@
+PROJETO IA v14.16 - DESCOBERTA DE HARDWARES
+===========================================
+
+Objetivo
+--------
+Adicionar um modo separado da busca por URL para aumentar o catálogo técnico do
+CriaByte. A IA descobre vários modelos em fontes técnicas, coleta/normaliza a ficha
+e devolve candidatos de Hardware para revisão/cadastro.
+
+Este fluxo NÃO cria Produto, NÃO cria Oferta e NÃO coleta preço.
+
+Endpoints
+---------
+GET  /descobrir-hardwares/fontes
+POST /descobrir-hardwares
+POST /descobrir-hardwares/detalhar
+
+Todos usam a mesma X-API-Key do /analisar quando PRODUTO_IA_API_KEY estiver definida.
+
+Categorias iniciais
+-------------------
+PROCESSADOR
+PLACA_MAE
+MEMORIA_RAM
+PLACA_VIDEO
+ARMAZENAMENTO
+FONTE
+GABINETE
+COOLER
+VENTOINHA
+
+Exemplo - descobrir
+-------------------
+POST /descobrir-hardwares
+
+{
+  "categoria": "PROCESSADOR",
+  "marca": "Intel",
+  "consulta": "Core i5",
+  "pagina": 1,
+  "limite": 20,
+  "detalhar": true,
+  "enriquecer": true
+}
+
+A resposta traz:
+- identidade
+- chaveComparacao
+- payloadHardware
+- especificacoesEncontradas
+- camposEsperados
+- camposAusentes
+- camposObrigatoriosAusentes
+- coberturaTecnica
+- fontes consultadas
+- origem por campo enriquecido
+- conflitos
+
+A chaveComparacao existe para o BACKEND comparar com o banco e não enviar ao
+frontend os Hardwares já cadastrados.
+
+Regra da página Admin
+---------------------
+Projeto IA -> descobre e normaliza candidatos
+Backend    -> compara com o banco e REMOVE da resposta os que já existem
+Frontend   -> mostra apenas novos, ficha técnica e botão Adicionar
+Backend    -> cadastra apenas após confirmação do Admin
+
+Deduplicação recomendada no backend
+-----------------------------------
+1. GTIN/EAN
+2. marca + MPN
+3. marca + modelo
+4. nome normalizado apenas para candidato de revisão
+
+Fontes de descoberta
+--------------------
+PROCESSADOR:
+- CPU-Monkey (catálogo)
+- CPU-World
+- WikiChip
+- fabricante oficial quando marca é informada/configurada
+
+PLACA_VIDEO:
+- TechPowerUp GPU Database (catálogo)
+- PC-Kombo
+- Geizhals
+- fabricante oficial quando marca é informada/configurada
+
+Demais componentes:
+- PC-Kombo
+- Geizhals
+- fabricante oficial quando a marca é informada/configurada
+
+O enriquecimento técnico posterior continua podendo usar as fontes já existentes
+no Projeto IA, preservando dados confirmados e preenchendo apenas lacunas.
+
+Paginação e custo
+-----------------
+- limite máximo por chamada: 50
+- busca é limitada; não faz crawler irrestrito
+- pagina/limite permitem o backend carregar lotes
+- orçamento total da descoberta evita prender a fila da Railway
+- /detalhar permite carregar ficha de um candidato individual quando necessário
+
+Variáveis opcionais
+-------------------
+PRODUTO_IA_DISCOVERY_CONCURRENCY=1
+DISCOVERY_TOTAL_TIMEOUT_SECONDS=75
+DISCOVERY_SOURCE_TIMEOUT_SECONDS=8
+DISCOVERY_SOURCE_MIN_DELAY_SECONDS=0.6
+DISCOVERY_SOURCE_JITTER_SECONDS=0.2
+DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS=6
+DISCOVERY_ENRICHMENT_MAX_SOURCES=2
+
+Regras de segurança
+-------------------
+- preço sempre null neste fluxo
+- não cadastra automaticamente
+- não altera banco
+- não inventa especificação
+- conflito de fonte não sobrescreve valor confirmado silenciosamente
+- Surfsky pode ser fallback quando permitido
+- noBrowser=true evita fallback cloud na descoberta/detalhamento
+- ENRICHMENT_DISABLE=true desliga enriquecimento complementar
+
+Integração backend
+------------------
+O backend NÃO precisa devolver todos os Hardwares existentes para a IA.
+Ele recebe os candidatos e filtra localmente por identidade/chaveComparacao.
+
+Exemplo conceitual:
+
+1. backend chama /descobrir-hardwares
+2. recebe 30 candidatos
+3. consulta banco por GTIN/MPN/marca+modelo
+4. 18 já existem -> remove
+5. devolve apenas 12 novos ao frontend
+6. Admin clica Adicionar em um ou vários
+7. backend valida novamente deduplicação
+8. cadastra Hardware
+
+É importante validar novamente no momento de salvar para evitar duplicidade por
+concorrência ou por uma lista que ficou aberta por muito tempo.
+
+Fim.

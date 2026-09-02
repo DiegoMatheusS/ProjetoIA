@@ -63,6 +63,12 @@ class ExternalTechnicalProvider:
             "ok": True,
             "fonte": self.name,
             "url": final_url,
+            "title": parsed.get("title"),
+            "brand": parsed.get("brand"),
+            "model": parsed.get("model"),
+            "mpn": parsed.get("mpn"),
+            "gtin": parsed.get("gtin"),
+            "image_url": parsed.get("image_url"),
             "attributes": parsed.get("attributes") or [],
             "context_text": page_text,
         }

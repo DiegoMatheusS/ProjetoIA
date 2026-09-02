@@ -82,7 +82,7 @@ class TechnicalEnricher:
     Uma chamada explícita com enrich=true continua podendo usar o modo completo.
     """
 
-    def __init__(self, providers=None, auto_mode=False):
+    def __init__(self, providers=None, auto_mode=False, total_timeout_override=None, max_sources_override=None, source_timeout_override=None):
         self.auto_mode = bool(auto_mode)
         self.providers = providers or [
             ManufacturerProvider(),
@@ -112,6 +112,12 @@ class TechnicalEnricher:
                 per_source_timeout = max(2, int(os.getenv("ENRICHMENT_AUTO_SOURCE_TIMEOUT", "4")))
             except ValueError:
                 per_source_timeout = 4
+            if total_timeout_override is not None:
+                self.total_timeout = max(1.0, float(total_timeout_override))
+            if max_sources_override is not None:
+                self.max_sources = max(1, int(max_sources_override))
+            if source_timeout_override is not None:
+                per_source_timeout = max(1, int(source_timeout_override))
 
             # v14.15: não desliga o fallback cloud por completo, porque isso fazia
             # a regra "faltou no marketplace -> buscar nas fontes técnicas" falhar

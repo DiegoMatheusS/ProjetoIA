@@ -1,3 +1,14 @@
+## Atualização v14.16
+
+- Novo modo **Descoberta de Hardwares** para popular o catálogo técnico do CriaByte sem depender de uma URL de marketplace por item.
+- `POST /descobrir-hardwares` descobre vários candidatos por categoria, normaliza ficha técnica e devolve `chaveComparacao` para o backend ocultar o que já está cadastrado.
+- `POST /descobrir-hardwares/detalhar` detalha um candidato individual.
+- `GET /descobrir-hardwares/fontes` informa categorias/fontes suportadas.
+- O fluxo é somente Hardware: **não coleta preço, não cria Produto e não cria Oferta**.
+- Fontes iniciais: CPU-Monkey, CPU-World, WikiChip, TechPowerUp, PC-Kombo, Geizhals e fabricante oficial quando aplicável.
+- Busca limitada/paginada, com orçamento de tempo para não travar a Railway.
+- Health: `14.16-railway`.
+
 ## Atualização v14.15
 
 - Regra obrigatória de enriquecimento restaurada: se **qualquer campo técnico esperado** estiver ausente e a identidade for forte, a IA tenta completar nas fontes técnicas.

@@ -1,4 +1,4 @@
-# Produto IA v14.13 - Railway
+# Produto IA v14.16 - Railway
 
 ## Deploy
 
@@ -31,6 +31,9 @@ A API key é opcional, mas recomendada. Se definida, `POST /analisar` exige:
 - `GET /health`
 - `POST /analisar`
 - `POST /analisar-captura`
+- `GET /descobrir-hardwares/fontes`
+- `POST /descobrir-hardwares`
+- `POST /descobrir-hardwares/detalhar`
 
 Exemplo de corpo:
 
@@ -116,3 +119,34 @@ A partir da v14.12, `ENRICHMENT_AUTO=false` **não impede** o fallback necessár
 7. Geizhals.
 
 Somente campos ausentes são preenchidos. Valores conflitantes são registrados em `enriquecimentoTecnico.conflitos` e não substituem silenciosamente o valor principal. Para desativar completamente esse fallback, use `ENRICHMENT_DISABLE=true`.
+
+
+## Descoberta de Hardwares v14.16
+
+A descoberta é um fluxo separado de marketplace. Ela serve para a página Admin que lista Hardwares ainda não cadastrados.
+
+Exemplo:
+
+```json
+{
+  "categoria": "PROCESSADOR",
+  "marca": "Intel",
+  "consulta": "Core i5",
+  "pagina": 1,
+  "limite": 20,
+  "detalhar": true,
+  "enriquecer": true
+}
+```
+
+O backend deve chamar `POST ${PRODUTO_IA_URL}/descobrir-hardwares`, comparar `identidade`/`chaveComparacao` com o banco e devolver ao frontend apenas os candidatos novos. Antes de cadastrar, deve refazer a deduplicação. O Projeto IA não grava no banco e não retorna preço nesse fluxo.
+
+Variáveis opcionais:
+
+```env
+PRODUTO_IA_DISCOVERY_CONCURRENCY=1
+DISCOVERY_TOTAL_TIMEOUT_SECONDS=75
+DISCOVERY_SOURCE_TIMEOUT_SECONDS=8
+DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS=6
+DISCOVERY_ENRICHMENT_MAX_SOURCES=2
+```
