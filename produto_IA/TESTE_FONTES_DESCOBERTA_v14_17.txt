@@ -1,0 +1,165 @@
+PROJETO IA v14.17 - TESTE DAS FONTES DE DESCOBERTA
+Data: 2026-09-02
+
+OBJETIVO
+-------
+Validar como cada fonte deve ser usada para descobrir e enriquecer Hardwares.
+A v14.16 falhava porque algumas fontes eram tratadas como busca genérica.
+
+1. PC-KOMBO
+------------
+Uso principal: DESCOBERTA por catálogo + detalhe.
+
+Catálogos diretos usados:
+- PROCESSADOR: https://www.pc-kombo.com/us/components/cpus
+- PLACA_VIDEO: https://www.pc-kombo.com/us/components/gpus
+- PLACA_MAE: https://www.pc-kombo.com/us/components/motherboards
+- ARMAZENAMENTO: https://www.pc-kombo.com/us/components/ssds
+- FONTE: https://www.pc-kombo.com/us/components/psus
+- GABINETE: https://www.pc-kombo.com/us/components/cases
+- COOLER: https://www.pc-kombo.com/us/components/cpucoolers
+
+Na listagem de CPU é possível obter muitos modelos e dados básicos como:
+- nome/modelo
+- socket
+- clock base
+- turbo
+- núcleos
+- threads
+
+Na página individual a IA reconhece também:
+- Producer -> marca
+- MPN
+- EAN -> GTIN
+- pares de especificações técnicas
+
+Resultado do teste: APROVADO para descoberta primária.
+
+2. CPU-MONKEY
+-------------
+Uso principal: DESCOBERTA de processadores + complemento de ficha.
+
+Não usar mais a página /en/search sem consulta como catálogo.
+
+Usar páginas reais de família/grupo, por exemplo:
+- Intel Core i5: https://www.cpu-monkey.com/en/cpu_family-intel_core_i5
+- Intel Core i7
+- Intel Core i9
+- Intel Core Ultra
+- AMD Ryzen 3/5/7/9
+- Threadripper
+
+Para SKUs antigos Intel, a IA também pode direcionar para o grupo da geração.
+Exemplo:
+Core i5-9500 -> Intel Core i 9000.
+
+A página de família lista vários CPUs reais com núcleos, threads, clock e geração.
+
+Resultado do teste: APROVADO para descoberta de CPU.
+
+3. TECHPOWERUP
+--------------
+Uso principal: DESCOBERTA e ficha de PLACA_VIDEO.
+
+Fonte:
+https://www.techpowerup.com/gpu-specs/
+
+A IA continua usando a GPU Database e links individuais /gpu-specs/*.cNNNN.
+É fonte especializada para:
+- GPU
+- memória
+- barramento
+- clocks
+- PCIe
+- shaders/unidades
+- variantes/modelos
+
+Resultado: manter como fonte principal de GPU.
+
+4. CPU-WORLD
+------------
+Fonte:
+https://www.cpu-world.com/CPUs/CPU.html
+
+Uso preferencial na v14.17:
+- confirmação
+- enriquecimento de CPU
+- histórico/modelos antigos
+
+Não depender dela como catálogo primário quando houver bloqueio ou restrição de acesso.
+
+5. WIKICHIP
+-----------
+Fonte:
+https://en.wikichip.org/wiki/WikiChip
+
+Uso preferencial:
+- confirmação
+- enriquecimento
+- arquitetura/microarquitetura
+- CPU/GPU/plataformas
+
+Não depender dela como catálogo primário se a página estiver instável/bloqueada.
+
+6. GEIZHALS
+-----------
+Fonte:
+https://geizhals.eu/
+
+Uso preferencial:
+- apoio de identidade
+- MPN/EAN quando disponível
+- especificações de placa-mãe, RAM, SSD, fonte e outros componentes
+- confirmação/enriquecimento
+
+7. FABRICANTE OFICIAL
+---------------------
+É a fonte de maior autoridade quando marca/modelo já estiverem confirmados.
+
+Exemplos:
+- Intel
+- AMD
+- NVIDIA
+- ASUS
+- MSI
+- Gigabyte
+- ASRock
+- XFX
+- Sapphire
+- Kingston
+- Corsair
+- Crucial
+- Samsung
+- Western Digital
+- Seagate
+- Seasonic
+- Cooler Master
+- DeepCool
+- Noctua
+- Thermaltake
+
+REGRA DA v14.17
+---------------
+Descoberta usa primeiro catálogo real quando disponível.
+Busca genérica NÃO é fonte primária se existe catálogo conhecido.
+
+PROCESSADOR:
+PC-Kombo -> CPU-Monkey -> CPU-World/WikiChip -> fabricante oficial para completar/confirmar.
+
+PLACA_VIDEO:
+TechPowerUp + PC-Kombo -> fabricante oficial -> WikiChip/Geizhals como apoio.
+
+DEMAIS CATEGORIAS:
+PC-Kombo quando possuir catálogo direto -> fabricante oficial/Geizhals e demais fontes para complemento.
+
+O fluxo Descobrir Hardwares nunca usa preço como dado de Hardware.
+
+TESTES AUTOMATIZADOS
+--------------------
+- CPU-Monkey não usa mais /en/search sem consulta.
+- Core i5-9500 direciona para grupo Intel Core i 9000.
+- PC-Kombo extrai candidatos reais do catálogo de CPU.
+- PC-Kombo reconhece Producer, MPN e EAN/GTIN na página individual.
+- ordem de fontes de PROCESSADOR inicia por PC_KOMBO e CPU_MONKEY.
+- suíte completa: 161 testes aprovados na raiz.
+- suíte completa: 161 testes aprovados em /produto_IA (estrutura Railway).
