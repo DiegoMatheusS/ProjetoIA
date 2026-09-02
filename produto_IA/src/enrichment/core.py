@@ -5,7 +5,7 @@ import time
 from .identity import build_identity, identity_is_strong
 from .providers import (
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
-    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED
 from ..extractors.ml_specs import extract_specs
@@ -85,6 +85,7 @@ class TechnicalEnricher:
     def __init__(self, providers=None, auto_mode=False, total_timeout_override=None, max_sources_override=None, source_timeout_override=None):
         self.auto_mode = bool(auto_mode)
         self.providers = providers or [
+            IcecatProvider(),
             ManufacturerProvider(),
             CPUWorldProvider(),
             CPUMonkeyProvider(),

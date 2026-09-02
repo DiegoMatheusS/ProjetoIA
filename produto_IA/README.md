@@ -518,3 +518,9 @@ genérica. PC-Kombo, CPU-Monkey e TechPowerUp usam seus catálogos públicos
 conhecidos. CPU-World, WikiChip, Geizhals e fabricante oficial permanecem como
 fontes de confirmação/enriquecimento. Isso evita o caso em que uma busca de 50
 processadores encontrava apenas poucos links inválidos.
+
+## v14.18 - adaptadores por fonte + Open Icecat
+
+A descoberta agora trata PC-Kombo, CPU-Monkey e TechPowerUp com fluxo de catálogo dedicado. Se o HTTP do catálogo vier parcial, a mesma página pode ser renderizada uma vez via Surfsky e os candidatos são mesclados, em vez de aceitar uma lista artificialmente pequena.
+
+Open Icecat é opcional e entra como fonte estruturada de enriquecimento quando já existe GTIN ou marca+MPN. Configure `ICECAT_USERNAME` e, quando disponíveis na conta, `ICECAT_API_TOKEN`/`ICECAT_CONTENT_TOKEN`. Sem Icecat configurado, as demais fontes continuam funcionando normalmente.

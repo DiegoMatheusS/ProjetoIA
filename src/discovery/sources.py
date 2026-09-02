@@ -155,6 +155,23 @@ class DiscoverySourceCatalog:
             return None, remote.get("final_url") or url, remote.get("error") or "SURFSKY_BLOQUEADO"
         return None, url, http_error or "FALHA_COLETA"
 
+    def _fetch_rendered_catalog(self, url: str, allowed_domains: list[str]):
+        """Renderiza um catálogo via Surfsky quando o HTTP 200 veio parcial.
+
+        Diferente de _fetch_html, este método é chamado mesmo após HTTP bem-sucedido
+        quando o parser encontrou poucos SKUs. É o equivalente do fallback cloud do
+        Magazine, mas limitado a UMA página de catálogo.
+        """
+        if not self.allow_browser_fallback or not self.browser.surfsky_configured():
+            return None, url, "SURFSKY_NAO_CONFIGURADO"
+        remote = self.browser.fetch_surfsky(url)
+        if remote.get("error") or remote.get("blocked"):
+            return None, remote.get("final_url") or url, remote.get("error") or "SURFSKY_BLOQUEADO"
+        final = remote.get("final_url") or url
+        if allowed_domains and not self._host_allowed(final, allowed_domains):
+            return None, final, "REDIRECIONAMENTO_FORA_DA_FONTE"
+        return remote.get("html") or "", final, None
+
     @staticmethod
     def _norm(value: str | None) -> str:
         text = clean_text(value) or ""
@@ -242,11 +259,9 @@ class DiscoverySourceCatalog:
     def _cpu_monkey(self, marca=None, consulta=None, limit=50):
         found = []
         last_error = None
-        for url in self._cpu_monkey_pages(marca, consulta):
-            html, final, error = self._fetch_html(url, ["cpu-monkey.com"])
-            if not html:
-                last_error = error or last_error
-                continue
+
+        def parse_page(html, final):
+            local = []
             soup = BeautifulSoup(html, "html.parser")
             for link in soup.select('a[href*="/en/cpu-"]'):
                 href = link.get("href") or ""
@@ -256,12 +271,32 @@ class DiscoverySourceCatalog:
                 if not name:
                     name = self._norm(link.parent.get_text(" ", strip=True) if link.parent else "")
                 name = re.split(r"\s+\d+C\s+\d+T\s+@", name, maxsplit=1, flags=re.I)[0].strip()
-                # Títulos de CPU-Monkey usados em links de tabela são o nome do SKU.
                 if len(name) < 4 or not re.search(r"\d", name) or not self._matches_filters(name, marca, consulta):
                     continue
-                found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="CPU_MONKEY"))
-                if len(self._dedupe(found)) >= limit:
-                    return self._dedupe(found)[:limit], None
+                local.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="CPU_MONKEY"))
+            return self._dedupe(local)
+
+        for page_index, url in enumerate(self._cpu_monkey_pages(marca, consulta)):
+            html, final, error = self._fetch_html(url, ["cpu-monkey.com"])
+            page_items = parse_page(html, final) if html else []
+            if not page_items:
+                last_error = error or last_error
+
+            # HTTP de catálogo pode responder 200 com HTML reduzido. Em vez de
+            # aceitar 1-3 modelos, renderizamos a primeira página pobre via Surfsky.
+            sparse_threshold = min(8, max(3, int(limit)))
+            if len(page_items) < sparse_threshold and page_index < 2:
+                rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["cpu-monkey.com"])
+                if rendered:
+                    page_items = self._dedupe(page_items + parse_page(rendered, rendered_final))
+                elif render_error:
+                    last_error = render_error or last_error
+
+            found.extend(page_items)
+            found = self._dedupe(found)
+            if len(found) >= limit:
+                return found[:limit], None
+
         result = self._dedupe(found)[:limit]
         return result, None if result else (last_error or "NAO_ENCONTRADO")
 
@@ -286,43 +321,71 @@ class DiscoverySourceCatalog:
         if not config:
             return self._search_source("PC_KOMBO", categoria, marca, consulta, limit)
         url, product_path = config
+
+        def parse_page(html, final):
+            found = []
+            soup = BeautifulSoup(html or "", "html.parser")
+            selectors = [
+                f'a[href*="{product_path}"]',
+                f'a[href*="/product/{product_path.strip("/").split("/")[-1]}/"]',
+            ]
+            links = []
+            for selector in selectors:
+                links.extend(soup.select(selector))
+            for link in links:
+                href = link.get("href") or ""
+                name = self._pc_kombo_name(self._norm(link.get_text(" ", strip=True)), categoria)
+                if len(name) < 3 or not re.search(r"[A-Za-z]", name):
+                    continue
+                if not self._matches_filters(name, marca, consulta):
+                    continue
+                found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="PC_KOMBO", marca=marca))
+            return self._dedupe(found)
+
         html, final, error = self._fetch_html(url, ["pc-kombo.com"])
-        if not html:
-            return [], error
-        soup = BeautifulSoup(html, "html.parser")
-        found = []
-        for link in soup.select(f'a[href*="{product_path}"]'):
-            href = link.get("href") or ""
-            name = self._pc_kombo_name(self._norm(link.get_text(" ", strip=True)), categoria)
-            if len(name) < 3 or not re.search(r"[A-Za-z]", name):
-                continue
-            if not self._matches_filters(name, marca, consulta):
-                continue
-            found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="PC_KOMBO", marca=marca))
-            if len(self._dedupe(found)) >= limit:
-                break
+        found = parse_page(html, final) if html else []
+
+        # Mesma estratégia do Magazine: se a resposta HTTP parece parcial, usa o
+        # navegador cloud na MESMA página e mescla os links renderizados.
+        sparse_threshold = min(12, max(4, int(limit)))
+        if len(found) < sparse_threshold:
+            rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["pc-kombo.com"])
+            if rendered:
+                found = self._dedupe(found + parse_page(rendered, rendered_final))
+                error = None if found else (render_error or error)
+            elif render_error and not found:
+                error = render_error
+
         result = self._dedupe(found)[:limit]
-        return result, None if result else "NAO_ENCONTRADO"
+        return result, None if result else (error or "NAO_ENCONTRADO")
 
     def _techpowerup(self, marca=None, consulta=None, limit=50):
         url = "https://www.techpowerup.com/gpu-specs/"
+
+        def parse_page(html, final):
+            found = []
+            soup = BeautifulSoup(html or "", "html.parser")
+            for link in soup.select('a[href*="/gpu-specs/"]'):
+                href = link.get("href") or ""
+                if not re.search(r"/gpu-specs/[^/?#]+\.c\d+", href, re.I):
+                    continue
+                name = self._norm(link.get_text(" ", strip=True))
+                if len(name) < 3 or not self._matches_filters(name, marca, consulta):
+                    continue
+                found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="TECHPOWERUP"))
+            return self._dedupe(found)
+
         html, final, error = self._fetch_html(url, ["techpowerup.com"])
-        if not html:
-            return [], error
-        soup = BeautifulSoup(html, "html.parser")
-        found = []
-        for link in soup.select('a[href*="/gpu-specs/"]'):
-            href = link.get("href") or ""
-            # Páginas reais do banco usam .cNNNN no final.
-            if not re.search(r"/gpu-specs/[^/?#]+\.c\d+", href, re.I):
-                continue
-            name = self._norm(link.get_text(" ", strip=True))
-            if len(name) < 3 or not self._matches_filters(name, marca, consulta):
-                continue
-            found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="TECHPOWERUP"))
-            if len(found) >= limit:
-                break
-        return self._dedupe(found), None
+        found = parse_page(html, final) if html else []
+        sparse_threshold = min(10, max(4, int(limit)))
+        if len(found) < sparse_threshold:
+            rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["techpowerup.com"])
+            if rendered:
+                found = self._dedupe(found + parse_page(rendered, rendered_final))
+                error = None if found else (render_error or error)
+            elif render_error and not found:
+                error = render_error
+        return self._dedupe(found)[:limit], None if found else (error or "NAO_ENCONTRADO")
 
     def _search_source(self, source: str, categoria: str, marca=None, consulta=None, limit=20):
         domains = list(SOURCE_DOMAINS.get(source) or [])
@@ -364,13 +427,18 @@ class DiscoverySourceCatalog:
         for source in selected:
             source = str(source or "").strip().upper()
             try:
-                if source == "PC_KOMBO":
-                    items, error = self._pc_kombo(categoria, marca, consulta, per_source_limit)
-                elif source == "CPU_MONKEY" and categoria == "PROCESSADOR":
-                    items, error = self._cpu_monkey(marca, consulta, per_source_limit)
-                elif source == "TECHPOWERUP" and categoria == "PLACA_VIDEO":
-                    items, error = self._techpowerup(marca, consulta, per_source_limit)
+                handlers = {
+                    "PC_KOMBO": lambda: self._pc_kombo(categoria, marca, consulta, per_source_limit),
+                    "CPU_MONKEY": lambda: self._cpu_monkey(marca, consulta, per_source_limit) if categoria == "PROCESSADOR" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                    "TECHPOWERUP": lambda: self._techpowerup(marca, consulta, per_source_limit) if categoria == "PLACA_VIDEO" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                }
+                handler = handlers.get(source)
+                if handler:
+                    items, error = handler()
                 else:
+                    # CPU-World, WikiChip, Geizhals e fabricante não possuem um
+                    # catálogo simples único para todas as categorias. Eles ficam
+                    # como descoberta limitada/busca e principalmente confirmação.
                     items, error = self._search_source(source, categoria, marca, consulta, per_source_limit)
             except Exception as exc:
                 items, error = [], f"ERRO_FONTE: {type(exc).__name__}: {exc}"

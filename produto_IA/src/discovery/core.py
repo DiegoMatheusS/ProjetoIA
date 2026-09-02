@@ -13,7 +13,7 @@ from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_m
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
-    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED, HARDWARE_CATEGORIES
 from ..extractors.ml_specs import extract_specs
@@ -23,6 +23,7 @@ from ..utils.normalizers import clean_text
 SUPPORTED_DISCOVERY_CATEGORIES = tuple(sorted(HARDWARE_CATEGORIES))
 
 PROVIDER_BY_SOURCE = {
+    "ICECAT": IcecatProvider,
     "FABRICANTE_OFICIAL": ManufacturerProvider,
     "CPU_MONKEY": CPUMonkeyProvider,
     "CPU_WORLD": CPUWorldProvider,
@@ -167,6 +168,7 @@ class HardwareDiscoveryService:
             "categorias": list(SUPPORTED_DISCOVERY_CATEGORIES),
             "fontesPadraoPorCategoria": deepcopy(DEFAULT_SOURCES_BY_CATEGORY),
             "fontesTecnicas": [
+                {"id": "ICECAT", "papel": ["ENRIQUECIMENTO_API"], "categorias": list(SUPPORTED_DISCOVERY_CATEGORIES), "configuracaoOpcional": ["ICECAT_USERNAME", "ICECAT_API_TOKEN", "ICECAT_CONTENT_TOKEN"]},
                 {"id": "PC_KOMBO", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER", "VENTOINHA"]},
                 {"id": "CPU_MONKEY", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR"]},
                 {"id": "CPU_WORLD", "papel": ["CONFIRMACAO", "ENRIQUECIMENTO"], "categorias": ["PROCESSADOR"]},
