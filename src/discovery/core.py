@@ -209,8 +209,13 @@ class HardwareDiscoveryService:
 
         identity = _identity_from_detail(detail, inferred) if detail.get("ok") else inferred
         attrs = detail.get("attributes") or []
-        context = detail.get("context_text") or candidate.nome
-        specs = extract_specs(categoria, attrs, context_text=context)
+        catalog_text = (candidate.resumo or {}).get("catalog_text") or candidate.nome
+        context = detail.get("context_text") or catalog_text
+        specs = dict((candidate.resumo or {}).get("specs") or {})
+        extracted = extract_specs(categoria, attrs, context_text=context)
+        for key, value in (extracted or {}).items():
+            if value not in (None, "", []):
+                specs[key] = value
         schema = SCHEMAS[categoria]
         spec_field = schema[1]
         expected = schema[2] or []
@@ -356,17 +361,27 @@ class HardwareDiscoveryService:
                     "imagemUrl": None,
                     "categoria": categoria,
                 }
+                catalog_text = (candidate.resumo or {}).get("catalog_text") or candidate.nome
+                specs = dict((candidate.resumo or {}).get("specs") or {})
+                extracted = extract_specs(categoria, [], context_text=catalog_text)
+                for key, value in (extracted or {}).items():
+                    if value not in (None, "", []):
+                        specs[key] = value
                 if schema[1]:
-                    payload[schema[1]] = {}
+                    payload[schema[1]] = specs
+                expected_fields = schema[2] or []
+                missing = [f for f in expected_fields if specs.get(f) in (None, "", [])]
+                required_missing = [f for f in REQUIRED.get(categoria, []) if specs.get(f) in (None, "", [])]
+                coverage = (len(expected_fields) - len(missing)) / len(expected_fields) if expected_fields else 0.0
                 item = {
                     "identidade": identity,
                     "chaveComparacao": identity.get("chave"),
                     "payloadHardware": payload,
-                    "especificacoesEncontradas": {},
-                    "camposEsperados": schema[2] or [],
-                    "camposAusentes": schema[2] or [],
-                    "camposObrigatoriosAusentes": REQUIRED.get(categoria, []),
-                    "coberturaTecnica": 0.0,
+                    "especificacoesEncontradas": specs,
+                    "camposEsperados": expected_fields,
+                    "camposAusentes": missing,
+                    "camposObrigatoriosAusentes": required_missing,
+                    "coberturaTecnica": round(coverage, 4),
                     "fontes": [{"fonte": candidate.fonte, "url": candidate.url, "ok": True, "erro": None}],
                     "origemPorCampo": {},
                     "conflitos": [],
@@ -376,6 +391,28 @@ class HardwareDiscoveryService:
                     "erroDetalhamento": None,
                     "preco": None,
                 }
+            # Contrato amigável ao backend: além do payloadHardware histórico,
+            # expõe payload/statusFicha/qualidade/idTemporario diretamente.
+            payload_for_backend = item.get("payloadHardware") or {}
+            required_missing = item.get("camposObrigatoriosAusentes") or []
+            conflicts = item.get("conflitos") or []
+            if conflicts:
+                status_ficha = "PRECISA_REVISAO"
+            elif required_missing:
+                status_ficha = "FICHA_INCOMPLETA"
+            else:
+                status_ficha = "PRONTO"
+            quality = int(round(float(item.get("coberturaTecnica") or 0) * 100))
+            identity_bonus = 10 if (item.get("identidade") or {}).get("metodo") else 0
+            item["qualidade"] = min(100, quality + identity_bonus)
+            item["statusFicha"] = status_ficha
+            item["payload"] = payload_for_backend
+            base_temp = item.get("chaveComparacao") or str(payload_for_backend.get("nome") or candidate.nome)
+            temp_slug = re.sub(r"[^a-z0-9]+", "-", str(base_temp).casefold()).strip("-")[:100]
+            item["idTemporario"] = f"{categoria.casefold()}-{temp_slug}"
+            item["avisos"] = list(item.get("avisos") or [])
+            if required_missing:
+                item["avisos"].append("Ficha técnica parcial; campos ausentes podem ser detalhados/enriquecidos antes do cadastro.")
             items.append(item)
 
         items = self._dedupe_items(items)

@@ -303,18 +303,103 @@ class DiscoverySourceCatalog:
     @staticmethod
     def _pc_kombo_name(text: str, categoria: str) -> str:
         value = re.sub(r"^\s*\d+\.\s*", "", text or "").strip()
+        if categoria == "ARMAZENAMENTO":
+            # Preserva a capacidade no nome (500 GB / 1 TB são SKUs distintos),
+            # mas remove a repetição que o catálogo às vezes exibe.
+            m = re.match(r"^(.*?)\s+(?:\d+\s+GB\s+)?(\d+)\s+GB\s+(?:NVM|NVME|SATA)\s+Protocol\s+.+?\s+Format\s*$", value, re.I)
+            if m:
+                return f"{m.group(1).strip()} {m.group(2)} GB".strip()
         # O catálogo concatena um resumo técnico ao nome. Removemos apenas os
         # sufixos estruturados para preservar o modelo comercial.
         patterns = {
             "PROCESSADOR": r"\s+Socket\s+.+$",
-            "PLACA_MAE": r"\s+(?:E-ATX|ATX|Micro-ATX|Mini-ITX)\s+Socket\s+.+$",
-            "FONTE": r"\s+(?:ATX|SFX|SFX-L|TFX|Flex ATX|PS/2)(?:[, ]+[^0-9]+)?\s+\d{2,4}W\s*$",
+            "PLACA_MAE": r"\s+(?:E-ATX|ATX|Micro-ATX|Mini-ATX|Mini-ITX|Mini-DTX|ITX|CEB|EEB|XL-ATX)\s+Socket\s+.+$",
+            "PLACA_VIDEO": r"\s+(?:(?:GeForce\s+(?:RTX|GTX|GT|GTS)\s+\d{3,4}(?:\s+(?:Ti|SUPER|Super))?)|(?:Radeon\s+(?:RX\s+\d{3,4}(?:\s+(?:XT|XTX))?|VII))|(?:Intel\s+Arc\s+[A-Z]\d+))(?:\s*\([^)]*\))?\s+\d+(?:\.\d+)?\s+GB\s+\d+W\s*$",
+            "ARMAZENAMENTO": r"\s+(?:\d+\s+GB\s+)?\d+\s+GB\s+(?:NVM|NVME|SATA)\s+Protocol\s+.+?\s+Format\s*$",
+            "FONTE": r"\s+(?:(?:80\s+PLUS\s+(?:Bronze|Silver|Gold|Platinum|Titanium))[, ]*)?(?:(?:semi-modular|semi modular|modular)\s+)?(?:ATX(?: PS/2)?|SFX(?:-L)?|TFX|Flex-?ATX|PS/2)\s+\d{2,4}W\s*$",
             "COOLER": r"\s+For socket\s+.+$",
         }
         pattern = patterns.get(categoria)
         if pattern:
             value = re.sub(pattern, "", value, flags=re.I).strip(" -,")
         return value
+
+
+    @staticmethod
+    def _pc_kombo_summary(text: str, categoria: str) -> dict:
+        """Extrai os campos que o próprio catálogo do PC-Kombo já exibe.
+
+        A descoberta precisa ser útil mesmo quando a página individual estiver lenta
+        ou bloqueada. Por isso preservamos os dados técnicos da listagem.
+        """
+        raw = re.sub(r"\s+", " ", text or "").strip()
+        specs = {}
+        if categoria == "PROCESSADOR":
+            m = re.search(
+                r"\bSocket\s+(.+?)\s+Clock\s+([0-9.]+)\s*GHz(?:\s+Turbo\s+([0-9.]+)\s*GHz)?\s+(\d+)\s+Cores\s+(\d+)\s+Threads\b",
+                raw, re.I,
+            )
+            if m:
+                specs["socket"] = m.group(1).strip()
+                specs["frequenciaBaseMhz"] = int(round(float(m.group(2)) * 1000))
+                if m.group(3):
+                    specs["frequenciaTurboMhz"] = int(round(float(m.group(3)) * 1000))
+                specs["nucleos"] = int(m.group(4))
+                specs["threads"] = int(m.group(5))
+
+        elif categoria == "PLACA_MAE":
+            m = re.search(
+                r"\b(E-ATX|ATX|Micro-ATX|Mini-ATX|Mini-ITX|Mini-DTX|ITX|CEB|EEB|XL-ATX)\s+Socket\s+(.+?)\s+Chipset\s+([^ ]+)\s+(\d+)\s+Ramslots\b",
+                raw, re.I,
+            )
+            if m:
+                specs["formato"] = m.group(1)
+                specs["socket"] = m.group(2).strip()
+                specs["chipset"] = m.group(3).strip()
+                specs["slotsMemoria"] = int(m.group(4))
+
+        elif categoria == "ARMAZENAMENTO":
+            m = re.search(
+                r"(?:\b\d+\s+GB\s+)?\b(\d+)\s+GB\s+(NVM|NVME|SATA)\s+Protocol\s+(.+?)\s+Format\s*$",
+                raw, re.I,
+            )
+            if m:
+                specs["tipo"] = "SSD"
+                specs["capacidadeGb"] = int(m.group(1))
+                proto = m.group(2).upper()
+                specs["interface"] = "NVMe" if proto in {"NVM", "NVME"} else "SATA"
+                specs["formato"] = m.group(3).strip()
+
+        elif categoria == "FONTE":
+            m = re.search(r"\b(ATX(?: PS/2)?|SFX(?:-L)?|TFX|Flex-?ATX|PS/2)\s+(\d{2,4})W\s*$", raw, re.I)
+            if m:
+                specs["formato"] = m.group(1)
+                specs["potenciaWatts"] = int(m.group(2))
+            cert = re.search(r"\b80\s+PLUS\s+(Bronze|Silver|Gold|Platinum|Titanium)\b", raw, re.I)
+            if cert:
+                specs["certificacao"] = f"80 PLUS {cert.group(1).title()}"
+            low = raw.casefold()
+            if "semi-modular" in low or "semi modular" in low:
+                specs["modularidade"] = "SEMI_MODULAR"
+            elif re.search(r"\bmodular\b", low):
+                specs["modularidade"] = "MODULAR"
+
+        elif categoria == "PLACA_VIDEO":
+            mem = re.search(r"\b(\d+(?:\.\d+)?)\s+GB\s+(\d+)W\s*$", raw, re.I)
+            if mem:
+                value = float(mem.group(1))
+                specs["memoriaVideoGb"] = int(value) if value.is_integer() else value
+                specs["consumoWatts"] = int(mem.group(2))
+            # O chipset costuma aparecer imediatamente antes do VRAM/potência.
+            gm = re.search(
+                r"\b((?:GeForce\s+(?:RTX|GTX|GT|GTS)\s+[^ ]+(?:\s+(?:Ti|SUPER|Super))?(?:\s*\([^)]*\))?)|(?:Radeon\s+(?:RX\s+[^ ]+(?:\s+XT|\s+XTX)?|VII))|(?:Intel\s+Arc\s+[A-Z]\d+))\s+\d+(?:\.\d+)?\s+GB\s+\d+W\s*$",
+                raw, re.I,
+            )
+            if gm:
+                specs["gpu"] = re.sub(r"\s*\([^)]*\)", "", gm.group(1)).strip()
+                specs["chipset"] = specs["gpu"]
+
+        return specs
 
     def _pc_kombo(self, categoria: str, marca=None, consulta=None, limit=50):
         config = PC_KOMBO_CATALOGS.get(categoria)
@@ -334,12 +419,22 @@ class DiscoverySourceCatalog:
                 links.extend(soup.select(selector))
             for link in links:
                 href = link.get("href") or ""
-                name = self._pc_kombo_name(self._norm(link.get_text(" ", strip=True)), categoria)
+                raw_text = self._norm(link.get_text(" ", strip=True))
+                name = self._pc_kombo_name(raw_text, categoria)
                 if len(name) < 3 or not re.search(r"[A-Za-z]", name):
                     continue
                 if not self._matches_filters(name, marca, consulta):
                     continue
-                found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="PC_KOMBO", marca=marca))
+                found.append(DiscoveryCandidate(
+                    nome=name,
+                    url=urljoin(final, href),
+                    fonte="PC_KOMBO",
+                    marca=marca,
+                    resumo={
+                        "catalog_text": raw_text,
+                        "specs": self._pc_kombo_summary(raw_text, categoria),
+                    },
+                ))
             return self._dedupe(found)
 
         html, final, error = self._fetch_html(url, ["pc-kombo.com"])

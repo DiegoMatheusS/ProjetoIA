@@ -55,8 +55,10 @@ class HardwareDiscoveryRequest(BaseModel):
     fontes: list[str] | None = None
     pagina: int = Field(default=1, ge=1, le=100)
     limite: int = Field(default=20, ge=1, le=50)
-    detalhar: bool = True
-    enriquecer: bool = True
+    # A busca em lote é catálogo-primeiro para responder rápido.
+    # Detalhamento/enriquecimento continua disponível sob demanda.
+    detalhar: bool = False
+    enriquecer: bool = False
     noBrowser: bool = False
 
 

@@ -12,8 +12,6 @@ package-lock.json
 # Segredos
 .env
 
-
-
 # Dados gerados
 data/raw/*
 !data/raw/.gitkeep
