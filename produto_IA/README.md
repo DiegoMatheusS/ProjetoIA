@@ -1,3 +1,14 @@
+## Atualização v14.17
+
+- Descoberta de Hardware corrigida para usar **catálogos reais por fonte**, em vez de tratar todos os sites como busca genérica.
+- PROCESSADOR agora prioriza **PC-Kombo -> CPU-Monkey**, mantendo CPU-World e WikiChip para confirmação/enriquecimento.
+- CPU-Monkey usa páginas de família/grupo; buscas como Core i5-9500 podem usar o grupo Intel Core i 9000.
+- PC-Kombo usa catálogos diretos de CPU, GPU, placa-mãe, SSD, fonte, gabinete e cooler, e páginas individuais para Producer/MPN/EAN/especificações.
+- TechPowerUp continua como catálogo especializado principal para GPU.
+- Geizhals, WikiChip, CPU-World e fabricante oficial permanecem como fontes de apoio/confirmação conforme a categoria.
+- Busca genérica deixa de ser fonte primária quando existe catálogo técnico conhecido.
+- Health: `14.17-railway`.
+
 ## Atualização v14.16
 
 - Novo modo **Descoberta de Hardwares** para popular o catálogo técnico do CriaByte sem depender de uma URL de marketplace por item.
@@ -499,3 +510,11 @@ centralizada na Produto IA da Railway.
 
 ## v14.11
 Mercado Livre passa a usar Surfsky como fallback cloud antes do navegador genérico da Railway.
+
+## v14.17 - descoberta por catálogo das fontes técnicas
+
+A descoberta de Hardwares não depende mais de tratar todas as fontes como busca
+genérica. PC-Kombo, CPU-Monkey e TechPowerUp usam seus catálogos públicos
+conhecidos. CPU-World, WikiChip, Geizhals e fabricante oficial permanecem como
+fontes de confirmação/enriquecimento. Isso evita o caso em que uma busca de 50
+processadores encontrava apenas poucos links inválidos.

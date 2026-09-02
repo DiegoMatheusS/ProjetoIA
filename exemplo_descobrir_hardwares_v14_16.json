@@ -1,0 +1,10 @@
+{
+  "categoria": "PROCESSADOR",
+  "marca": "Intel",
+  "consulta": "Core i5",
+  "pagina": 1,
+  "limite": 20,
+  "detalhar": true,
+  "enriquecer": true,
+  "noBrowser": false
+}
