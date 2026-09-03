@@ -111,9 +111,9 @@ class DiscoverySourceCatalog:
             "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
         })
         try:
-            self.timeout = max(3, int(os.getenv("DISCOVERY_SOURCE_TIMEOUT_SECONDS", "8")))
+            self.timeout = max(3, int(os.getenv("DISCOVERY_SOURCE_TIMEOUT_SECONDS", "5")))
         except ValueError:
-            self.timeout = 8
+            self.timeout = 5
         self.resolver = resolver or WebSearchResolver(session=self.session)
         self.resolver.timeout = min(self.resolver.timeout, self.timeout)
         self.rate_limiter = PoliteRateLimiter(
@@ -285,7 +285,10 @@ class DiscoverySourceCatalog:
 
             # HTTP de catálogo pode responder 200 com HTML reduzido. Em vez de
             # aceitar 1-3 modelos, renderizamos a primeira página pobre via Surfsky.
-            sparse_threshold = min(8, max(3, int(limit)))
+            # Com filtro específico, um único match válido já basta. A regra
+            # antiga renderizava Surfsky mesmo após achar o SKU e adicionava
+            # dezenas de segundos sem melhorar o resultado.
+            sparse_threshold = 1 if consulta else min(5, max(3, int(limit)))
             if len(page_items) < sparse_threshold and page_index < 2:
                 rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["cpu-monkey.com"])
                 if rendered:
@@ -544,7 +547,9 @@ class DiscoverySourceCatalog:
 
         # Mesma estratégia do Magazine: se a resposta HTTP parece parcial, usa o
         # navegador cloud na MESMA página e mescla os links renderizados.
-        sparse_threshold = min(12, max(4, int(limit)))
+        # Em consultas filtradas, não renderiza novamente o catálogo se o HTTP
+        # já encontrou ao menos um candidato. Isso corta o principal atraso real.
+        sparse_threshold = 1 if consulta else min(6, max(3, int(limit)))
         if len(found) < sparse_threshold:
             rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["pc-kombo.com"])
             if rendered:
@@ -574,7 +579,7 @@ class DiscoverySourceCatalog:
 
         html, final, error = self._fetch_html(url, ["techpowerup.com"])
         found = parse_page(html, final) if html else []
-        sparse_threshold = min(10, max(4, int(limit)))
+        sparse_threshold = 1 if consulta else min(6, max(3, int(limit)))
         if len(found) < sparse_threshold:
             rendered, rendered_final, render_error = self._fetch_rendered_catalog(url, ["techpowerup.com"])
             if rendered:

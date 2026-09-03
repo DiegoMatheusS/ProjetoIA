@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .sources import DiscoveryCandidate, DiscoverySourceCatalog, DEFAULT_SOURCES_BY_CATEGORY
-from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_missing_fields, required_missing_fields, essential_missing_fields, technical_status
+from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_missing_fields, required_missing_fields, essential_missing_fields, technical_status, complete_specs
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
@@ -33,6 +33,25 @@ PROVIDER_BY_SOURCE = {
     "PC_KOMBO": PCKomboProvider,
     "GEIZHALS": GeizhalsProvider,
 }
+
+SOURCE_LABELS = {
+    "ICECAT": "Icecat",
+    "FABRICANTE_OFICIAL": "Fabricante oficial",
+    "CPU_MONKEY": "CPU-Monkey",
+    "CPU_WORLD": "CPU-World",
+    "WIKICHIP": "WikiChip",
+    "TECHPOWERUP": "TechPowerUp",
+    "PC_KOMBO": "PC-Kombo",
+    "GEIZHALS": "Geizhals",
+}
+
+
+def _source_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    key = str(value).strip().upper()
+    return SOURCE_LABELS.get(key, str(value).strip())
+
 
 GPU_VENDOR_HINTS = {
     "geforce": "NVIDIA", "quadro": "NVIDIA", "tesla": "NVIDIA", "nvidia": "NVIDIA",
@@ -153,21 +172,30 @@ class HardwareDiscoveryService:
         try:
             # Orçamento global da busca. v14.20.1 evita deixar o frontend preso por
             # vários minutos quando uma fonte externa está lenta/bloqueada.
-            self.request_budget = max(20.0, float(os.getenv("DISCOVERY_TOTAL_TIMEOUT_SECONDS", "90")))
+            self.request_budget = max(15.0, float(os.getenv("DISCOVERY_TOTAL_TIMEOUT_SECONDS", "45")))
         except ValueError:
-            self.request_budget = 90.0
+            self.request_budget = 45.0
         try:
-            self.detail_enrichment_timeout = max(2.0, float(os.getenv("DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS", "10")))
+            self.detail_enrichment_timeout = max(2.0, float(os.getenv("DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS", "6")))
         except ValueError:
-            self.detail_enrichment_timeout = 10.0
+            self.detail_enrichment_timeout = 6.0
         try:
-            self.detail_enrichment_sources = max(1, int(os.getenv("DISCOVERY_ENRICHMENT_MAX_SOURCES", "4")))
+            self.detail_enrichment_sources = max(1, int(os.getenv("DISCOVERY_ENRICHMENT_MAX_SOURCES", "2")))
         except ValueError:
-            self.detail_enrichment_sources = 4
+            self.detail_enrichment_sources = 2
         try:
-            self.detail_workers = min(8, max(1, int(os.getenv("DISCOVERY_DETAIL_WORKERS", "6"))))
+            self.detail_workers = min(10, max(1, int(os.getenv("DISCOVERY_DETAIL_WORKERS", "8"))))
         except ValueError:
-            self.detail_workers = 6
+            self.detail_workers = 8
+        try:
+            self.detail_source_timeout = max(2, int(os.getenv("DISCOVERY_DETAIL_SOURCE_TIMEOUT_SECONDS", "4")))
+        except ValueError:
+            self.detail_source_timeout = 4
+        try:
+            self.bulk_target_coverage = float(os.getenv("DISCOVERY_BULK_TARGET_COVERAGE", "0.82"))
+        except ValueError:
+            self.bulk_target_coverage = 0.82
+        self.bulk_target_coverage = min(1.0, max(0.60, self.bulk_target_coverage))
         self.bulk_browser_fallback = os.getenv(
             "DISCOVERY_BULK_BROWSER_FALLBACK", "false"
         ).strip().casefold() in {"1", "true", "sim", "yes"}
@@ -198,6 +226,9 @@ class HardwareDiscoveryService:
                 "enriquecimentoPorPadrao": True,
                 "prioridade": "QUALIDADE_DA_FICHA",
                 "buscaGenericaNaoEhFontePrimaria": True,
+                "retornaTodosCamposDoSchema": True,
+                "enriquecimentoSeletivo": True,
+                "metaCoberturaBuscaLote": 0.82,
             },
         }
 
@@ -205,6 +236,24 @@ class HardwareDiscoveryService:
         inferred = infer_identity(candidate.nome, categoria, candidate.marca)
         provider = _provider_for_candidate(candidate)
         detail = {"ok": False, "fonte": candidate.fonte, "url": candidate.url, "erro": "SEM_PROVEDOR"}
+
+        if provider and bulk_mode:
+            # Busca em lote usa timeout curto por candidato; o detalhe individual
+            # continua com os limites completos.
+            if hasattr(provider, "timeout"):
+                provider.timeout = min(int(provider.timeout), self.detail_source_timeout)
+            limiter = getattr(provider, "rate_limiter", None)
+            if limiter is not None:
+                limiter.min_delay = min(limiter.min_delay, 0.20)
+                limiter.jitter = min(limiter.jitter, 0.08)
+            resolver = getattr(provider, "resolver", None)
+            if resolver is not None:
+                if hasattr(resolver, "timeout"):
+                    resolver.timeout = min(int(resolver.timeout), self.detail_source_timeout)
+                resolver_limiter = getattr(resolver, "rate_limiter", None)
+                if resolver_limiter is not None:
+                    resolver_limiter.min_delay = min(resolver_limiter.min_delay, 0.20)
+                    resolver_limiter.jitter = min(resolver_limiter.jitter, 0.08)
 
         if provider and identity_is_strong(inferred):
             # Em descoberta em lote, não abrimos uma sessão Surfsky para cada
@@ -265,7 +314,9 @@ class HardwareDiscoveryService:
                 auto_mode=True,
                 total_timeout_override=self.detail_enrichment_timeout,
                 max_sources_override=self.detail_enrichment_sources,
-                source_timeout_override=max(3, int(self.detail_enrichment_timeout / max(1, min(3, self.detail_enrichment_sources)))),
+                source_timeout_override=max(2, int(self.detail_enrichment_timeout / max(1, self.detail_enrichment_sources))),
+                target_coverage_override=self.bulk_target_coverage if bulk_mode else 1.0,
+                excluded_sources={candidate.fonte} if bulk_mode else None,
             )
             if bool(bulk_mode) and not self.bulk_browser_fallback:
                 for source_provider in enricher.providers:
@@ -275,8 +326,11 @@ class HardwareDiscoveryService:
                         resolver.allow_browser_fallback = False
             result = enricher.enrich(result)
 
-        specs = result.get("especificacoesEncontradas") or {}
+        specs = complete_specs(categoria, result.get("especificacoesEncontradas") or {})
+        result["especificacoesEncontradas"] = specs
         payload = result.get("payloadParcialBackend") or payload
+        if spec_field:
+            payload[spec_field] = specs
         identity_final = _identity_from_detail({
             "brand": payload.get("marca"), "model": payload.get("modelo"), "mpn": payload.get("mpn"), "gtin": payload.get("gtin")
         }, identity)
@@ -309,8 +363,12 @@ class HardwareDiscoveryService:
             "camposObrigatoriosAusentes": required_missing_fields(result),
             "camposEssenciaisAusentes": essential_missing_fields(result),
             "coberturaTecnica": round(technical_coverage(result), 4),
-            "fontes": unique_sources,
-            "fonte": candidate.fonte,
+            "fontes": list(dict.fromkeys(
+                label for label in (_source_label(source.get("fonte")) for source in unique_sources)
+                if label
+            )),
+            "fontesDetalhadas": unique_sources,
+            "fonte": _source_label(candidate.fonte),
             "fonteCatalogo": candidate.fonte,
             "origem": candidate.fonte,
             "urlOrigem": candidate.url,
@@ -426,6 +484,7 @@ class HardwareDiscoveryService:
                 for key, value in (extracted or {}).items():
                     if value not in (None, "", []):
                         specs[key] = value
+                specs = complete_specs(categoria, specs)
                 if schema[1]:
                     payload[schema[1]] = specs
                 expected_fields = schema[2] or []
@@ -443,8 +502,9 @@ class HardwareDiscoveryService:
                     "camposObrigatoriosAusentes": required_missing,
                     "camposEssenciaisAusentes": essential_missing_fields(coverage_input),
                     "coberturaTecnica": round(coverage, 4),
-                    "fontes": [{"fonte": candidate.fonte, "url": candidate.url, "ok": True, "erro": None}],
-                    "fonte": candidate.fonte,
+                    "fontes": [_source_label(candidate.fonte)],
+                    "fontesDetalhadas": [{"fonte": candidate.fonte, "url": candidate.url, "ok": True, "erro": None}],
+                    "fonte": _source_label(candidate.fonte),
                     "fonteCatalogo": candidate.fonte,
                     "origem": candidate.fonte,
                     "urlOrigem": candidate.url,
@@ -459,13 +519,27 @@ class HardwareDiscoveryService:
             # Contrato amigável ao backend: além do payloadHardware histórico,
             # expõe payload/statusFicha/qualidade/idTemporario diretamente.
             payload_for_backend = item.get("payloadHardware") or {}
-            required_missing = item.get("camposObrigatoriosAusentes") or []
+            schema = SCHEMAS[categoria]
+            spec_field = schema[1]
+            completed_specs = complete_specs(categoria, item.get("especificacoesEncontradas") or {})
+            item["especificacoesEncontradas"] = completed_specs
+            if spec_field:
+                payload_for_backend[spec_field] = completed_specs
+            item["payloadHardware"] = payload_for_backend
+            missing_input = {
+                "categoriaDetectada": categoria,
+                "especificacoesEncontradas": completed_specs,
+            }
+            item["camposAusentes"] = technical_missing_fields(missing_input)
+            item["camposObrigatoriosAusentes"] = required_missing_fields(missing_input)
+            required_missing = item["camposObrigatoriosAusentes"]
             conflicts = item.get("conflitos") or []
             status_input = {
                 "categoriaDetectada": categoria,
-                "especificacoesEncontradas": item.get("especificacoesEncontradas") or {},
+                "especificacoesEncontradas": completed_specs,
                 "conflitos": conflicts,
             }
+            item["coberturaTecnica"] = round(technical_coverage(status_input), 4)
             item["camposEssenciaisAusentes"] = essential_missing_fields(status_input)
             item["statusFicha"] = technical_status(status_input, conflicts=conflicts)
             item["qualidade"] = int(round(float(item.get("coberturaTecnica") or 0) * 100))
@@ -502,7 +576,9 @@ class HardwareDiscoveryService:
                 "backendDeveOcultarJaCadastrados": True,
                 "backendDeveConfirmarAntesDeCadastrar": True,
                 "consultaTecnicaDuranteDescoberta": bool(detalhar and enriquecer),
-                "prioridade": "QUALIDADE_DA_FICHA",
+                "prioridade": "QUALIDADE_DA_FICHA_COM_LATENCIA_CONTROLADA",
+                "retornaTodosCamposDoSchema": True,
+                "metaCoberturaBuscaLote": self.bulk_target_coverage,
             },
             "duracaoMs": int((time.monotonic() - started) * 1000),
         }

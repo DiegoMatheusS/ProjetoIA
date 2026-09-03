@@ -25,6 +25,42 @@ def _normalized_for_compare(value):
 
 
 
+def complete_specs(category, specs):
+    """Retorna todos os campos do schema técnico com None para os ausentes."""
+    schema = SCHEMAS.get(category) if category else None
+    expected = (schema[2] if schema else None) or []
+    source = dict(specs or {})
+    completed = {field: source.get(field) for field in expected}
+    for key, value in source.items():
+        if key not in completed:
+            completed[key] = value
+    return completed
+
+
+PROVIDER_PRIORITY = {
+    "PROCESSADOR": ["ICECAT", "CPU_MONKEY", "FABRICANTE_OFICIAL", "CPU_WORLD", "WIKICHIP", "PC_KOMBO", "GEIZHALS"],
+    "PLACA_VIDEO": ["ICECAT", "TECHPOWERUP", "FABRICANTE_OFICIAL", "PC_KOMBO", "WIKICHIP", "GEIZHALS"],
+    "PLACA_MAE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "MEMORIA_RAM": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "ARMAZENAMENTO": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "FONTE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "GABINETE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "COOLER": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    "VENTOINHA": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+}
+
+
+def _provider_rank(category, provider):
+    order = PROVIDER_PRIORITY.get(category) or []
+    name = getattr(provider, "name", provider.__class__.__name__)
+    try:
+        return order.index(name)
+    except ValueError:
+        return len(order) + 10
+
+
+
+
 # v14.20: cobertura técnica ponderada por categoria. Campos que definem
 # compatibilidade/identidade funcional pesam mais que metadados raros.
 COVERAGE_WEIGHT_TIERS = {
@@ -156,8 +192,20 @@ class TechnicalEnricher:
     Uma chamada explícita com enrich=true continua podendo usar o modo completo.
     """
 
-    def __init__(self, providers=None, auto_mode=False, total_timeout_override=None, max_sources_override=None, source_timeout_override=None):
+    def __init__(
+        self,
+        providers=None,
+        auto_mode=False,
+        total_timeout_override=None,
+        max_sources_override=None,
+        source_timeout_override=None,
+        target_coverage_override=None,
+        excluded_sources=None,
+    ):
         self.auto_mode = bool(auto_mode)
+        self.excluded_sources = {
+            str(value).strip().upper() for value in (excluded_sources or set()) if value
+        }
         self.providers = providers or [
             IcecatProvider(),
             ManufacturerProvider(),
@@ -183,6 +231,8 @@ class TechnicalEnricher:
             except ValueError:
                 self.target_coverage = 1.0
             self.target_coverage = min(1.0, max(0.0, self.target_coverage))
+            if target_coverage_override is not None:
+                self.target_coverage = min(1.0, max(0.0, float(target_coverage_override)))
             try:
                 per_source_timeout = max(2, int(os.getenv("ENRICHMENT_AUTO_SOURCE_TIMEOUT", "4")))
             except ValueError:
@@ -268,8 +318,10 @@ class TechnicalEnricher:
 
         relevant = [
             p for p in self.providers
-            if not hasattr(p, "supports") or p.supports(category, identity)
+            if (not hasattr(p, "supports") or p.supports(category, identity))
+            and str(getattr(p, "name", "")).strip().upper() not in self.excluded_sources
         ]
+        relevant.sort(key=lambda provider: _provider_rank(category, provider))
         if self.max_sources is not None:
             relevant = relevant[: self.max_sources]
 
@@ -332,11 +384,13 @@ class TechnicalEnricher:
             # orçamento ainda mais agressivo, mas o padrão v14.15 é 100%.
             if self.auto_mode and self.target_coverage < 1.0 \
                     and not required_missing_fields(temp) \
+                    and not essential_missing_fields(temp) \
                     and technical_coverage(temp) >= self.target_coverage:
                 info["interrompidoPorCobertura"] = True
                 break
 
         info["camposPreenchidos"] = list(dict.fromkeys(info["camposPreenchidos"]))
+        specs = complete_specs(category, specs)
         output["especificacoesEncontradas"] = specs
         payload = dict(output.get("payloadParcialBackend") or {})
         payload[spec_field] = specs

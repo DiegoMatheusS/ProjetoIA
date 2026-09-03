@@ -1,3 +1,14 @@
+## v14.20.2 - ficha completa + busca mais rápida
+
+- A descoberta devolve **todos os campos técnicos previstos no schema da categoria**; o que não foi confirmado fica `null`.
+- `camposAusentes`, `camposObrigatoriosAusentes` e `camposEssenciaisAusentes` são recalculados a partir do schema completo.
+- `fontes` volta em formato simples para o frontend (`["PC-Kombo", "CPU-Monkey"]`) e `fontesDetalhadas` mantém diagnóstico/URL.
+- Enriquecimento em lote ficou seletivo: evita consultar novamente a própria fonte do candidato e prioriza as fontes mais úteis por categoria.
+- Meta padrão da busca em lote: 82% de cobertura **sem faltar campos essenciais**; a ficha individual continua podendo tentar 100%.
+- Timeout global padrão reduzido para 45s; detalhe por candidato 4s; enriquecimento 6s; máximo 2 fontes extras; 8 workers.
+- Nenhum campo é inventado: campos não confirmados permanecem `null` e aparecem em `camposAusentes`.
+- Health: `14.20.2-railway`.
+
 
 ## v14.20.1 - hotfix da descoberta
 

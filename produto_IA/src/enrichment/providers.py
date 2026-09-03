@@ -160,6 +160,11 @@ class ManufacturerProvider(ExternalTechnicalProvider):
                 return domains
         return []
 
+    def supports(self, category, identity):
+        # Evita gastar uma das poucas consultas do lote quando a marca não possui
+        # domínio oficial configurado.
+        return bool(self.search_domains(identity))
+
 
 class IcecatProvider(ExternalTechnicalProvider):
     """Open Icecat estruturado para completar fichas por GTIN ou marca+MPN.
