@@ -1,3 +1,16 @@
+## Atualização v14.20
+
+- Descoberta de Hardwares passa a priorizar **qualidade da ficha técnica**, não apenas velocidade.
+- `POST /descobrir-hardwares` usa `detalhar=true` e `enriquecer=true` por padrão.
+- Memória RAM passa a usar o catálogo real `pc-kombo.com/us/components/ram` e `/us/product/ram/`.
+- Cobertura técnica agora é ponderada por categoria; campos essenciais têm peso maior.
+- Status: `PRONTO` a partir de 80% sem lacunas essenciais/conflitos, `PRECISA_REVISAO` entre 55% e 79% ou quando faltar campo essencial, e `FICHA_INCOMPLETA` abaixo de 55%.
+- O retorno informa `fonte`, `fonteCatalogo`, `origem` e `urlOrigem` quando a origem é conhecida.
+- Cooler inclui `fluxoArCfm` no contrato técnico.
+- Os limites de consulta da descoberta ficaram mais generosos e configuráveis para permitir consultar mais fontes antes de devolver a ficha.
+- Busca individual Magalu/Mercado Livre e fallbacks existentes permanecem preservados.
+- Health: `14.20-railway`.
+
 ## Atualização v14.17
 
 - Descoberta de Hardware corrigida para usar **catálogos reais por fonte**, em vez de tratar todos os sites como busca genérica.

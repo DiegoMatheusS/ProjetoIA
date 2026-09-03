@@ -69,6 +69,7 @@ PC_KOMBO_CATALOGS = {
     "PROCESSADOR": ("https://www.pc-kombo.com/us/components/cpus", "/us/product/cpu/"),
     "PLACA_VIDEO": ("https://www.pc-kombo.com/us/components/gpus", "/us/product/gpu/"),
     "PLACA_MAE": ("https://www.pc-kombo.com/us/components/motherboards", "/us/product/mainboard/"),
+    "MEMORIA_RAM": ("https://www.pc-kombo.com/us/components/ram", "/us/product/ram/"),
     "ARMAZENAMENTO": ("https://www.pc-kombo.com/us/components/ssds", "/us/product/ssd/"),
     "FONTE": ("https://www.pc-kombo.com/us/components/psus", "/us/product/psu/"),
     "GABINETE": ("https://www.pc-kombo.com/us/components/cases", "/us/product/case/"),
@@ -313,6 +314,7 @@ class DiscoverySourceCatalog:
         # sufixos estruturados para preservar o modelo comercial.
         patterns = {
             "PROCESSADOR": r"\s+Socket\s+.+$",
+            "MEMORIA_RAM": r"\s+Memory\s+\d+(?:\.\d+)?\s+GB(?:,\s*DDR[345][ -]?\d{3,5})?\s*$",
             "PLACA_MAE": r"\s+(?:E-ATX|ATX|Micro-ATX|Mini-ATX|Mini-ITX|Mini-DTX|ITX|CEB|EEB|XL-ATX)\s+Socket\s+.+$",
             "PLACA_VIDEO": r"\s+(?:(?:GeForce\s+(?:RTX|GTX|GT|GTS)\s+\d{3,4}(?:\s+(?:Ti|SUPER|Super))?)|(?:Radeon\s+(?:RX\s+\d{3,4}(?:\s+(?:XT|XTX))?|VII))|(?:Intel\s+Arc\s+[A-Z]\d+))(?:\s*\([^)]*\))?\s+\d+(?:\.\d+)?\s+GB\s+\d+W\s*$",
             "ARMAZENAMENTO": r"\s+(?:\d+\s+GB\s+)?\d+\s+GB\s+(?:NVM|NVME|SATA)\s+Protocol\s+.+?\s+Format\s*$",
@@ -357,6 +359,39 @@ class DiscoverySourceCatalog:
                 specs["socket"] = m.group(2).strip()
                 specs["chipset"] = m.group(3).strip()
                 specs["slotsMemoria"] = int(m.group(4))
+            mem_types = sorted(set(x.upper() for x in re.findall(r"\bDDR[345]\b", raw, re.I)))
+            if mem_types:
+                specs["tiposMemoriaSuportados"] = mem_types
+
+        elif categoria == "MEMORIA_RAM":
+            ddr = re.search(r"\b(DDR[345])(?:[- ](\d{3,5}))?\b", raw, re.I)
+            if ddr:
+                specs["tipo"] = ddr.group(1).upper()
+                if ddr.group(2):
+                    specs["frequenciaMhz"] = int(ddr.group(2))
+            kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)\s*GB\b", raw, re.I)
+            if kit:
+                specs["quantidadeModulos"] = int(kit.group(1))
+                per = float(kit.group(2))
+                specs["capacidadePorModuloGb"] = int(per) if per.is_integer() else per
+            if re.search(r"\bSO[- ]?DIMM\b", raw, re.I):
+                specs["formato"] = "SO_DIMM"
+            elif re.search(r"\b(?:U?DIMM)\b", raw, re.I):
+                specs["formato"] = "DIMM"
+            cl = re.search(r"\bCL\s*(\d{1,3})\b", raw, re.I)
+            if cl:
+                specs["latenciaCl"] = int(cl.group(1))
+            volt = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*V\b", raw, re.I)
+            if volt:
+                specs["tensaoVolts"] = float(volt.group(1).replace(",", "."))
+            if re.search(r"\bECC\b", raw, re.I):
+                specs["ecc"] = True
+            if re.search(r"\bXMP\b", raw, re.I):
+                specs["suportaXmp"] = True
+            if re.search(r"\bEXPO\b", raw, re.I):
+                specs["suportaExpo"] = True
+            if re.search(r"\b(?:A?RGB)\b", raw, re.I):
+                specs["rgb"] = True
 
         elif categoria == "ARMAZENAMENTO":
             m = re.search(
@@ -398,6 +433,73 @@ class DiscoverySourceCatalog:
             if gm:
                 specs["gpu"] = re.sub(r"\s*\([^)]*\)", "", gm.group(1)).strip()
                 specs["chipset"] = specs["gpu"]
+            memory_type = re.search(r"\b(GDDR[3567X]+)\b", raw, re.I)
+            if memory_type:
+                specs["tipoMemoriaVideo"] = memory_type.group(1).upper()
+            bus = re.search(r"\b(\d{2,4})\s*bit\b", raw, re.I)
+            if bus:
+                specs["barramentoBits"] = int(bus.group(1))
+
+        elif categoria == "COOLER":
+            sockets = [re.sub(r"\s+", "", x).upper() for x in re.findall(r"\b(?:AM[2345]|TR4|sTRX4|sTR5|LGA\s*\d{3,4}|\b1[0128]\d{2}\b|2066|2011(?:-V3)?)\b", raw, re.I)]
+            if sockets:
+                specs["socketsSuportados"] = list(dict.fromkeys(sockets))
+            rad = re.search(r"\bRadiator\s+(120|140|240|280|360|420)\s*mm\b", raw, re.I)
+            if rad:
+                specs["tipo"] = "WATER_COOLER"
+                specs["tamanhoRadiadorMm"] = int(rad.group(1))
+            elif re.search(r"\b(?:tower|heatpipe|cpu cooler)\b", raw, re.I):
+                specs["tipo"] = "AIR_COOLER"
+            fan = re.search(r"(?:-|\b)(80|92|100|120|135|140)\s*mm\b", raw, re.I)
+            if fan:
+                specs["tamanhoVentoinhaMm"] = int(fan.group(1))
+            tdp = re.search(r"\bTDP\s*(?:up to\s*)?(\d{2,4})\s*W\b", raw, re.I)
+            if tdp:
+                specs["capacidadeTermicaWatts"] = int(tdp.group(1))
+            height = re.search(r"\bHeight\s*(\d+(?:[.,]\d+)?)\s*mm\b", raw, re.I)
+            if height:
+                specs["alturaMm"] = float(height.group(1).replace(",", "."))
+            rpm = re.search(r"\b(\d{3,5})\s*RPM\b", raw, re.I)
+            if rpm:
+                specs["velocidadeMaxRpm"] = int(rpm.group(1))
+            cfm = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*CFM\b", raw, re.I)
+            if cfm:
+                specs["fluxoArCfm"] = float(cfm.group(1).replace(",", "."))
+            noise = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*dB(?:A)?\b", raw, re.I)
+            if noise:
+                specs["ruidoDb"] = float(noise.group(1).replace(",", "."))
+            if re.search(r"\bARGB\b", raw, re.I):
+                specs["argb"] = True
+                specs["rgb"] = True
+            elif re.search(r"\bRGB\b", raw, re.I):
+                specs["rgb"] = True
+
+        elif categoria == "VENTOINHA":
+            size = re.search(r"\b(80|92|120|140|200)\s*mm\b", raw, re.I)
+            if size:
+                specs["tamanhoMm"] = int(size.group(1))
+            rpms = [int(x) for x in re.findall(r"\b(\d{3,5})\s*RPM\b", raw, re.I)]
+            if rpms:
+                specs["rpmMaxima"] = max(rpms)
+                if len(rpms) > 1:
+                    specs["rpmMinima"] = min(rpms)
+            cfm = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*CFM\b", raw, re.I)
+            if cfm:
+                specs["fluxoArCfm"] = float(cfm.group(1).replace(",", "."))
+            pressure = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*mm\s*H2O\b", raw, re.I)
+            if pressure:
+                specs["pressaoEstaticaMmH2o"] = float(pressure.group(1).replace(",", "."))
+            noise = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*dB(?:A)?\b", raw, re.I)
+            if noise:
+                specs["ruidoDb"] = float(noise.group(1).replace(",", "."))
+            if re.search(r"\bPWM\b|4[- ]?pin", raw, re.I):
+                specs["pwm"] = True
+                specs["conector"] = "PWM_4_PINOS"
+            if re.search(r"\bARGB\b", raw, re.I):
+                specs["argb"] = True
+                specs["rgb"] = True
+            elif re.search(r"\bRGB\b", raw, re.I):
+                specs["rgb"] = True
 
         return specs
 

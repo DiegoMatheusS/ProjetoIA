@@ -23,6 +23,63 @@ def _normalized_for_compare(value):
     return value
 
 
+
+
+# v14.20: cobertura técnica ponderada por categoria. Campos que definem
+# compatibilidade/identidade funcional pesam mais que metadados raros.
+COVERAGE_WEIGHT_TIERS = {
+    "PROCESSADOR": {
+        "essenciais": ["socket", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "cacheL3Mb", "tiposMemoriaSuportados", "versaoPcie"],
+        "importantes": ["arquitetura", "litografiaNm", "cacheL2Mb", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "possuiVideoIntegrado", "modeloVideoIntegrado"],
+    },
+    "MEMORIA_RAM": {
+        "essenciais": ["tipo", "formato", "capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz"],
+        "importantes": ["frequenciaJedecMhz", "latenciaCl", "tensaoVolts", "ecc", "registrada", "suportaXmp", "suportaExpo", "rgb"],
+    },
+    "PLACA_MAE": {
+        "essenciais": ["socket", "chipset", "formato", "tiposMemoriaSuportados", "slotsMemoria", "capacidadeMaximaMemoriaGb", "versaoPcie", "slotsM2"],
+        "importantes": ["frequenciasMemoriaJedecMhz", "frequenciasMemoriaOverclockMhz", "portasSata", "wifi", "bluetooth", "ethernet", "suportaXmp", "suportaExpo"],
+    },
+    "PLACA_VIDEO": {
+        "essenciais": ["gpu", "memoriaVideoGb", "tipoMemoriaVideo", "barramentoBits", "geracaoPcie", "consumoWatts", "comprimentoMm", "slotsOcupados"],
+        "importantes": ["clockBaseMhz", "clockBoostMhz", "potenciaFonteRecomendadaWatts", "conectoresPcie8Pinos", "conectores12vhpwr", "conectores12v2x6", "hdmi", "displayPort"],
+    },
+    "ARMAZENAMENTO": {
+        "essenciais": ["tipo", "capacidadeGb", "interface", "formato"],
+        "importantes": ["geracaoPcie", "pistasPcie", "leituraSequencialMbps", "escritaSequencialMbps", "tamanhoM2Mm", "possuiDissipador"],
+    },
+    "FONTE": {
+        "essenciais": ["formato", "potenciaWatts", "certificacao", "modularidade", "padraoAtx"],
+        "importantes": ["eficienciaPercentual", "comprimentoMm", "conectoresAtx24Pinos", "conectoresEpsCpu", "conectoresPcie8Pinos", "conectores12vhpwr", "conectores12v2x6", "protecoes"],
+    },
+    "GABINETE": {
+        "essenciais": ["tamanho", "alturaMm", "larguraMm", "profundidadeMm", "formatosPlacaMaeSuportados", "comprimentoMaximoGpuMm", "alturaMaximaCoolerCpuMm"],
+        "importantes": ["formatosFonteSuportados", "comprimentoMaximoFonteMm", "slotsTraseiros", "suportesFans", "suportesRadiador", "suportaGpuVertical"],
+    },
+    "COOLER": {
+        "essenciais": ["tipo", "socketsSuportados", "alturaMm", "capacidadeTermicaWatts", "tamanhoVentoinhaMm", "velocidadeMaxRpm", "fluxoArCfm", "ruidoDb"],
+        "importantes": ["tamanhoRadiadorMm", "quantidadeVentoinhas", "pesoGramas", "vidaUtilHoras", "rgb", "argb"],
+    },
+    "VENTOINHA": {
+        "essenciais": ["tamanhoMm", "rpmMaxima", "fluxoArCfm", "pressaoEstaticaMmH2o", "ruidoDb", "conector", "pwm"],
+        "importantes": ["espessuraMm", "rpmMinima", "tensaoVolts", "correnteAmperes", "rgb", "argb"],
+    },
+}
+
+def _field_weight(category, field):
+    tiers = COVERAGE_WEIGHT_TIERS.get(category) or {}
+    if field in (tiers.get("essenciais") or []):
+        return 3
+    if field in (tiers.get("importantes") or []):
+        return 2
+    return 1
+
+def essential_missing_fields(result):
+    category = (result or {}).get("categoriaDetectada")
+    specs = (result or {}).get("especificacoesEncontradas") or {}
+    essentials = (COVERAGE_WEIGHT_TIERS.get(category) or {}).get("essenciais") or []
+    return [field for field in essentials if _missing(specs.get(field))]
+
 def technical_missing_fields(result):
     category = (result or {}).get("categoriaDetectada")
     schema = SCHEMAS.get(category) if category else None
@@ -40,8 +97,25 @@ def technical_coverage(result):
         return 1.0
     expected = schema[2] or []
     specs = (result or {}).get("especificacoesEncontradas") or {}
-    present = sum(1 for field in expected if not _missing(specs.get(field)))
-    return present / max(1, len(expected))
+    total_weight = sum(_field_weight(category, field) for field in expected)
+    present_weight = sum(
+        _field_weight(category, field)
+        for field in expected
+        if not _missing(specs.get(field))
+    )
+    return present_weight / max(1, total_weight)
+
+
+def technical_status(result, conflicts=None):
+    """Status v14.20: cobertura ponderada + ausência de campos essenciais."""
+    coverage = technical_coverage(result)
+    essential_missing = essential_missing_fields(result)
+    conflicts = conflicts if conflicts is not None else ((result or {}).get("conflitos") or [])
+    if coverage < 0.55:
+        return "FICHA_INCOMPLETA"
+    if conflicts or essential_missing or coverage < 0.80:
+        return "PRECISA_REVISAO"
+    return "PRONTO"
 
 
 def required_missing_fields(result):
@@ -163,7 +237,7 @@ class TechnicalEnricher:
 
         info = {
             "executado": False,
-            "modo": "AUTOMATICO_RAPIDO" if self.auto_mode else "COMPLETO",
+            "modo": "AUTOMATICO_CONTROLADO" if self.auto_mode else "COMPLETO",
             "identidade": identity,
             "fontesConsultadas": [],
             "camposPreenchidos": [],

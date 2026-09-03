@@ -154,3 +154,16 @@ DISCOVERY_ENRICHMENT_MAX_SOURCES=2
 ## v14.18 - Open Icecat opcional
 
 Para habilitar a fonte estruturada Icecat, configure `ICECAT_USERNAME`. Tokens de acesso podem ser adicionados em `ICECAT_API_TOKEN` e `ICECAT_CONTENT_TOKEN`. Esses segredos ficam somente no serviço Projeto IA. A ausência dessas variáveis não impede a descoberta por PC-Kombo, CPU-Monkey e TechPowerUp.
+
+
+## v14.20 — descoberta orientada à qualidade
+
+A descoberta detalha e enriquece por padrão. Ajustes opcionais:
+
+```text
+DISCOVERY_TOTAL_TIMEOUT_SECONDS=300
+DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS=18
+DISCOVERY_ENRICHMENT_MAX_SOURCES=6
+```
+
+Esses valores são limites de proteção, não metas de velocidade. A prioridade é preencher a ficha com dados confirmados sem inventar campos.

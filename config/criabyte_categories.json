@@ -256,6 +256,7 @@
       "vidaUtilHoras",
       "pesoGramas",
       "velocidadeMaxRpm",
+      "fluxoArCfm",
       "rgb",
       "argb"
     ],

@@ -599,7 +599,8 @@ def extract_motherboard(mapping, text):
     mem_details = attr(mapping, "Memória")
     mem = attr(
         mapping,
-        "RAM_MEMORY_TYPE", "MEMORY_TYPE", "Tipo de memória RAM", "Tipo de Memória",
+        "RAM_MEMORY_TYPE", "MEMORY_TYPE", "MEMORY_STANDARD", "Memory Type", "Memory Standard",
+        "Tipo de memória RAM", "Tipo de Memória",
     ) or mem_details or first_match(text, r"(?:Mem[oó]ria|Memory)\s*:\s*([^.;\n]+)")
     if memory_types(mem):
         specs["tiposMemoriaSuportados"] = memory_types(mem)
@@ -721,40 +722,43 @@ def extract_ram(mapping, text):
     specs = {}
     source = attr(
         mapping,
-        "RAM_MEMORY_TYPE", "MEMORY_TYPE", "Tipo de memória RAM", "Tipo de Memória",
+        "RAM_MEMORY_TYPE", "MEMORY_TYPE", "MEMORY_STANDARD", "Memory Type", "Memory Standard",
+        "Tipo de memória RAM", "Tipo de Memória",
     ) or text
     types = memory_types(source)
     if len(types) == 1:
         specs["tipo"] = types[0]
 
-    token = normalize_key(attr(mapping, "RAM_FORM_FACTOR", "FORM_FACTOR", "Formato") or text)
+    token = normalize_key(attr(mapping, "RAM_FORM_FACTOR", "FORM_FACTOR", "MEMORY_FORM_FACTOR", "Form Factor", "Memory Form Factor", "Formato") or text)
     if "so_dimm" in token or "sodimm" in token:
         specs["formato"] = "SO_DIMM"
-    elif re.search(r"\b(?:U?DIMM)\b", text or "", re.I):
+    elif "dimm" in token or re.search(r"\b(?:U?DIMM)\b", text or "", re.I):
         specs["formato"] = "DIMM"
 
-    kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+)\s*GB\b", text or "", re.I)
+    kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*GB\b", text or "", re.I)
     if kit:
         specs["quantidadeModulos"] = int(kit.group(1))
-        specs["capacidadePorModuloGb"] = int(kit.group(2))
+        per_module = float(kit.group(2).replace(",", "."))
+        specs["capacidadePorModuloGb"] = int(per_module) if per_module.is_integer() else per_module
     else:
-        set_if(specs, "quantidadeModulos", integer(attr(mapping, "MODULES_NUMBER", "Quantidade de módulos")))
+        set_if(specs, "quantidadeModulos", integer(attr(mapping, "MODULES_NUMBER", "NUMBER_OF_MODULES", "Modules", "Number of modules", "Sticks", "Quantidade de módulos")))
         # Não convertemos automaticamente a capacidade total do produto em
         # capacidade por módulo: um anúncio de 16 GB pode ser um kit 2x8 GB.
-        set_if(specs, "capacidadePorModuloGb", capacity_gb(attr(mapping, "CAPACITY_PER_MODULE", "Capacidade por módulo")))
+        set_if(specs, "capacidadePorModuloGb", capacity_gb(attr(mapping, "CAPACITY_PER_MODULE", "MODULE_CAPACITY", "Capacity per module", "Module capacity", "Capacidade por módulo")))
 
     freq = frequency_mhz(attr(
         mapping,
-        "RAM_MEMORY_SPEED", "MEMORY_SPEED", "Frequência", "Velocidade da memória", "Velocidade de Clock",
+        "RAM_MEMORY_SPEED", "MEMORY_SPEED", "MEMORY_CLOCK", "Frequency", "Memory Speed", "Memory Clock",
+        "Frequência", "Velocidade da memória", "Velocidade de Clock",
     )) or text_frequency(text, r"\b([0-9]{3,5}\s*MHz)\b")
     set_if(specs, "frequenciaMhz", freq)
     set_if(specs, "frequenciaJedecMhz", frequency_mhz(attr(mapping, "JEDEC_FREQUENCY", "Frequência JEDEC")))
-    set_if(specs, "latenciaCl", integer(attr(mapping, "CAS_LATENCY", "LATENCY", "Latência CAS", "Latência CL", "Latência")) or text_integer(text, r"\bCL\s*(\d{1,3})\b"))
-    set_if(specs, "tensaoVolts", number(attr(mapping, "VOLTAGE", "Tensão", "Voltagem")) or text_number(text, r"(?:Tens[aã]o|Voltagem|Voltage)\s*:\s*([0-9.,]+)\s*V"))
+    set_if(specs, "latenciaCl", integer(attr(mapping, "CAS_LATENCY", "LATENCY", "CAS Latency", "CL", "Latência CAS", "Latência CL", "Latência")) or text_integer(text, r"\bCL\s*(\d{1,3})\b"))
+    set_if(specs, "tensaoVolts", number(attr(mapping, "VOLTAGE", "Voltage", "Memory Voltage", "Tensão", "Voltagem")) or text_number(text, r"(?:Tens[aã]o|Voltagem|Voltage)\s*:\s*([0-9.,]+)\s*V"))
     set_if(specs, "alturaMm", number(attr(mapping, "HEIGHT", "Altura")))
-    ecc = boolean(attr(mapping, "ECC", "WITH_ECC", "ECC"))
+    ecc = boolean(attr(mapping, "ECC", "WITH_ECC", "Error-correcting code", "ECC"))
     set_if(specs, "ecc", ecc)
-    registered = boolean(attr(mapping, "REGISTERED", "Memória registrada"))
+    registered = boolean(attr(mapping, "REGISTERED", "Registered", "Buffered", "Memória registrada"))
     set_if(specs, "registrada", registered)
     if re.search(r"\bXMP\b", text or "", re.I):
         specs["suportaXmp"] = True
@@ -1206,7 +1210,7 @@ def extract_cooler(mapping, text):
 
     noise = number(attr(mapping, "NOISE_LEVEL", "Ruído", "Nível de Ruído"))
     if noise is None:
-        noise = text_number(details, r"(?:N[ií]vel\s+de\s+Ru[ií]do|Ru[ií]do|Noise).{0,30}?([0-9.,]+)\s*dB")
+        noise = text_number(details, r"(?:N[ií]vel\s+de\s+Ru[ií]do|Ru[ií]do|Noise).{0,30}?([0-9.,]+)\s*dB", r"\b([0-9.,]+)\s*dB(?:A)?\b")
     set_if(specs, "ruidoDb", noise)
     set_if(specs, "vidaUtilHoras", grouped_integer(attr(mapping, "LIFESPAN", "Vida útil")))
     set_if(specs, "pesoGramas", number(attr(mapping, "WEIGHT", "Peso")))
@@ -1219,6 +1223,7 @@ def extract_cooler(mapping, text):
             r"Velocidade\s*:?\s*([0-9]{3,5})\s*RPM",
             r"(?:Velocidade\s+m[aá]xima|Max\s+RPM).{0,20}?(\d{3,5})\s*RPM",
             r"at[eé]\s*(\d{3,5})\s*RPM",
+            r"\b(\d{3,5})\s*RPM\b",
         ]:
             for match in re.findall(pat, details or "", re.I):
                 try:
@@ -1227,6 +1232,10 @@ def extract_cooler(mapping, text):
                     pass
         speed = max(candidates) if candidates else None
     set_if(specs, "velocidadeMaxRpm", speed)
+    airflow = number(attr(mapping, "AIRFLOW", "CFM", "Air Flow", "Fluxo de ar"))
+    if airflow is None:
+        airflow = text_number(details, r"(?:Air\s*Flow|Fluxo\s+de\s+ar).{0,30}?([0-9.,]+)\s*CFM", r"([0-9.,]+)\s*CFM")
+    set_if(specs, "fluxoArCfm", airflow)
 
     if re.search(r"\bARGB\b", details or "", re.I):
         specs["argb"] = True

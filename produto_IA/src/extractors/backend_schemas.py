@@ -46,7 +46,7 @@ SCHEMAS = {
         "tipo", "socketsSuportados", "capacidadeTermicaWatts", "alturaMm", "larguraMm", "profundidadeMm", "alturaLivreRamMm",
         "tamanhoRadiadorMm", "espessuraRadiadorMm", "quantidadeVentoinhas", "tamanhoVentoinhaMm", "espessuraVentoinhaMm",
         "comprimentoMangueirasMm", "conectorBomba", "consumoBombaWatts", "consumoWatts", "ruidoDb", "vidaUtilHoras",
-        "pesoGramas", "velocidadeMaxRpm", "rgb", "argb",
+        "pesoGramas", "velocidadeMaxRpm", "fluxoArCfm", "rgb", "argb",
     ]),
     "VENTOINHA": ("HARDWARE", "especificacaoVentoinha", [
         "tamanhoMm", "espessuraMm", "rpmMinima", "rpmMaxima", "fluxoArCfm", "pressaoEstaticaMmH2o", "ruidoDb", "conector",

@@ -55,10 +55,11 @@ class HardwareDiscoveryRequest(BaseModel):
     fontes: list[str] | None = None
     pagina: int = Field(default=1, ge=1, le=100)
     limite: int = Field(default=20, ge=1, le=50)
-    # A busca em lote é catálogo-primeiro para responder rápido.
-    # Detalhamento/enriquecimento continua disponível sob demanda.
-    detalhar: bool = False
-    enriquecer: bool = False
+    # v14.20: descoberta prioriza qualidade da ficha. O catálogo encontra os
+    # candidatos e, por padrão, cada candidato é detalhado/enriquecido antes de
+    # ser devolvido. O cliente ainda pode desligar explicitamente para diagnóstico.
+    detalhar: bool = True
+    enriquecer: bool = True
     noBrowser: bool = False
 
 
