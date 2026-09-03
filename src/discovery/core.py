@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import re
@@ -150,17 +151,26 @@ class HardwareDiscoveryService:
     def __init__(self, catalog=None):
         self.catalog = catalog or DiscoverySourceCatalog()
         try:
-            self.request_budget = max(10.0, float(os.getenv("DISCOVERY_TOTAL_TIMEOUT_SECONDS", "300")))
+            # Orçamento global da busca. v14.20.1 evita deixar o frontend preso por
+            # vários minutos quando uma fonte externa está lenta/bloqueada.
+            self.request_budget = max(20.0, float(os.getenv("DISCOVERY_TOTAL_TIMEOUT_SECONDS", "90")))
         except ValueError:
-            self.request_budget = 300.0
+            self.request_budget = 90.0
         try:
-            self.detail_enrichment_timeout = max(2.0, float(os.getenv("DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS", "18")))
+            self.detail_enrichment_timeout = max(2.0, float(os.getenv("DISCOVERY_ENRICHMENT_TIMEOUT_SECONDS", "10")))
         except ValueError:
-            self.detail_enrichment_timeout = 18.0
+            self.detail_enrichment_timeout = 10.0
         try:
-            self.detail_enrichment_sources = max(1, int(os.getenv("DISCOVERY_ENRICHMENT_MAX_SOURCES", "6")))
+            self.detail_enrichment_sources = max(1, int(os.getenv("DISCOVERY_ENRICHMENT_MAX_SOURCES", "4")))
         except ValueError:
-            self.detail_enrichment_sources = 6
+            self.detail_enrichment_sources = 4
+        try:
+            self.detail_workers = min(8, max(1, int(os.getenv("DISCOVERY_DETAIL_WORKERS", "6"))))
+        except ValueError:
+            self.detail_workers = 6
+        self.bulk_browser_fallback = os.getenv(
+            "DISCOVERY_BULK_BROWSER_FALLBACK", "false"
+        ).strip().casefold() in {"1", "true", "sim", "yes"}
 
     @staticmethod
     def source_capabilities():
@@ -191,14 +201,18 @@ class HardwareDiscoveryService:
             },
         }
 
-    def _detail_candidate(self, candidate: DiscoveryCandidate, categoria: str, enrich: bool, no_browser: bool = False):
+    def _detail_candidate(self, candidate: DiscoveryCandidate, categoria: str, enrich: bool, no_browser: bool = False, bulk_mode: bool = False):
         inferred = infer_identity(candidate.nome, categoria, candidate.marca)
         provider = _provider_for_candidate(candidate)
         detail = {"ok": False, "fonte": candidate.fonte, "url": candidate.url, "erro": "SEM_PROVEDOR"}
 
         if provider and identity_is_strong(inferred):
-            # Em descoberta, noBrowser também impede fallback cloud das fontes técnicas.
-            if no_browser:
+            # Em descoberta em lote, não abrimos uma sessão Surfsky para cada
+            # candidato por padrão. Isso era capaz de manter a requisição aberta
+            # por vários minutos. O detalhe individual continua podendo usar
+            # fallback cloud completo.
+            disable_browser = bool(no_browser) or (bool(bulk_mode) and not self.bulk_browser_fallback)
+            if disable_browser:
                 provider.allow_browser_fallback = False
                 if getattr(provider, "resolver", None) is not None:
                     provider.resolver.allow_browser_fallback = False
@@ -253,6 +267,12 @@ class HardwareDiscoveryService:
                 max_sources_override=self.detail_enrichment_sources,
                 source_timeout_override=max(3, int(self.detail_enrichment_timeout / max(1, min(3, self.detail_enrichment_sources)))),
             )
+            if bool(bulk_mode) and not self.bulk_browser_fallback:
+                for source_provider in enricher.providers:
+                    source_provider.allow_browser_fallback = False
+                    resolver = getattr(source_provider, "resolver", None)
+                    if resolver is not None:
+                        resolver.allow_browser_fallback = False
             result = enricher.enrich(result)
 
         specs = result.get("especificacoesEncontradas") or {}
@@ -350,12 +370,43 @@ class HardwareDiscoveryService:
         page_candidates = candidates[start:start + limite]
         items = []
         interrupted = False
-        for candidate in page_candidates:
-            if (time.monotonic() - started) >= self.request_budget:
-                interrupted = True
-                break
-            if detalhar:
-                item = self._detail_candidate(candidate, categoria, bool(enriquecer), no_browser=no_browser)
+        detailed_items = {}
+
+        # v14.20.1: a v14.20 detalhava cada candidato em sequência. Com 20
+        # candidatos e múltiplas fontes isso podia segurar a resposta por muitos
+        # minutos. Agora os detalhes são consultados em paralelo, com concorrência
+        # limitada e orçamento global. Qualidade continua sendo a prioridade, mas
+        # uma fonte lenta não bloqueia toda a página indefinidamente.
+        if detalhar and page_candidates:
+            workers = min(self.detail_workers, len(page_candidates))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hardware-discovery") as executor:
+                # Trabalha em lotes do tamanho da concorrência. Assim, quando o
+                # orçamento global termina, não ficam dezenas de tarefas pendentes
+                # rodando depois que a resposta já foi devolvida.
+                for batch_start in range(0, len(page_candidates), workers):
+                    if (time.monotonic() - started) >= self.request_budget:
+                        interrupted = True
+                        break
+                    batch = page_candidates[batch_start:batch_start + workers]
+                    futures = {
+                        executor.submit(
+                            self._detail_candidate, candidate, categoria, bool(enriquecer), no_browser, True
+                        ): batch_start + offset
+                        for offset, candidate in enumerate(batch)
+                    }
+                    for future in as_completed(futures):
+                        idx = futures[future]
+                        try:
+                            detailed_items[idx] = future.result()
+                        except Exception as exc:
+                            detailed_items[idx] = {"erroDetalhamento": f"ERRO_DETALHE: {type(exc).__name__}: {exc}"}
+                    if (time.monotonic() - started) >= self.request_budget and batch_start + workers < len(page_candidates):
+                        interrupted = True
+                        break
+
+        for idx, candidate in enumerate(page_candidates):
+            if detalhar and idx in detailed_items and detailed_items[idx].get("payloadHardware"):
+                item = detailed_items[idx]
             else:
                 identity = infer_identity(candidate.nome, categoria, candidate.marca)
                 schema = SCHEMAS[categoria]
@@ -423,6 +474,9 @@ class HardwareDiscoveryService:
             temp_slug = re.sub(r"[^a-z0-9]+", "-", str(base_temp).casefold()).strip("-")[:100]
             item["idTemporario"] = f"{categoria.casefold()}-{temp_slug}"
             item["avisos"] = list(item.get("avisos") or [])
+            if detalhar and not item.get("detalhesColetados"):
+                if interrupted or idx not in detailed_items:
+                    item["avisos"].append("Detalhamento técnico não concluiu dentro do orçamento desta busca; tente detalhar este item individualmente.")
             if required_missing:
                 item["avisos"].append("Ficha técnica ainda parcial após as consultas disponíveis; revise os campos ausentes antes do cadastro.")
             items.append(item)
@@ -461,4 +515,4 @@ class HardwareDiscoveryService:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("URL técnica inválida")
         candidate = DiscoveryCandidate(nome=nome, url=url, fonte=str(fonte or "").strip().upper(), marca=marca)
-        return self._detail_candidate(candidate, categoria, bool(enriquecer), no_browser=no_browser)
+        return self._detail_candidate(candidate, categoria, bool(enriquecer), no_browser=no_browser, bulk_mode=False)

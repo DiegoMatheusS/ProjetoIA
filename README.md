@@ -1,3 +1,13 @@
+
+## v14.20.1 - hotfix da descoberta
+
+- Mantém `detalhar=true` e `enriquecer=true` por padrão.
+- Corrige a regressão da v14.20 que detalhava os candidatos em sequência.
+- Detalha vários candidatos em paralelo com concorrência limitada (`DISCOVERY_DETAIL_WORKERS`).
+- Aplica orçamento global (`DISCOVERY_TOTAL_TIMEOUT_SECONDS`) para a página não ficar aguardando indefinidamente.
+- Em descoberta em lote, Surfsky por candidato fica desligado por padrão (`DISCOVERY_BULK_BROWSER_FALLBACK=false`); o detalhe individual continua podendo usar fallback cloud.
+- Mantém consulta às fontes técnicas HTTP e enriquecimento durante a descoberta.
+
 ## Atualização v14.20
 
 - Descoberta de Hardwares passa a priorizar **qualidade da ficha técnica**, não apenas velocidade.
@@ -9,7 +19,7 @@
 - Cooler inclui `fluxoArCfm` no contrato técnico.
 - Os limites de consulta da descoberta ficaram mais generosos e configuráveis para permitir consultar mais fontes antes de devolver a ficha.
 - Busca individual Magalu/Mercado Livre e fallbacks existentes permanecem preservados.
-- Health: `14.20-railway`.
+- Health: `14.20.1-railway`.
 
 ## Atualização v14.17
 
