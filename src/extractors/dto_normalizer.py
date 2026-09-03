@@ -487,3 +487,57 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
             normalized["conector"] = _fan_connector(normalized.get("conector"))
 
     return normalized
+
+
+SPEC_FIELD_BY_HARDWARE_CATEGORY = {
+    "PROCESSADOR": "especificacaoProcessador",
+    "PLACA_MAE": "especificacaoPlacaMae",
+    "MEMORIA_RAM": "especificacaoMemoriaRam",
+    "PLACA_VIDEO": "especificacaoPlacaVideo",
+    "ARMAZENAMENTO": "especificacaoArmazenamento",
+    "FONTE": "especificacaoFonte",
+    "GABINETE": "especificacaoGabinete",
+    "COOLER": "especificacaoCooler",
+    "VENTOINHA": "especificacaoVentoinha",
+}
+
+
+def normalize_hardware_payload_for_backend(category: str | None, payload: dict | None) -> dict:
+    """Barreira final do payload de descoberta antes de sair da Produto IA.
+
+    A descoberta passa por vários parsers/fontes. Mesmo que alguma etapa devolva
+    um enum composto (ex.: ``DDR4/DDR5``), esta função normaliza novamente o
+    bloco técnico *aninhado* que será reenviado pelo frontend ao Nest.
+
+    Não inventa dados: valores incompatíveis viram ``None``. Em especial,
+    ``tiposMemoriaSuportados`` de PROCESSADOR/PLACA_MAE nunca pode sair com
+    itens fora de DDR3/DDR4/DDR5.
+    """
+    category = str(category or (payload or {}).get("categoria") or "").upper()
+    output = dict(payload or {})
+    spec_field = SPEC_FIELD_BY_HARDWARE_CATEGORY.get(category)
+    if not spec_field:
+        return output
+
+    raw_specs = output.get(spec_field)
+    specs = normalize_specs_for_backend(category, raw_specs if isinstance(raw_specs, dict) else {})
+    # Payload de cadastro deve conter somente chaves conhecidas pelo DTO.
+    # Import local evita acoplamento no carregamento do módulo.
+    try:
+        from .backend_schemas import SCHEMAS
+        expected = (SCHEMAS.get(category) or (None, None, []))[2] or []
+    except Exception:
+        expected = []
+    if expected:
+        specs = {field: specs.get(field) for field in expected}
+
+    # Defesa explícita para o erro real visto no DTO do Nest.
+    if category in {"PROCESSADOR", "PLACA_MAE"}:
+        memory = _memory_types(specs.get("tiposMemoriaSuportados"))
+        specs["tiposMemoriaSuportados"] = [
+            value for value in (memory or []) if value in {"DDR3", "DDR4", "DDR5"}
+        ] or None
+
+    output["categoria"] = category
+    output[spec_field] = specs
+    return output

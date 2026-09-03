@@ -18,6 +18,7 @@ from ..enrichment.providers import (
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED, HARDWARE_CATEGORIES
 from ..extractors.ml_specs import extract_specs
+from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from ..utils.normalizers import clean_text
 
 
@@ -334,6 +335,14 @@ class HardwareDiscoveryService:
         payload = result.get("payloadParcialBackend") or payload
         if spec_field:
             payload[spec_field] = specs
+        # v14.20.5: normalização novamente no OBJETO EXATO que vai sair da
+        # descoberta. Isso impede que uma etapa anterior reintroduza enum composto
+        # (ex.: DDR4/DDR5) no payload que o frontend reenvia ao Nest.
+        payload = normalize_hardware_payload_for_backend(categoria, payload)
+        if spec_field:
+            specs = complete_specs(categoria, payload.get(spec_field) or {})
+            payload[spec_field] = specs
+            result["especificacoesEncontradas"] = specs
         identity_final = _identity_from_detail({
             "brand": payload.get("marca"), "model": payload.get("modelo"), "mpn": payload.get("mpn"), "gtin": payload.get("gtin")
         }, identity)
@@ -536,6 +545,11 @@ class HardwareDiscoveryService:
             item["especificacoesEncontradas"] = completed_specs
             if spec_field:
                 payload_for_backend[spec_field] = completed_specs
+            payload_for_backend = normalize_hardware_payload_for_backend(categoria, payload_for_backend)
+            if spec_field:
+                completed_specs = complete_specs(categoria, payload_for_backend.get(spec_field) or {})
+                payload_for_backend[spec_field] = completed_specs
+                item["especificacoesEncontradas"] = completed_specs
             item["payloadHardware"] = payload_for_backend
             missing_input = {
                 "categoriaDetectada": categoria,

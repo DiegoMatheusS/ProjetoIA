@@ -27,27 +27,35 @@ def _normalized_for_compare(value):
 
 
 def complete_specs(category, specs):
-    """Retorna schema completo já normalizado para o DTO do backend."""
+    """Retorna somente os campos aceitos pelo schema técnico do backend.
+
+    Antes a função preservava chaves extras vindas de fontes externas. Isso é
+    útil para diagnóstico, mas não para o payload de cadastro com ValidationPipe
+    estrito. A descoberta agora expõe um bloco técnico DTO-safe, sem propriedades
+    desconhecidas.
+    """
     schema = SCHEMAS.get(category) if category else None
     expected = (schema[2] if schema else None) or []
     source = normalize_specs_for_backend(category, specs)
-    completed = {field: source.get(field) for field in expected}
-    for key, value in source.items():
-        if key not in completed:
-            completed[key] = value
-    return completed
+    if not expected:
+        return source
+    return {field: source.get(field) for field in expected}
 
 
 PROVIDER_PRIORITY = {
-    "PROCESSADOR": ["ICECAT", "CPU_MONKEY", "FABRICANTE_OFICIAL", "CPU_WORLD", "WIKICHIP", "PC_KOMBO", "GEIZHALS"],
-    "PLACA_VIDEO": ["ICECAT", "TECHPOWERUP", "FABRICANTE_OFICIAL", "PC_KOMBO", "WIKICHIP", "GEIZHALS"],
-    "PLACA_MAE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "MEMORIA_RAM": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "ARMAZENAMENTO": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "FONTE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "GABINETE": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "COOLER": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
-    "VENTOINHA": ["ICECAT", "FABRICANTE_OFICIAL", "PC_KOMBO", "GEIZHALS"],
+    # Em lote, PC_KOMBO normalmente já é a fonte de catálogo e é excluída do
+    # enriquecimento. Colocamos primeiro as fontes técnicas especializadas que
+    # realmente costumam preencher lacunas, mantendo o MESMO número máximo de
+    # consultas para não voltar a aumentar a latência.
+    "PROCESSADOR": ["ICECAT", "CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "PLACA_VIDEO": ["ICECAT", "TECHPOWERUP", "GEIZHALS", "WIKICHIP", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "PLACA_MAE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "MEMORIA_RAM": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "ARMAZENAMENTO": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "FONTE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "GABINETE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "COOLER": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "VENTOINHA": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
 }
 
 

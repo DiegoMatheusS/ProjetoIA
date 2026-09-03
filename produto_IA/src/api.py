@@ -13,6 +13,7 @@ from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
+from .extractors.dto_normalizer import normalize_hardware_payload_for_backend
 
 
 app = FastAPI(
@@ -83,6 +84,39 @@ def _validate_api_key(x_api_key: str | None) -> None:
     expected = os.getenv("PRODUTO_IA_API_KEY", "").strip()
     if expected and x_api_key != expected:
         raise HTTPException(status_code=401, detail="API key inválida")
+
+
+def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Última barreira HTTP da descoberta.
+
+    O backend CriaByte reenvia ``item.payload`` ao DTO de cadastro. Por isso o
+    objeto é normalizado imediatamente antes da serialização HTTP, mesmo que o
+    núcleo já tenha feito a mesma proteção.
+    """
+    items = result.get("itens")
+    if not isinstance(items, list):
+        return result
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware")
+        safe = normalize_hardware_payload_for_backend(category, raw if isinstance(raw, dict) else {})
+        item["payload"] = safe
+        item["payloadHardware"] = safe
+        spec_field = {
+            "PROCESSADOR": "especificacaoProcessador",
+            "PLACA_MAE": "especificacaoPlacaMae",
+            "MEMORIA_RAM": "especificacaoMemoriaRam",
+            "PLACA_VIDEO": "especificacaoPlacaVideo",
+            "ARMAZENAMENTO": "especificacaoArmazenamento",
+            "FONTE": "especificacaoFonte",
+            "GABINETE": "especificacaoGabinete",
+            "COOLER": "especificacaoCooler",
+            "VENTOINHA": "especificacaoVentoinha",
+        }.get(category)
+        if spec_field and isinstance(safe.get(spec_field), dict):
+            item["especificacoesEncontradas"] = safe[spec_field]
+    return result
 
 
 def _validate_url(url: str) -> str:
@@ -357,7 +391,7 @@ async def descobrir_hardwares(
                 "integracao": INTEGRATION_ID,
                 "proveniencia": PROVENANCE_ID,
             }
-            return result
+            return _sanitize_discovery_result(category, result)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -383,6 +417,12 @@ async def detalhar_hardware_descoberto(
                 payload.enriquecer,
                 payload.noBrowser,
             )
+            safe_payload = normalize_hardware_payload_for_backend(
+                category,
+                item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware"),
+            )
+            item["payload"] = safe_payload
+            item["payloadHardware"] = safe_payload
             return {
                 "modo": "DETALHE_HARDWARE_DESCOBERTO",
                 "categoria": category,
