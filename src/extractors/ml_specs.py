@@ -705,6 +705,19 @@ def extract_motherboard(mapping, text):
     if re.search(r"\bBIOS\s+Flashback\b|\bFlash\s+BIOS\b|\bQ[- ]Flash\s+Plus\b", text or "", re.I):
         specs["biosFlashback"] = True
 
+    max_per_slot = capacity_gb(attr(
+        mapping, "MAX_MEMORY_PER_SLOT", "MAX_DIMM_CAPACITY", "Maximum DIMM Capacity",
+        "Max Memory per Slot", "Capacidade máxima por slot",
+    ))
+    if max_per_slot is None:
+        max_per_slot = text_capacity(text, r"(?:Maximum\s+DIMM\s+Capacity|Max(?:imum)?\s+Memory\s+per\s+Slot|Capacidade\s+m[aá]xima\s+por\s+slot)\s*:?\s*([0-9.,]+\s*(?:GB|TB))")
+    set_if(specs, "capacidadeMaximaPorSlotGb", max_per_slot)
+
+    bios_min = attr(mapping, "MINIMUM_BIOS", "MIN_BIOS_VERSION", "Minimum BIOS Version", "BIOS mínima", "BIOS minima")
+    if not bios_min:
+        bios_min = first_match(text, r"(?:Minimum\s+BIOS(?:\s+Version)?|BIOS\s+m[ií]nima)\s*:?\s*([A-Za-z0-9._-]+)")
+    set_if(specs, "biosMinima", bios_min)
+
     outputs = []
     for label, pattern in [
         ("HDMI", r"\bHDMI\b"),
@@ -720,181 +733,317 @@ def extract_motherboard(mapping, text):
 
 def extract_ram(mapping, text):
     specs = {}
+    text = text or ""
     source = attr(
         mapping,
         "RAM_MEMORY_TYPE", "MEMORY_TYPE", "MEMORY_STANDARD", "Memory Type", "Memory Standard",
-        "Tipo de memória RAM", "Tipo de Memória",
+        "Ram Type", "Tipo de memória RAM", "Tipo de Memória",
     ) or text
     types = memory_types(source)
     if len(types) == 1:
         specs["tipo"] = types[0]
 
-    token = normalize_key(attr(mapping, "RAM_FORM_FACTOR", "FORM_FACTOR", "MEMORY_FORM_FACTOR", "Form Factor", "Memory Form Factor", "Formato") or text)
+    token = normalize_key(attr(
+        mapping,
+        "RAM_FORM_FACTOR", "FORM_FACTOR", "MEMORY_FORM_FACTOR", "Form Factor",
+        "Memory Form Factor", "Module Type", "Formato",
+    ) or text)
     if "so_dimm" in token or "sodimm" in token:
         specs["formato"] = "SO_DIMM"
-    elif "dimm" in token or re.search(r"\b(?:U?DIMM)\b", text or "", re.I):
+    elif "dimm" in token or re.search(r"\b(?:U?DIMM|UDIMM)\b", text, re.I):
         specs["formato"] = "DIMM"
 
-    kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*GB\b", text or "", re.I)
+    # Formatos de kit: 2x8GB, 16 GB Kit of 2, Size 32 GB / Sticks 2.
+    kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*GB\b", text, re.I)
+    total_capacity = None
     if kit:
         specs["quantidadeModulos"] = int(kit.group(1))
         per_module = float(kit.group(2).replace(",", "."))
         specs["capacidadePorModuloGb"] = int(per_module) if per_module.is_integer() else per_module
     else:
-        set_if(specs, "quantidadeModulos", integer(attr(mapping, "MODULES_NUMBER", "NUMBER_OF_MODULES", "Modules", "Number of modules", "Sticks", "Quantidade de módulos")))
-        # Não convertemos automaticamente a capacidade total do produto em
-        # capacidade por módulo: um anúncio de 16 GB pode ser um kit 2x8 GB.
-        set_if(specs, "capacidadePorModuloGb", capacity_gb(attr(mapping, "CAPACITY_PER_MODULE", "MODULE_CAPACITY", "Capacity per module", "Module capacity", "Capacidade por módulo")))
+        qty = integer(attr(
+            mapping, "MODULES_NUMBER", "NUMBER_OF_MODULES", "Modules", "Number of modules",
+            "Sticks", "Quantidade de módulos",
+        ))
+        if qty is None:
+            m = re.search(r"\bKit\s+(?:of\s+)?(\d+)\b|\b(\d+)\s+(?:sticks?|modules?)\b", text, re.I)
+            if m:
+                qty = int(m.group(1) or m.group(2))
+        set_if(specs, "quantidadeModulos", qty)
+
+        per_module = capacity_gb(attr(
+            mapping, "CAPACITY_PER_MODULE", "MODULE_CAPACITY", "Capacity per module",
+            "Module capacity", "Capacidade por módulo",
+        ))
+        set_if(specs, "capacidadePorModuloGb", per_module)
+
+        total_capacity = capacity_gb(attr(
+            mapping, "TOTAL_CAPACITY", "MEMORY_SIZE", "Size", "Capacity", "Capacidade total",
+        ))
+        if total_capacity is None:
+            total_raw = first_match(text, r"\bSize\s*:?[ \t]*(\d+(?:[.,]\d+)?\s*GB)\b")
+            if total_raw is None:
+                # Em títulos PC-Kombo: "16 GB DDR4-3600 Kit of 2".
+                total_raw = first_match(text, r"\b(\d+(?:[.,]\d+)?\s*GB)\s+DDR[345](?:[- ]\d{3,5})?")
+            total_capacity = capacity_gb(total_raw)
+        if "capacidadePorModuloGb" not in specs and total_capacity and qty:
+            per = total_capacity / qty
+            specs["capacidadePorModuloGb"] = int(per) if float(per).is_integer() else round(per, 3)
 
     freq = frequency_mhz(attr(
         mapping,
         "RAM_MEMORY_SPEED", "MEMORY_SPEED", "MEMORY_CLOCK", "Frequency", "Memory Speed", "Memory Clock",
-        "Frequência", "Velocidade da memória", "Velocidade de Clock",
-    )) or text_frequency(text, r"\b([0-9]{3,5}\s*MHz)\b")
+        "Clock", "Frequência", "Velocidade da memória", "Velocidade de Clock",
+    ))
+    if freq is None:
+        freq = text_frequency(text, r"\b(DDR[345][ -]\d{3,5})\b", r"\b([0-9]{3,5}\s*MHz)\b")
+        # frequency_mhz("DDR4-3600") lê o primeiro número; corrige explicitamente.
+        ddr_clock = first_match(text, r"\bDDR[345][ -](\d{3,5})\b")
+        if ddr_clock:
+            freq = integer(ddr_clock)
     set_if(specs, "frequenciaMhz", freq)
-    set_if(specs, "frequenciaJedecMhz", frequency_mhz(attr(mapping, "JEDEC_FREQUENCY", "Frequência JEDEC")))
-    set_if(specs, "latenciaCl", integer(attr(mapping, "CAS_LATENCY", "LATENCY", "CAS Latency", "CL", "Latência CAS", "Latência CL", "Latência")) or text_integer(text, r"\bCL\s*(\d{1,3})\b"))
-    set_if(specs, "tensaoVolts", number(attr(mapping, "VOLTAGE", "Voltage", "Memory Voltage", "Tensão", "Voltagem")) or text_number(text, r"(?:Tens[aã]o|Voltagem|Voltage)\s*:\s*([0-9.,]+)\s*V"))
-    set_if(specs, "alturaMm", number(attr(mapping, "HEIGHT", "Altura")))
-    ecc = boolean(attr(mapping, "ECC", "WITH_ECC", "Error-correcting code", "ECC"))
+
+    jedec = frequency_mhz(attr(mapping, "JEDEC_FREQUENCY", "JEDEC Speed", "Frequência JEDEC"))
+    set_if(specs, "frequenciaJedecMhz", jedec)
+
+    latency = integer(attr(
+        mapping, "CAS_LATENCY", "LATENCY", "CAS Latency", "CL", "Latência CAS",
+        "Latência CL", "Latência",
+    ))
+    if latency is None:
+        latency = text_integer(text, r"\bCL\s*(\d{1,3})\b", r"\bTimings\s+(\d{1,3})(?:[-–]\d+){1,4}\b")
+    set_if(specs, "latenciaCl", latency)
+
+    voltage = number(attr(mapping, "VOLTAGE", "Voltage", "Memory Voltage", "Tensão", "Voltagem"))
+    if voltage is None:
+        voltage = text_number(text, r"(?:Tens[aã]o|Voltagem|Voltage)\s*:?\s*([0-9.,]+)\s*V", r"\b([12][.,]\d{1,3})\s*V\b")
+    set_if(specs, "tensaoVolts", voltage)
+
+    height = number(attr(mapping, "HEIGHT", "Module Height", "Altura"))
+    if height is None:
+        height = text_number(text, r"(?:Module\s+Height|Height|Altura)\s*:?\s*([0-9.,]+)\s*mm")
+    set_if(specs, "alturaMm", height)
+
+    ecc = boolean(attr(mapping, "ECC", "WITH_ECC", "Error-correcting code", "ECC support"))
+    if ecc is None:
+        if re.search(r"\bnon[- ]?ECC\b|\bwithout\s+ECC\b|\bsem\s+ECC\b", text, re.I):
+            ecc = False
+        elif re.search(r"\bECC\b", text, re.I):
+            ecc = True
     set_if(specs, "ecc", ecc)
+
     registered = boolean(attr(mapping, "REGISTERED", "Registered", "Buffered", "Memória registrada"))
+    if registered is None:
+        if re.search(r"\bunbuffered\b|\bunregistered\b|\bUDIMM\b", text, re.I):
+            registered = False
+        elif re.search(r"\bregistered\b|\bRDIMM\b", text, re.I):
+            registered = True
     set_if(specs, "registrada", registered)
-    if re.search(r"\bXMP\b", text or "", re.I):
+
+    xmp = boolean(attr(mapping, "XMP", "Intel XMP", "XMP Support"))
+    if xmp is True or re.search(r"\bXMP\b", text, re.I):
         specs["suportaXmp"] = True
-    if re.search(r"\bEXPO\b", text or "", re.I):
+    expo = boolean(attr(mapping, "EXPO", "AMD EXPO", "EXPO Support"))
+    if expo is True or re.search(r"\bEXPO\b", text, re.I):
         specs["suportaExpo"] = True
-    if re.search(r"\b(?:RGB|ARGB)\b", text or "", re.I):
+
+    rgb_attr = boolean(attr(mapping, "RGB", "LED Lighting", "Lighting"))
+    if rgb_attr is not None:
+        specs["rgb"] = rgb_attr
+    elif re.search(r"\b(?:RGB|ARGB)\b", text, re.I):
         specs["rgb"] = True
+
+    consumption = number(attr(mapping, "POWER_CONSUMPTION", "Power Consumption", "Consumo"))
+    if consumption is None:
+        consumption = text_number(text, r"(?:Power\s+Consumption|Consumo)\s*:?\s*([0-9.,]+)\s*W")
+    set_if(specs, "consumoWatts", consumption)
     return specs
 
 
 def extract_gpu(mapping, text):
     specs = {}
-    set_if(specs, "chipset", attr(mapping, "CHIPSET", "GPU_CHIPSET", "Chipset"))
-    gpu = attr(mapping, "GPU_MODEL", "GRAPHICS_PROCESSOR", "GPU", "Modelo da GPU")
+    text = text or ""
 
-    # A ficha pode trazer só a família (ex.: "AMD Radeon RX série 9000")
-    # enquanto o título informa o chip exato (ex.: "AMD Radeon RX 9070 XT").
+    chipset = attr(mapping, "CHIPSET", "GPU_CHIPSET", "GPU Chip", "GPU Name", "Chipset")
+    set_if(specs, "chipset", chipset)
+
+    gpu = attr(
+        mapping, "GPU_MODEL", "GRAPHICS_PROCESSOR", "Graphics Processor",
+        "GPU", "Modelo da GPU", "Graphics Card",
+    )
     exact_gpu = (
-        first_match(text, r"\b(AMD\s+Radeon\s+RX\s*\d{4}(?:\s*(?:XTX|XT|GRE))?)\b")
-        or first_match(text, r"\b(NVIDIA\s+GeForce\s+(?:RTX|GTX)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
-        or first_match(text, r"\b((?:RX|RTX|GTX)\s*\d{3,4}(?:\s*(?:XTX|XT|GRE|Ti|SUPER))?)\b")
+        first_match(text, r"\b(AMD\s+Radeon\s+(?:RX\s*\d{3,4}(?:M|S)?(?:\s*(?:XTX|XT|GRE))?|HD\s*\d{3,4}M?|R\d\s*M?\d{3}|VII))\b")
+        or first_match(text, r"\b(NVIDIA\s+GeForce\s+(?:RTX|GTX|GT|GTS)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
+        or first_match(text, r"\b(Intel\s+Arc\s+[A-Z]\d{3,4})\b")
+        or first_match(text, r"\b((?:Radeon\s+)?(?:RX\s*\d{3,4}(?:M|S)?(?:\s*(?:XTX|XT|GRE))?|HD\s*\d{3,4}M?)|(?:RTX|GTX)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
     )
     generic_family = bool(gpu and re.search(r"\b(?:s[eé]rie|series)\b", str(gpu), re.I))
     if exact_gpu and (not gpu or generic_family):
         gpu = exact_gpu
-    if not gpu:
-        gpu = first_match(text, r"\b((?:AMD\s+Radeon|NVIDIA\s+GeForce)\s+(?:RX|RTX|GTX)?\s*\d{3,5}(?:\s*XT|\s*Ti|\s*SUPER)?)\b")
+    if gpu:
+        gpu = re.sub(r"\s+(?:Rebrand\s+)?Specs\s*$", "", clean_text(gpu) or "", flags=re.I)
     set_if(specs, "gpu", gpu)
 
-    arch = attr(mapping, "GPU_ARCHITECTURE", "ARCHITECTURE", "Arquitetura")
+    arch = attr(mapping, "GPU_ARCHITECTURE", "ARCHITECTURE", "Architecture", "Arquitetura")
     if not arch:
+        # Arquiteturas conhecidas primeiro para não capturar o rótulo seguinte.
         arch = (
-            first_match(text, r"\b(?:arquitetura\s+)?AMD\s+(RDNA\s*\d)\b")
-            or first_match(text, r"\b(RDNA\s*\d)\b")
-            or first_match(text, r"\barquitetura\s+(?:NVIDIA\s+|AMD\s+)?([A-Za-z][A-Za-z0-9_-]{2,30})\b")
+            first_match(text, r"\b(?:arquitetura\s+)?AMD\s+(RDNA\s*\d(?:\.\d)?)\b")
+            or first_match(text, r"\b(RDNA\s*\d(?:\.\d)?)\b")
+            or first_match(text, r"\b(?:NVIDIA\s+)?(Turing|Ampere|Ada Lovelace|Blackwell|Pascal|Maxwell|Kepler|Fermi)\b")
+            or first_match(text, r"\b(GCN(?:\s*[0-9.]+)?|Vega|Polaris|Navi(?:\s*\d+)?)\b")
+            or first_match(text, r"(?:Architecture|Arquitetura)\s*:?\s*([A-Za-z][A-Za-z0-9 _-]{2,32})(?=\s*[|;\n.]|$)")
         )
     set_if(specs, "arquitetura", arch)
 
-    vram = capacity_gb(attr(
+    vram_raw = attr(
         mapping,
-        "VRAM", "VRAM_MEMORY_CAPACITY", "GRAPHICS_MEMORY_CAPACITY", "Memória de vídeo", "Memória de Vídeo", "Capacidade",
-    ))
+        "VRAM", "VRAM_MEMORY_CAPACITY", "GRAPHICS_MEMORY_CAPACITY",
+        "Memory Size", "Video Memory", "Memória de vídeo", "Memória de Vídeo", "Capacidade",
+    )
+    vram = capacity_gb(vram_raw)
     if vram is None:
-        vram = text_capacity(text, r"\b(\d+\s*GB)\s+(?:GDDR\d+|VRAM)\b")
+        vram = text_capacity(text, r"(?:Memory\s+Size|Video\s+Memory|VRAM)\s*:?\s*(\d+(?:[.,]\d+)?\s*(?:GB|MB))")
+    if vram is None:
+        raw = first_match(text, r"\b(\d+(?:[.,]\d+)?\s*(?:GB|MB))\s*,?\s*(?:GDDR[3567X]+|DDR[345]|HBM)")
+        vram = capacity_gb(raw)
     set_if(specs, "memoriaVideoGb", vram)
 
     memory_kind = attr(
         mapping,
-        "VRAM_TYPE", "GRAPHICS_MEMORY_TYPE", "Tipo de memória de vídeo", "Tipo de Memória",
-    ) or first_match(text, r"\b(GDDR[3567X]+)\b")
-    set_if(specs, "tipoMemoriaVideo", memory_kind)
-    set_if(specs, "barramentoBits", integer(attr(
-        mapping,
-        "MEMORY_BUS_WIDTH", "Barramento de memória", "Interface de Memória",
-    )) or text_integer(text, r"(?:Barramento|Interface\s+de\s+Mem[oó]ria|Memory\s+Bus)\s*:\s*(\d+)\s*bits"))
+        "VRAM_TYPE", "GRAPHICS_MEMORY_TYPE", "Memory Type",
+        "Tipo de memória de vídeo", "Tipo de Memória",
+    ) or first_match(text, r"\b(GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\b")
+    set_if(specs, "tipoMemoriaVideo", clean_text(memory_kind).upper() if memory_kind else None)
 
-    base = frequency_mhz(attr(mapping, "GPU_BASE_CLOCK", "BASE_CLOCK", "Clock base"))
+    bus_width = integer(attr(
+        mapping,
+        "MEMORY_BUS_WIDTH", "Memory Bus Width", "Bus Width",
+        "Barramento de memória", "Interface de Memória",
+    ))
+    if bus_width is None:
+        bus_width = text_integer(text, r"(?:Bus\s+Width|Memory\s+Bus|Barramento|Interface\s+de\s+Mem[oó]ria)\s*:?\s*(\d+)\s*bits?")
+    if bus_width is None:
+        bus_width = text_integer(text, r"\b\d+(?:[.,]\d+)?\s*(?:GB|MB)\s*,?\s*(?:GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\s*,?\s*(\d{2,4})\s*bit")
+    set_if(specs, "barramentoBits", bus_width)
+
+    base = frequency_mhz(attr(mapping, "GPU_BASE_CLOCK", "BASE_CLOCK", "GPU Clock", "Base Clock", "Clock base"))
     if base is None:
-        base = text_frequency(text, r"(?:clock\s+base|Prim[aá]rias\s+clock\s+base)\s*(?:at[eé]|:)?\s*([0-9.,]+\s*MHz)")
+        base = text_frequency(
+            text,
+            r"(?:GPU\s+Clock|Clock\s+base|Base\s+Clock)\s*(?:at[eé]\s*)?:?\s*([0-9.,]+\s*MHz)",
+            r"(?:Prim[aá]rias?\s+)?clock\s+base\s*(?:at[eé]\s*)?:?\s*([0-9.,]+\s*MHz)",
+        )
     set_if(specs, "clockBaseMhz", base)
-    boost = frequency_mhz(attr(mapping, "GPU_BOOST_CLOCK", "BOOST_CLOCK", "Clock boost", "Clock do Processador de Vídeo"))
+
+    boost = frequency_mhz(attr(
+        mapping, "GPU_BOOST_CLOCK", "BOOST_CLOCK", "Boost Clock",
+        "Clock boost", "Clock do Processador de Vídeo",
+    ))
     if boost is None:
-        boost = text_frequency(text, r"(?:Clock\s+de\s+refor[cç]o|Clock\s+boost|Boost\s+Clock)\s*(?:(?:at[eé])\s*:?[ \t]*|:[ \t]*|)([0-9.,]+\s*MHz)")
+        boost = text_frequency(
+            text,
+            r"(?:Boost\s+Clock|Clock\s+boost|Clock\s+de\s+refor[cç]o)\s*(?:at[eé]\s*)?:?\s*([0-9.,]+\s*MHz)",
+        )
     set_if(specs, "clockBoostMhz", boost)
 
-    bus_text = attr(mapping, "Barramento", "Versão PCI Express", "PCIE_VERSION", "PCI_EXPRESS_VERSION") or text
+    bus_text = attr(
+        mapping, "Bus Interface", "BUS_INTERFACE", "Barramento",
+        "Versão PCI Express", "PCIE_VERSION", "PCI_EXPRESS_VERSION",
+    ) or text
     gen = first_match(bus_text or "", r"PCI(?:e|[- ]?E|\s+Express)?\s*([345](?:\.0)?)")
     set_if(specs, "geracaoPcie", integer(gen))
     width = first_match(bus_text or "", r"PCI(?:e|[- ]?E|\s+Express)?\s*[345](?:\.0)?\s*[xX]\s*(\d+)")
+    if width is None:
+        width = first_match(bus_text or "", r"PCIe\s*[xX](\d+)\s*[345](?:\.0)?")
     set_if(specs, "larguraPcie", integer(width))
 
-    # Dimensões da placa só entram quando a página rotula como cartão/placa.
-    set_if(specs, "comprimentoMm", dimension_value_mm(attr(mapping, "LENGTH", "Comprimento")) or labeled_dimension_mm(text, "Comprimento"))
-    set_if(specs, "alturaMm", dimension_value_mm(attr(mapping, "HEIGHT", "Altura")) or labeled_dimension_mm(text, "Altura"))
-    set_if(specs, "espessuraMm", dimension_value_mm(attr(mapping, "THICKNESS", "Espessura")) or labeled_dimension_mm(text, "Espessura"))
-    dim = attr(mapping, "Dimensões", "Dimensoes") or first_match(text, r"Dimens[oõ]es\s+do\s+cart[aã]o\s*:?[ \t]*([^|\n]+)")
+    length = dimension_value_mm(attr(mapping, "LENGTH", "Card Length", "Length", "Comprimento"))
+    if length is None:
+        length = labeled_dimension_mm(text, r"(?:Card\s+)?Length|Comprimento")
+    set_if(specs, "comprimentoMm", length)
+    height = dimension_value_mm(attr(mapping, "HEIGHT", "Card Height", "Height", "Altura"))
+    if height is None:
+        height = labeled_dimension_mm(text, r"(?:Card\s+)?Height|Altura")
+    set_if(specs, "alturaMm", height)
+    thickness = dimension_value_mm(attr(mapping, "THICKNESS", "Card Thickness", "Thickness", "Espessura"))
+    if thickness is None:
+        thickness = labeled_dimension_mm(text, r"(?:Card\s+)?Thickness|Espessura")
+    set_if(specs, "espessuraMm", thickness)
+
+    dim = attr(mapping, "Dimensions", "Dimensões", "Dimensoes") or first_match(text, r"(?:Card\s+)?Dimensions\s*:?\s*([^|\n]+)")
     triplet = dimension_triplet_mm(dim)
     if triplet:
-        # A captura XFX publica cm sem a unidade; números pequenos são cm.
         vals = list(triplet)
         if all(v < 100 for v in vals):
             vals = [round(v * 10, 3) for v in vals]
-        if "comprimentoMm" not in specs:
-            set_if(specs, "comprimentoMm", vals[0])
-        if "alturaMm" not in specs:
-            set_if(specs, "alturaMm", vals[1])
-        if "espessuraMm" not in specs:
-            set_if(specs, "espessuraMm", vals[2])
+        set_if(specs, "comprimentoMm", specs.get("comprimentoMm") or vals[0])
+        set_if(specs, "alturaMm", specs.get("alturaMm") or vals[1])
+        set_if(specs, "espessuraMm", specs.get("espessuraMm") or vals[2])
 
-    slots = number(attr(mapping, "SLOTS", "Perfil do cartão", "Slots ocupados"))
+    slots = number(attr(mapping, "SLOTS", "Slot Width", "Slots", "Perfil do cartão", "Slots ocupados"))
     if slots is None:
-        slots = text_number(text, r"Perfil\s+do\s+cart[aã]o\s*:?[ \t]*([0-9.,]+)\s*slots?")
+        slots = text_number(text, r"(?:Slot\s+Width|Slots?\s+ocupados|Perfil\s+do\s+cart[aã]o)\s*:?\s*([0-9.,]+)\s*(?:slots?)?")
     set_if(specs, "slotsOcupados", slots)
 
-    consumo = integer(attr(mapping, "POWER_CONSUMPTION", "Consumo"))
+    consumo = integer(attr(
+        mapping, "POWER_CONSUMPTION", "TDP", "Board TDP", "TGP", "TBP",
+        "Power Draw", "Consumo",
+    ))
     if consumo is None:
-        consumo = text_integer(text, r"(?:TGP|TBP|Consumo)\s*:?\s*(\d{2,4})\s*W")
+        consumo = text_integer(
+            text,
+            r"(?:TDP|TGP|TBP|Board\s+TDP|Power\s+Draw|Consumo)\s*:?\s*(\d{2,4})\s*W",
+            r"power\s+draw\s+is\s+rated\s+at\s+(\d{2,4})\s*W",
+        )
     set_if(specs, "consumoWatts", consumo)
-    recommended = integer(attr(mapping, "RECOMMENDED_PSU_POWER", "Fonte recomendada"))
+
+    recommended = integer(attr(
+        mapping, "RECOMMENDED_PSU_POWER", "Suggested PSU", "Recommended PSU",
+        "Fonte recomendada",
+    ))
     if recommended is None:
-        recommended = text_integer(text, r"(?:Requisito\s+m[ií]nimo\s+de\s+alimenta[cç][aã]o|Fonte\s+recomendada)\s*:?[ \t]*(\d{3,4})\s*watts?")
+        recommended = text_integer(
+            text,
+            r"(?:Suggested|Recommended)\s+PSU\s*:?\s*(\d{3,4})\s*W",
+            r"Fonte\s+recomendada\s*:?\s*(\d{3,4})\s*W",
+            r"Requisito\s+m[ií]nimo\s+de\s+alimenta[cç][aã]o\s*:?\s*(\d{3,4})\s*(?:W|watts?)",
+        )
     set_if(specs, "potenciaFonteRecomendadaWatts", recommended)
 
-    connectors = attr(mapping, "Conexões", "Conexoes", "Requisitos") or text
-    pcie8 = first_match(connectors, r"(\d+)\s*[xX]\s*PCI[- ]?E\s*8\s*pinos?")
-    if not pcie8:
-        pcie8 = first_match(text, r"Alimenta[cç][aã]o\s+externa\s*(\d+)\s*[xX]\s*PCI[- ]?E\s*8\s*pinos?")
+    connectors = attr(mapping, "Power Connectors", "Conexões", "Conexoes", "Requisitos") or text
+    pcie8 = first_match(connectors, r"(\d+)\s*[xX]\s*(?:PCI[- ]?E\s*)?8[- ]?pin")
+    pcie6 = first_match(connectors, r"(\d+)\s*[xX]\s*(?:PCI[- ]?E\s*)?6[- ]?pin")
     set_if(specs, "conectoresPcie8Pinos", integer(pcie8))
-    set_if(specs, "conectoresPcie6Pinos", integer(attr(mapping, "PCIE_6_PIN_CONNECTORS", "PCIe 6 pinos")))
-    set_if(specs, "conectores12vhpwr", integer(attr(mapping, "12VHPWR_CONNECTORS", "12VHPWR")))
-    set_if(specs, "conectores12v2x6", integer(attr(mapping, "12V_2X6_CONNECTORS", "12V-2x6")))
+    set_if(specs, "conectoresPcie6Pinos", integer(pcie6))
+    vhpwr = first_match(connectors, r"(\d+)\s*[xX]\s*(?:12VHPWR|16[- ]?pin)")
+    v2x6 = first_match(connectors, r"(\d+)\s*[xX]\s*12V[- ]?2x6")
+    set_if(specs, "conectores12vhpwr", integer(vhpwr))
+    set_if(specs, "conectores12v2x6", integer(v2x6))
 
-    outputs_text = attr(mapping, "Saídas", "Saidas") or text
-    # Saídas: quantidade deve vir do rótulo da própria porta.
-    # Algumas fichas do Magalu serializam duas colunas como:
-    # "DisplayPort 2.1: 3 x HDMI | 2.1: 1x". Nesse caso o 3 pertence
-    # ao DisplayPort e o 1 ao HDMI. Trate esse formato antes dos fallbacks.
+    outputs_text = attr(mapping, "Display Outputs", "Outputs", "Saídas", "Saidas") or text
+    hdmi = integer(attr(mapping, "HDMI_PORTS", "HDMI"))
+    dp = integer(attr(mapping, "DISPLAYPORT_PORTS", "DisplayPort", "DisplayPort Ports"))
+
+    # Algumas fichas Magalu serializam duas colunas como
+    # "DisplayPort 2.1: 3 x HDMI | 2.1: 1x". Nesse formato o 3
+    # pertence ao DisplayPort e o 1 ao HDMI.
     special_outputs = re.search(
         r"DisplayPort\s*(?:2\.1)?\s*:\s*(\d+)\s*[xX]\s*HDMI\s*(?:\|\s*)?(?:2\.1)?\s*:\s*(\d+)\s*[xX]",
         outputs_text or "", re.I,
     )
     if special_outputs:
-        dp = special_outputs.group(1)
-        hdmi = special_outputs.group(2)
+        dp = dp or int(special_outputs.group(1))
+        hdmi = hdmi or int(special_outputs.group(2))
     else:
-        hdmi = (
-            first_match(outputs_text, r"HDMI\s*(?:\|\s*)?(?:2\.1)?\s*:\s*(\d+)\s*[xX]")
-            or first_match(outputs_text, r"(\d+)\s*(?:[xX]\s*)?HDMI\b")
-        )
-        dp = (
-            first_match(outputs_text, r"DisplayPort\s*(?:2\.1)?\s*:\s*(\d+)\s*[xX]")
-            or first_match(outputs_text, r"(\d+)\s*(?:[xX]\s*)?(?:Display\s*Port|DisplayPort|DP)\b")
-        )
-    set_if(specs, "hdmi", integer(hdmi))
-    set_if(specs, "displayPort", integer(dp))
-    outputs=[]
+        if hdmi is None:
+            hdmi = ports_count(outputs_text, r"HDMI")
+        if dp is None:
+            dp = ports_count(outputs_text, r"(?:Display\s*Port|DisplayPort|DP)")
+    set_if(specs, "hdmi", hdmi)
+    set_if(specs, "displayPort", dp)
+
+    outputs = []
     if specs.get("hdmi"):
         outputs.append(f"{specs['hdmi']}x HDMI")
     if specs.get("displayPort"):
@@ -902,6 +1051,7 @@ def extract_gpu(mapping, text):
     if outputs:
         specs["saidasVideo"] = outputs
     return specs
+
 
 def extract_storage(mapping, text):
     specs = {}
@@ -1138,6 +1288,40 @@ def extract_case(mapping, text):
             })
         if supports:
             specs["suportesFans"] = supports
+
+    set_if(
+        specs, "alturaMaximaGpuMm",
+        number(attr(mapping, "MAX_GPU_HEIGHT", "Maximum GPU Height", "Altura máxima da GPU"))
+        or text_number(text, r"(?:Maximum\s+GPU\s+Height|Altura\s+m[aá]xima\s+da\s+GPU)\s*:?\s*([0-9.,]+)\s*mm"),
+    )
+    set_if(
+        specs, "slotsMaximosGpu",
+        integer(attr(mapping, "MAX_GPU_SLOTS", "Maximum GPU Slots", "Slots máximos da GPU"))
+        or text_integer(text, r"(?:Maximum\s+GPU\s+Slots|Slots\s+m[aá]ximos\s+da\s+GPU)\s*:?\s*(\d+)"),
+    )
+    set_if(
+        specs, "espacoGerenciamentoCabosMm",
+        number(attr(mapping, "CABLE_MANAGEMENT_SPACE", "Cable Management Space", "Espaço para gerenciamento de cabos"))
+        or text_number(text, r"(?:Cable\s+Management(?:\s+Space)?|Gerenciamento\s+de\s+cabos)\s*:?\s*([0-9.,]+)\s*mm"),
+    )
+
+    radiator_scope = attr(mapping, "RADIATOR_SUPPORT", "Radiator Support", "Radiadores Suportados") or first_match(
+        text, r"(?:Radiator\s+Support|Radiadores?\s+Suportados?)\s*:?\s*(.+?)(?=\s+-\s+[A-ZÁÉÍÓÚ]|$)"
+    )
+    if radiator_scope:
+        position_map = {
+            "top": "TOPO", "topo": "TOPO", "front": "FRENTE", "frente": "FRENTE", "frontal": "FRENTE",
+            "rear": "TRASEIRA", "traseiro": "TRASEIRA", "traseira": "TRASEIRA",
+            "bottom": "INFERIOR", "inferior": "INFERIOR", "side": "LATERAL", "lateral": "LATERAL",
+        }
+        radiators = []
+        for m in re.finditer(
+            r"(Top|Topo|Front|Frente|Frontal|Rear|Traseir[oa]|Bottom|Inferior|Side|Lateral)\s*:?\s*(?:up\s+to\s*)?(120|140|240|280|360|420)\s*mm",
+            radiator_scope, re.I,
+        ):
+            radiators.append({"posicao": position_map[m.group(1).casefold()], "tamanhoMm": int(m.group(2))})
+        if radiators:
+            specs["suportesRadiador"] = radiators
     return specs
 
 def extract_cooler(mapping, text):
@@ -1236,6 +1420,29 @@ def extract_cooler(mapping, text):
     if airflow is None:
         airflow = text_number(details, r"(?:Air\s*Flow|Fluxo\s+de\s+ar).{0,30}?([0-9.,]+)\s*CFM", r"([0-9.,]+)\s*CFM")
     set_if(specs, "fluxoArCfm", airflow)
+
+    set_if(
+        specs, "alturaLivreRamMm",
+        number(attr(mapping, "RAM_CLEARANCE", "Memory Clearance", "RAM Clearance", "Altura livre para RAM"))
+        or text_number(details, r"(?:RAM|Memory)\s+Clearance\s*:?\s*([0-9.,]+)\s*mm"),
+    )
+    set_if(
+        specs, "espessuraRadiadorMm",
+        number(attr(mapping, "RADIATOR_THICKNESS", "Radiator Thickness", "Espessura do radiador"))
+        or text_number(details, r"(?:Radiator\s+Thickness|Espessura\s+do\s+radiador)\s*:?\s*([0-9.,]+)\s*mm"),
+    )
+    set_if(
+        specs, "comprimentoMangueirasMm",
+        number(attr(mapping, "TUBE_LENGTH", "Hose Length", "Tube Length", "Comprimento das mangueiras"))
+        or text_number(details, r"(?:Tube|Hose)\s+Length\s*:?\s*([0-9.,]+)\s*mm"),
+    )
+    pump_connector = attr(mapping, "PUMP_CONNECTOR", "Pump Connector", "Conector da bomba")
+    if pump_connector:
+        set_if(specs, "conectorBomba", clean_text(pump_connector))
+    pump_power = number(attr(mapping, "PUMP_POWER", "Pump Power", "Consumo da bomba"))
+    if pump_power is None:
+        pump_power = text_number(details, r"(?:Pump\s+Power|Consumo\s+da\s+bomba)\s*:?\s*([0-9.,]+)\s*W")
+    set_if(specs, "consumoBombaWatts", pump_power)
 
     if re.search(r"\bARGB\b", details or "", re.I):
         specs["argb"] = True

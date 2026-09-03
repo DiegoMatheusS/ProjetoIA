@@ -42,7 +42,7 @@ CATEGORY_SEARCH_LABELS = {
 # outras fontes já existentes no Projeto IA.
 DEFAULT_SOURCES_BY_CATEGORY = {
     "PROCESSADOR": ["PC_KOMBO", "CPU_MONKEY", "CPU_WORLD", "WIKICHIP"],
-    "PLACA_VIDEO": ["TECHPOWERUP", "PC_KOMBO", "GEIZHALS"],
+    "PLACA_VIDEO": ["PC_KOMBO", "TECHPOWERUP", "GEIZHALS"],
     "PLACA_MAE": ["PC_KOMBO", "GEIZHALS"],
     "MEMORIA_RAM": ["PC_KOMBO", "GEIZHALS"],
     "ARMAZENAMENTO": ["PC_KOMBO", "GEIZHALS"],
@@ -177,6 +177,91 @@ class DiscoverySourceCatalog:
     def _norm(value: str | None) -> str:
         text = clean_text(value) or ""
         return re.sub(r"\s+", " ", text).strip()
+
+    @classmethod
+    def _item_context(cls, link, max_chars: int = 1800) -> str:
+        """Texto técnico do item sem puxar o catálogo inteiro.
+
+        Muitos catálogos colocam o nome dentro do <a> e as especificações nas
+        células/contêiner pai. Usar só link.get_text() desperdiça dados que já
+        vieram na primeira resposta HTTP.
+        """
+        anchor = cls._norm(link.get_text(" ", strip=True))
+        candidates = []
+        for tag in ("tr", "li", "article"):
+            parent = link.find_parent(tag)
+            if parent is not None:
+                value = cls._norm(parent.get_text(" ", strip=True))
+                if anchor and anchor.casefold() in value.casefold() and len(value) <= max_chars:
+                    candidates.append(value)
+        if candidates:
+            return min(candidates, key=len)
+
+        best = anchor
+        for parent in link.parents:
+            if getattr(parent, "name", None) in {"body", "html"}:
+                break
+            value = cls._norm(parent.get_text(" ", strip=True))
+            if not value or len(value) > max_chars:
+                continue
+            if anchor and anchor.casefold() not in value.casefold():
+                continue
+            if len(value) > len(best):
+                best = value
+        return best
+
+    @staticmethod
+    def _techpowerup_summary(name: str, row_text: str, cells: list[str] | None = None) -> dict:
+        """Extrai a própria linha da GPU Database, sem abrir a ficha individual."""
+        specs = {}
+        clean_name = re.sub(r"\s+(?:Rebrand\s+)?Specs\s*$", "", name or "", flags=re.I).strip()
+        clean_name = re.sub(r"^(?:AMD|NVIDIA|Intel)\s+", "", clean_name, flags=re.I).strip()
+        if clean_name:
+            specs["gpu"] = clean_name
+
+        cells = [re.sub(r"\s+", " ", x or "").strip() for x in (cells or [])]
+        if len(cells) >= 2 and cells[1] and cells[1].casefold() != "gpu chip":
+            specs["chipset"] = cells[1]
+
+        bus = cells[3] if len(cells) >= 4 else row_text
+        m = re.search(r"PCIe?\s*(\d)(?:\.0)?\s*[xX]\s*(\d+)", bus or "", re.I)
+        if m:
+            specs["geracaoPcie"] = int(m.group(1))
+            specs["larguraPcie"] = int(m.group(2))
+
+        memory = cells[4] if len(cells) >= 5 else row_text
+        m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)\s*,?\s*(GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)?\s*,?\s*(\d{2,4})\s*bit", memory or "", re.I)
+        if m:
+            value = float(m.group(1))
+            if m.group(2).upper() == "MB":
+                value = value / 1024
+            specs["memoriaVideoGb"] = int(value) if float(value).is_integer() else round(value, 3)
+            if m.group(3):
+                specs["tipoMemoriaVideo"] = m.group(3).upper()
+            specs["barramentoBits"] = int(m.group(4))
+        else:
+            m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)", memory or "", re.I)
+            if m:
+                value = float(m.group(1))
+                if m.group(2).upper() == "MB":
+                    value = value / 1024
+                specs["memoriaVideoGb"] = int(value) if float(value).is_integer() else round(value, 3)
+            mt = re.search(r"\b(GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\b", memory or "", re.I)
+            if mt:
+                specs["tipoMemoriaVideo"] = mt.group(1).upper()
+            bits = re.search(r"\b(\d{2,4})\s*bit\b", memory or "", re.I)
+            if bits:
+                specs["barramentoBits"] = int(bits.group(1))
+
+        clock = cells[5] if len(cells) >= 6 else row_text
+        m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*MHz", clock or "", re.I)
+        if m:
+            specs["clockBaseMhz"] = int(round(float(m.group(1))))
+
+        tdp = re.search(r"\b(?:TDP|TBP|TGP)?\s*([0-9]{2,4})\s*W\b", row_text or "", re.I)
+        if tdp:
+            specs["consumoWatts"] = int(tdp.group(1))
+        return specs
 
     @staticmethod
     def _matches_filters(name: str, marca: str | None, consulta: str | None) -> bool:
@@ -332,25 +417,25 @@ class DiscoverySourceCatalog:
 
     @staticmethod
     def _pc_kombo_summary(text: str, categoria: str) -> dict:
-        """Extrai os campos que o próprio catálogo do PC-Kombo já exibe.
-
-        A descoberta precisa ser útil mesmo quando a página individual estiver lenta
-        ou bloqueada. Por isso preservamos os dados técnicos da listagem.
-        """
+        """Extrai o máximo seguro do catálogo PC-Kombo sem abrir cada ficha."""
         raw = re.sub(r"\s+", " ", text or "").strip()
         specs = {}
+
         if categoria == "PROCESSADOR":
             m = re.search(
                 r"\bSocket\s+(.+?)\s+Clock\s+([0-9.]+)\s*GHz(?:\s+Turbo\s+([0-9.]+)\s*GHz)?\s+(\d+)\s+Cores\s+(\d+)\s+Threads\b",
                 raw, re.I,
             )
             if m:
-                specs["socket"] = m.group(1).strip()
+                specs["socket"] = re.sub(r"\s+", "", m.group(1)).upper()
                 specs["frequenciaBaseMhz"] = int(round(float(m.group(2)) * 1000))
                 if m.group(3):
                     specs["frequenciaTurboMhz"] = int(round(float(m.group(3)) * 1000))
                 specs["nucleos"] = int(m.group(4))
                 specs["threads"] = int(m.group(5))
+            tdp = re.search(r"\b(?:TDP\s*)?(\d{2,4})\s*W\b", raw, re.I)
+            if tdp:
+                specs["tdpWatts"] = int(tdp.group(1))
 
         elif categoria == "PLACA_MAE":
             m = re.search(
@@ -358,11 +443,26 @@ class DiscoverySourceCatalog:
                 raw, re.I,
             )
             if m:
-                specs["formato"] = m.group(1)
-                specs["socket"] = m.group(2).strip()
+                form = m.group(1).upper().replace("-", "_")
+                specs["formato"] = {"MICRO_ATX": "MICRO_ATX", "MINI_ITX": "MINI_ITX", "E_ATX": "E_ATX"}.get(form, "ATX" if form == "ATX" else form)
+                specs["socket"] = re.sub(r"\s+", "", m.group(2)).upper()
                 specs["chipset"] = m.group(3).strip()
                 specs["slotsMemoria"] = int(m.group(4))
-            mem_types = sorted(set(x.upper() for x in re.findall(r"\bDDR[345]\b", raw, re.I)))
+            else:
+                ff = re.search(r"\b(E-ATX|ATX|Micro-ATX|Mini-ITX|ITX)\b", raw, re.I)
+                if ff:
+                    token = ff.group(1).upper()
+                    specs["formato"] = {"E-ATX": "E_ATX", "MICRO-ATX": "MICRO_ATX", "MINI-ITX": "MINI_ITX", "ITX": "MINI_ITX"}.get(token, token)
+                sock = re.search(r"\b(?:Socket\s+)?(AM[345]|(?:FC)?LGA\s*\d{3,4}|sTRX4|TR4)\b", raw, re.I)
+                if sock:
+                    specs["socket"] = re.sub(r"\s+", "", sock.group(1)).upper()
+                chip = re.search(r"\b(?:Chipset\s+)?([ABHXZ]\d{3,4})\b", raw, re.I)
+                if chip:
+                    specs["chipset"] = chip.group(1).upper()
+                slots = re.search(r"\b(\d+)\s+(?:RAM\s*)?slots?\b|\b(\d+)\s+Ramslots\b", raw, re.I)
+                if slots:
+                    specs["slotsMemoria"] = int(slots.group(1) or slots.group(2))
+            mem_types = list(dict.fromkeys(x.upper() for x in re.findall(r"\bDDR[345]\b", raw, re.I)))
             if mem_types:
                 specs["tiposMemoriaSuportados"] = mem_types
 
@@ -372,23 +472,63 @@ class DiscoverySourceCatalog:
                 specs["tipo"] = ddr.group(1).upper()
                 if ddr.group(2):
                     specs["frequenciaMhz"] = int(ddr.group(2))
-            kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)\s*GB\b", raw, re.I)
-            if kit:
-                specs["quantidadeModulos"] = int(kit.group(1))
-                per = float(kit.group(2))
-                specs["capacidadePorModuloGb"] = int(per) if per.is_integer() else per
+
+            # Formatos explícitos.
             if re.search(r"\bSO[- ]?DIMM\b", raw, re.I):
                 specs["formato"] = "SO_DIMM"
             elif re.search(r"\b(?:U?DIMM)\b", raw, re.I):
                 specs["formato"] = "DIMM"
+
+            # 2x8GB / 2 x 16 GB.
+            kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*GB\b", raw, re.I)
+            if kit:
+                specs["quantidadeModulos"] = int(kit.group(1))
+                per = float(kit.group(2).replace(",", "."))
+                specs["capacidadePorModuloGb"] = int(per) if per.is_integer() else per
+            else:
+                # PC-Kombo costuma usar: "16 GB DDR4-3600 Kit of 2".
+                total = re.search(r"\b(\d+(?:[.,]\d+)?)\s*GB\b", raw, re.I)
+                count = (
+                    re.search(r"\bKit\s+(?:of\s+)?(\d+)\b", raw, re.I)
+                    or re.search(r"\b(\d+)\s+(?:sticks?|modules?)\b", raw, re.I)
+                )
+                if count:
+                    qty = int(count.group(1))
+                    specs["quantidadeModulos"] = qty
+                    if total and qty > 0:
+                        total_gb = float(total.group(1).replace(",", "."))
+                        per = total_gb / qty
+                        specs["capacidadePorModuloGb"] = int(per) if per.is_integer() else round(per, 3)
+
+            # Ficha individual PC-Kombo: Size 32 GB / Sticks 2.
+            size = re.search(r"\bSize\s+(\d+(?:[.,]\d+)?)\s*GB\b", raw, re.I)
+            sticks = re.search(r"\bSticks\s+(\d+)\b", raw, re.I)
+            if sticks and "quantidadeModulos" not in specs:
+                specs["quantidadeModulos"] = int(sticks.group(1))
+            if size and specs.get("quantidadeModulos") and "capacidadePorModuloGb" not in specs:
+                total_gb = float(size.group(1).replace(",", "."))
+                per = total_gb / specs["quantidadeModulos"]
+                specs["capacidadePorModuloGb"] = int(per) if per.is_integer() else round(per, 3)
+
+            clock = re.search(r"\bClock\s+(\d{3,5})\b", raw, re.I)
+            if clock and "frequenciaMhz" not in specs:
+                specs["frequenciaMhz"] = int(clock.group(1))
+            timings = re.search(r"\bTimings\s+(\d{1,3})(?:[-–]\d+){1,4}\b", raw, re.I)
             cl = re.search(r"\bCL\s*(\d{1,3})\b", raw, re.I)
-            if cl:
-                specs["latenciaCl"] = int(cl.group(1))
+            if cl or timings:
+                specs["latenciaCl"] = int((cl or timings).group(1))
             volt = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*V\b", raw, re.I)
             if volt:
                 specs["tensaoVolts"] = float(volt.group(1).replace(",", "."))
-            if re.search(r"\bECC\b", raw, re.I):
+            low = raw.casefold()
+            if re.search(r"\bnon[- ]?ecc\b", low):
+                specs["ecc"] = False
+            elif re.search(r"\becc\b", low):
                 specs["ecc"] = True
+            if re.search(r"\bunbuffered\b|\bunregistered\b", low):
+                specs["registrada"] = False
+            elif re.search(r"\bregistered\b|\brdimm\b", low):
+                specs["registrada"] = True
             if re.search(r"\bXMP\b", raw, re.I):
                 specs["suportaXmp"] = True
             if re.search(r"\bEXPO\b", raw, re.I):
@@ -396,75 +536,159 @@ class DiscoverySourceCatalog:
             if re.search(r"\b(?:A?RGB)\b", raw, re.I):
                 specs["rgb"] = True
 
-        elif categoria == "ARMAZENAMENTO":
-            m = re.search(
-                r"(?:\b\d+\s+GB\s+)?\b(\d+)\s+GB\s+(NVM|NVME|SATA)\s+Protocol\s+(.+?)\s+Format\s*$",
-                raw, re.I,
-            )
-            if m:
-                specs["tipo"] = "SSD"
-                specs["capacidadeGb"] = int(m.group(1))
-                proto = m.group(2).upper()
-                specs["interface"] = "NVMe" if proto in {"NVM", "NVME"} else "SATA"
-                specs["formato"] = m.group(3).strip()
-
-        elif categoria == "FONTE":
-            m = re.search(r"\b(ATX(?: PS/2)?|SFX(?:-L)?|TFX|Flex-?ATX|PS/2)\s+(\d{2,4})W\s*$", raw, re.I)
-            if m:
-                specs["formato"] = m.group(1)
-                specs["potenciaWatts"] = int(m.group(2))
-            cert = re.search(r"\b80\s+PLUS\s+(Bronze|Silver|Gold|Platinum|Titanium)\b", raw, re.I)
-            if cert:
-                specs["certificacao"] = f"80 PLUS {cert.group(1).title()}"
-            low = raw.casefold()
-            if "semi-modular" in low or "semi modular" in low:
-                specs["modularidade"] = "SEMI_MODULAR"
-            elif re.search(r"\bmodular\b", low):
-                specs["modularidade"] = "MODULAR"
-
         elif categoria == "PLACA_VIDEO":
-            mem = re.search(r"\b(\d+(?:\.\d+)?)\s+GB\s+(\d+)W\s*$", raw, re.I)
-            if mem:
-                value = float(mem.group(1))
+            # Linha compacta PC-Kombo: "modelo GeForce RTX 4070 Ti 12 GB 285W".
+            gpu_patterns = [
+                r"\b(GeForce\s+(?:RTX|GTX|GT|GTS)\s+\d{3,4}(?:\s+(?:Ti|SUPER|Super))?(?:\s*\([^)]*\))?)\b",
+                r"\b(Radeon\s+(?:RX\s+\d{3,4}(?:M|S)?(?:\s+(?:XT|XTX|GRE))?|HD\s+\d{3,4}M?|VII))\b",
+                r"\b(Intel\s+Arc\s+[A-Z]\d+)\b",
+            ]
+            for pat in gpu_patterns:
+                gm = re.search(pat, raw, re.I)
+                if gm:
+                    specs["gpu"] = re.sub(r"\s*\([^)]*\)", "", gm.group(1)).strip()
+                    break
+            mem_power = re.search(r"\b(\d+(?:\.\d+)?)\s+GB(?:\s+(\d{2,4})W)?\b", raw, re.I)
+            if mem_power:
+                value = float(mem_power.group(1))
                 specs["memoriaVideoGb"] = int(value) if value.is_integer() else value
-                specs["consumoWatts"] = int(mem.group(2))
-            # O chipset costuma aparecer imediatamente antes do VRAM/potência.
-            gm = re.search(
-                r"\b((?:GeForce\s+(?:RTX|GTX|GT|GTS)\s+[^ ]+(?:\s+(?:Ti|SUPER|Super))?(?:\s*\([^)]*\))?)|(?:Radeon\s+(?:RX\s+[^ ]+(?:\s+XT|\s+XTX)?|VII))|(?:Intel\s+Arc\s+[A-Z]\d+))\s+\d+(?:\.\d+)?\s+GB\s+\d+W\s*$",
-                raw, re.I,
-            )
-            if gm:
-                specs["gpu"] = re.sub(r"\s*\([^)]*\)", "", gm.group(1)).strip()
-                specs["chipset"] = specs["gpu"]
-            memory_type = re.search(r"\b(GDDR[3567X]+)\b", raw, re.I)
+                if mem_power.group(2):
+                    specs["consumoWatts"] = int(mem_power.group(2))
+            memory_type = re.search(r"\b(GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\b", raw, re.I)
             if memory_type:
                 specs["tipoMemoriaVideo"] = memory_type.group(1).upper()
             bus = re.search(r"\b(\d{2,4})\s*bit\b", raw, re.I)
             if bus:
                 specs["barramentoBits"] = int(bus.group(1))
+            pcie = re.search(r"\bPCIe?\s*(\d)(?:\.0)?\s*[xX]\s*(\d+)\b", raw, re.I)
+            if pcie:
+                specs["geracaoPcie"] = int(pcie.group(1))
+                specs["larguraPcie"] = int(pcie.group(2))
+
+        elif categoria == "ARMAZENAMENTO":
+            # Aceita GB/TB e NVMe/NVM/SATA.
+            cap = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(TB|GB)\b", raw, re.I)
+            if cap:
+                value = float(cap.group(1).replace(",", "."))
+                specs["capacidadeGb"] = int(round(value * 1024 if cap.group(2).upper() == "TB" else value))
+            if re.search(r"\b(?:SSD|NVMe|NVM)\b", raw, re.I):
+                specs["tipo"] = "SSD"
+            elif re.search(r"\bHDD\b", raw, re.I):
+                specs["tipo"] = "HDD"
+            if re.search(r"\bNVM\s+Protocol\b", raw, re.I) and not re.search(r"\bPCIe\b", raw, re.I):
+                # Compatibilidade com o formato histórico do PC-Kombo.
+                specs["interface"] = "NVMe"
+            elif re.search(r"\bNVMe\b|\bNVM\b", raw, re.I):
+                specs["interface"] = "NVME_PCIE"
+            elif re.search(r"\bSATA\b", raw, re.I):
+                specs["interface"] = "SATA"
+            m2 = re.search(r"\bM\.?2\b|\b22(?:30|42|60|80|110)\b", raw, re.I)
+            if m2:
+                specs["formato"] = "M.2" if re.search(r"\bNVM\s+Protocol\b", raw, re.I) and not re.search(r"\bPCIe\b", raw, re.I) else "M2"
+                code = re.search(r"\b22(30|42|60|80|110)\b", raw)
+                if code:
+                    specs["tamanhoM2Mm"] = int(code.group(1))
+            elif re.search(r"\b2[.,]5\s*(?:in|\"|inch|polegadas?)?\b", raw, re.I):
+                specs["formato"] = "POLEGADAS_2_5"
+            elif re.search(r"\b3[.,]5\s*(?:in|\"|inch|polegadas?)?\b", raw, re.I):
+                specs["formato"] = "POLEGADAS_3_5"
+            pcie = re.search(r"\bPCIe?\s*(\d)(?:\.0)?(?:\s*[xX]\s*(\d+))?", raw, re.I)
+            if pcie:
+                specs["geracaoPcie"] = int(pcie.group(1))
+                if pcie.group(2):
+                    specs["pistasPcie"] = int(pcie.group(2))
+            read = re.search(r"\b(?:Read|Leitura)\D{0,20}(\d{3,6})\s*MB/?s\b", raw, re.I)
+            write = re.search(r"\b(?:Write|Escrita|Grava[cç][aã]o)\D{0,20}(\d{3,6})\s*MB/?s\b", raw, re.I)
+            if read:
+                specs["leituraSequencialMbps"] = int(read.group(1))
+            if write:
+                specs["escritaSequencialMbps"] = int(write.group(1))
+
+        elif categoria == "FONTE":
+            fmt_match = re.search(r"\b(ATX(?: PS/2)?|SFX(?:-L)?|TFX|Flex-?ATX|PS/2)\b", raw, re.I)
+            if fmt_match:
+                fmt = fmt_match.group(1).upper().replace("-", "_").replace(" ", "_")
+                specs["formato"] = {"ATX_PS/2": "ATX", "PS/2": "ATX", "SFX_L": "SFX_L", "FLEX_ATX": "FLEX_ATX"}.get(fmt, fmt)
+            watts = re.search(r"\b(\d{2,4})\s*W\b", raw, re.I)
+            if watts:
+                specs["potenciaWatts"] = int(watts.group(1))
+            cert = re.search(r"\b80\s+PLUS\s+(White|Bronze|Silver|Gold|Platinum|Titanium)\b", raw, re.I)
+            if cert:
+                specs["certificacao"] = f"80 PLUS {cert.group(1).title()}"
+            low = raw.casefold()
+            if "semi-modular" in low or "semi modular" in low:
+                specs["modularidade"] = "SEMI_MODULAR"
+            elif re.search(r"\b(?:non[- ]modular|nao modular|não modular)\b", low):
+                specs["modularidade"] = "NAO_MODULAR"
+            elif re.search(r"\bmodular\b", low):
+                specs["modularidade"] = "MODULAR"
+            atx_standard = re.search(r"\bATX\s*(3\.[01])\b", raw, re.I)
+            if atx_standard:
+                specs["padraoAtx"] = atx_standard.group(1)
+
+        elif categoria == "GABINETE":
+            low = raw.casefold()
+            if re.search(r"\b(?:full|big)[ -]?tower\b", raw, re.I):
+                specs["tamanho"] = "FULL_TOWER"
+            elif re.search(r"\b(?:mid|midi)[ -]?tower\b", raw, re.I):
+                specs["tamanho"] = "MID_TOWER"
+            elif re.search(r"\bmini[ -]?tower\b", raw, re.I):
+                specs["tamanho"] = "MINI_TOWER"
+            elif re.search(r"\b(?:small form factor|SFF)\b", raw, re.I):
+                specs["tamanho"] = "SFF"
+            boards = []
+            for token in re.findall(r"\b(?:E-ATX|ATX|Micro-ATX|Mini-ITX|ITX)\b", raw, re.I):
+                norm = token.upper()
+                norm = {"E-ATX": "E_ATX", "MICRO-ATX": "MICRO_ATX", "MINI-ITX": "MINI_ITX", "ITX": "MINI_ITX"}.get(norm, norm)
+                if norm not in boards:
+                    boards.append(norm)
+            if boards:
+                specs["formatosPlacaMaeSuportados"] = boards
+            if "tempered glass" in low or "window" in low:
+                # Informação útil fica no nome/descrição, mas não existe campo de vidro no schema.
+                pass
 
         elif categoria == "COOLER":
-            sockets = [re.sub(r"\s+", "", x).upper() for x in re.findall(r"\b(?:AM[2345]|TR4|sTRX4|sTR5|LGA\s*\d{3,4}|\b1[0128]\d{2}\b|2066|2011(?:-V3)?)\b", raw, re.I)]
+            sockets = []
+            socket_scope = re.search(r"\bFor socket\s+(.+?)(?=\s+Radiator\b|$)", raw, re.I)
+            source = socket_scope.group(1) if socket_scope else raw
+            for token in re.findall(r"\b(?:AM[2345]|TR4|sTRX4|sTR5|(?:LGA\s*)?\d{4}|115X)\b", source, re.I):
+                token = re.sub(r"\s+", "", token).upper()
+                if token.isdigit() or token == "115X":
+                    token = "LGA" + token
+                if token not in sockets:
+                    sockets.append(token)
             if sockets:
-                specs["socketsSuportados"] = list(dict.fromkeys(sockets))
+                specs["socketsSuportados"] = sockets
             rad = re.search(r"\bRadiator\s+(120|140|240|280|360|420)\s*mm\b", raw, re.I)
             if rad:
                 specs["tipo"] = "WATER_COOLER"
                 specs["tamanhoRadiadorMm"] = int(rad.group(1))
-            elif re.search(r"\b(?:tower|heatpipe|cpu cooler)\b", raw, re.I):
+            qty_size = re.search(r"\b(\d+)\s*[xX]\s*(80|92|100|120|135|140)\s*mm\b", raw, re.I)
+            single_fan = re.search(r"(?:-|\b)(80|92|100|120|135|140)\s*mm\b", raw, re.I)
+            if not rad and (
+                re.search(r"\b(?:tower|heatpipe|processor cooler|cpu cooler|freezer|dark rock|nh-[a-z0-9]|assassin)\b", raw, re.I)
+                or (sockets and (qty_size or single_fan))
+            ):
+                # Dentro do catálogo de CPU coolers, sockets + ventoinha sem
+                # radiador identificam de forma segura um air cooler.
                 specs["tipo"] = "AIR_COOLER"
-            fan = re.search(r"(?:-|\b)(80|92|100|120|135|140)\s*mm\b", raw, re.I)
-            if fan:
-                specs["tamanhoVentoinhaMm"] = int(fan.group(1))
+            if qty_size:
+                specs["quantidadeVentoinhas"] = int(qty_size.group(1))
+                specs["tamanhoVentoinhaMm"] = int(qty_size.group(2))
+            else:
+                fan = re.search(r"(?:-|\b)(80|92|100|120|135|140)\s*mm\b", raw, re.I)
+                if fan:
+                    specs["tamanhoVentoinhaMm"] = int(fan.group(1))
             tdp = re.search(r"\bTDP\s*(?:up to\s*)?(\d{2,4})\s*W\b", raw, re.I)
             if tdp:
                 specs["capacidadeTermicaWatts"] = int(tdp.group(1))
             height = re.search(r"\bHeight\s*(\d+(?:[.,]\d+)?)\s*mm\b", raw, re.I)
             if height:
                 specs["alturaMm"] = float(height.group(1).replace(",", "."))
-            rpm = re.search(r"\b(\d{3,5})\s*RPM\b", raw, re.I)
-            if rpm:
-                specs["velocidadeMaxRpm"] = int(rpm.group(1))
+            rpm_values = [int(x) for x in re.findall(r"\b(\d{3,5})\s*RPM\b", raw, re.I)]
+            if rpm_values:
+                specs["velocidadeMaxRpm"] = max(rpm_values)
             cfm = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*CFM\b", raw, re.I)
             if cfm:
                 specs["fluxoArCfm"] = float(cfm.group(1).replace(",", "."))
@@ -498,11 +722,18 @@ class DiscoverySourceCatalog:
             if re.search(r"\bPWM\b|4[- ]?pin", raw, re.I):
                 specs["pwm"] = True
                 specs["conector"] = "PWM_4_PINOS"
+            elif re.search(r"\b3[- ]?pin\b", raw, re.I):
+                specs["conector"] = "DC_3_PINOS"
+            volt = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\s*V\b", raw, re.I)
+            if volt:
+                specs["tensaoVolts"] = float(volt.group(1).replace(",", "."))
             if re.search(r"\bARGB\b", raw, re.I):
                 specs["argb"] = True
                 specs["rgb"] = True
             elif re.search(r"\bRGB\b", raw, re.I):
                 specs["rgb"] = True
+            if re.search(r"\breverse\s+(?:blade|airflow)\b|\bfluxo\s+reverso\b", raw, re.I):
+                specs["fluxoReverso"] = True
 
         return specs
 
@@ -524,8 +755,9 @@ class DiscoverySourceCatalog:
                 links.extend(soup.select(selector))
             for link in links:
                 href = link.get("href") or ""
-                raw_text = self._norm(link.get_text(" ", strip=True))
-                name = self._pc_kombo_name(raw_text, categoria)
+                anchor_text = self._norm(link.get_text(" ", strip=True))
+                raw_text = self._item_context(link)
+                name = self._pc_kombo_name(anchor_text or raw_text, categoria)
                 if len(name) < 3 or not re.search(r"[A-Za-z]", name):
                     continue
                 if not self._matches_filters(name, marca, consulta):
@@ -536,8 +768,8 @@ class DiscoverySourceCatalog:
                     fonte="PC_KOMBO",
                     marca=marca,
                     resumo={
-                        "catalog_text": raw_text,
-                        "specs": self._pc_kombo_summary(raw_text, categoria),
+                        "catalog_text": raw_text or anchor_text,
+                        "specs": self._pc_kombo_summary(raw_text or anchor_text, categoria),
                     },
                 ))
             return self._dedupe(found)
@@ -571,10 +803,25 @@ class DiscoverySourceCatalog:
                 href = link.get("href") or ""
                 if not re.search(r"/gpu-specs/[^/?#]+\.c\d+", href, re.I):
                     continue
-                name = self._norm(link.get_text(" ", strip=True))
+                raw_name = self._norm(link.get_text(" ", strip=True))
+                name = re.sub(r"\s+(?:Rebrand\s+)?Specs\s*$", "", raw_name, flags=re.I).strip()
                 if len(name) < 3 or not self._matches_filters(name, marca, consulta):
                     continue
-                found.append(DiscoveryCandidate(nome=name, url=urljoin(final, href), fonte="TECHPOWERUP"))
+                row = link.find_parent("tr")
+                cells = []
+                if row is not None:
+                    cells = [self._norm(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"], recursive=False)]
+                row_text = self._norm(row.get_text(" ", strip=True)) if row is not None else self._item_context(link)
+                found.append(DiscoveryCandidate(
+                    nome=name,
+                    url=urljoin(final, href),
+                    fonte="TECHPOWERUP",
+                    marca=marca,
+                    resumo={
+                        "catalog_text": row_text or name,
+                        "specs": self._techpowerup_summary(name, row_text or name, cells),
+                    },
+                ))
             return self._dedupe(found)
 
         html, final, error = self._fetch_html(url, ["techpowerup.com"])

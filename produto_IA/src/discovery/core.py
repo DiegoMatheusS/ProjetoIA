@@ -338,9 +338,12 @@ class HardwareDiscoveryService:
         source_list = [{
             "fonte": candidate.fonte,
             "url": detail.get("url") or candidate.url,
-            "ok": bool(detail.get("ok")),
+            # A fonte de catálogo foi usada mesmo quando a abertura da ficha
+            # individual falhou. Mantemos o diagnóstico separado.
+            "ok": True,
+            "detalheOk": bool(detail.get("ok")),
             "erro": detail.get("erro"),
-            "modoColeta": detail.get("modoColeta"),
+            "modoColeta": detail.get("modoColeta") or "CATALOGO",
         }]
         source_list.extend(info.get("fontesConsultadas") or [])
         # Remove repetições de fonte/url preservando ordem.
@@ -364,7 +367,10 @@ class HardwareDiscoveryService:
             "camposEssenciaisAusentes": essential_missing_fields(result),
             "coberturaTecnica": round(technical_coverage(result), 4),
             "fontes": list(dict.fromkeys(
-                label for label in (_source_label(source.get("fonte")) for source in unique_sources)
+                label
+                for source in unique_sources
+                if source.get("ok") is not False
+                for label in [_source_label(source.get("fonte"))]
                 if label
             )),
             "fontesDetalhadas": unique_sources,

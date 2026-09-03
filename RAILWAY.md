@@ -1,4 +1,16 @@
-## v14.20.2 - ficha completa + busca mais rápida
+## v14.20.3 - correção das 9 categorias de Hardware
+
+- Corrige e amplia a extração técnica em `PROCESSADOR`, `PLACA_MAE`, `MEMORIA_RAM`, `PLACA_VIDEO`, `ARMAZENAMENTO`, `FONTE`, `GABINETE`, `COOLER` e `VENTOINHA`.
+- RAM passa a interpretar capacidade total, quantidade do kit e capacidade por módulo em formatos reais do PC-Kombo, além de DDR, frequência, CL, tensão, ECC, registrada, XMP/EXPO e RGB quando informados.
+- GPU passa a priorizar placas reais do catálogo PC-Kombo e usar o catálogo do TechPowerUp como fonte técnica; os dados da própria linha do catálogo já alimentam GPU/chip, VRAM, tipo de memória, barramento, PCIe e clock sem abrir cada ficha individual.
+- GPU também reconhece melhor arquiteturas, TDP/TGP, fonte recomendada, dimensões, slots, conectores e saídas HDMI/DisplayPort.
+- Placa-mãe, SSD/HDD, fonte, gabinete, cooler e ventoinha ganharam parsers de catálogo mais completos para aproveitar os dados disponíveis antes do enriquecimento externo.
+- A reconciliação entre nome do catálogo e página de detalhe ficou mais tolerante a sufixos técnicos (`Specs`, kit, capacidade/frequência), sem aceitar identidade fraca ou inventar campos.
+- `fontes` mostra apenas fontes realmente aproveitadas; falhas permanecem em `fontesDetalhadas` para diagnóstico.
+- Mantém os limites rápidos da v14.20.2 e evita Surfsky quando o HTTP/catálogo já entregou informação útil.
+- Health: `14.20.3-railway`.
+
+git add## v14.20.2 - ficha completa + busca mais rápida
 
 - A descoberta devolve **todos os campos técnicos previstos no schema da categoria**; o que não foi confirmado fica `null`.
 - `camposAusentes`, `camposObrigatoriosAusentes` e `camposEssenciaisAusentes` são recalculados a partir do schema completo.

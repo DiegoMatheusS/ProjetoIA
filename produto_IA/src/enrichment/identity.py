@@ -105,5 +105,41 @@ def text_matches_identity(identity, text):
         mpn = _norm(identity.get("mpn"))
         return bool(mpn and mpn in norm_text)
 
-    model = _norm(identity.get("modelo"))
-    return bool(model and model in norm_text)
+    model_value = clean_text(identity.get("modelo"))
+    model = _norm(model_value)
+    if model and model in norm_text:
+        return True
+
+    # Catálogos técnicos às vezes acrescentam capacidade/frequência/"Kit of 2"
+    # ao nome, enquanto a ficha individual usa apenas o modelo comercial.
+    # Mantemos a validação conservadora por marca, mas aceitamos correspondência
+    # por tokens distintivos para não descartar a própria ficha do SKU.
+    model_tokens = [
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9]+", model_value or "")
+    ]
+    noise = {
+        "spec", "specs", "rebrand", "series", "serie", "kit", "of", "the",
+        "memory", "ram", "graphics", "card", "gpu", "processor", "cpu",
+        "desktop", "notebook", "gaming", "gamer",
+    }
+    filtered = []
+    for token in model_tokens:
+        if token in noise or len(token) < 2:
+            continue
+        if token.isdigit() and int(token) <= 8:
+            # Quantidades de kit/contagens pequenas não definem identidade.
+            continue
+        filtered.append(token)
+    if not filtered:
+        return False
+
+    page_tokens = set(token.casefold() for token in re.findall(r"[A-Za-z0-9]+", raw))
+    matched = sum(1 for token in filtered if token in page_tokens)
+    ratio = matched / len(filtered)
+    strong_tokens = [
+        token for token in filtered
+        if any(ch.isdigit() for ch in token) or len(token) >= 5
+    ]
+    strong_match = any(token in page_tokens for token in strong_tokens)
+    return bool(ratio >= 0.70 and strong_match)
