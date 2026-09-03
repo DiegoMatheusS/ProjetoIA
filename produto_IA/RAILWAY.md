@@ -1,3 +1,17 @@
+## v14.20.4 - fichas mais ricas + payload compatível com DTO
+
+- Reforça RAM, placa de vídeo e placa-mãe sem regredir o processador.
+- RAM: melhora formato, capacidade por módulo, quantidade de módulos, frequência, CL e flags técnicas quando confirmadas.
+- GPU: mescla o catálogo do PC-Kombo com referência do TechPowerUp para completar campos sem fazer uma busca externa por item.
+- Placa-mãe: melhora leitura de memória, SATA, M.2, PCIe e saídas de vídeo.
+- `camposAindaAusentes` acompanha todas as lacunas reais da ficha.
+- Nova barreira final de normalização para o DTO do CriaByte: enums, datas, booleanos, números e listas são enviados no formato aceito pelo backend.
+- `tiposMemoriaSuportados` nunca envia `DDR4/DDR5` como um único enum; vira `['DDR4', 'DDR5']`.
+- `dataLancamento` só é enviada quando houver data completa confiável em ISO 8601; ano/mês isolado ou data ambígua vira `null`.
+- Valores técnicos ambíguos/inválidos viram campo ausente em vez de causar erro 400 no cadastro.
+- A mesma normalização também protege o fluxo por URL (Magalu/Mercado Livre).
+- Health: `14.20.4-railway`.
+
 ## v14.20.3 - correção das 9 categorias de Hardware
 
 - Corrige e amplia a extração técnica em `PROCESSADOR`, `PLACA_MAE`, `MEMORIA_RAM`, `PLACA_VIDEO`, `ARMAZENAMENTO`, `FONTE`, `GABINETE`, `COOLER` e `VENTOINHA`.

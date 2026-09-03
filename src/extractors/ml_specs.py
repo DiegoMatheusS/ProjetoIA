@@ -611,7 +611,7 @@ def extract_motherboard(mapping, text):
     elif re.search(r"\b(?:U?DIMM)\b", mem_context, re.I):
         specs["formatosMemoriaSuportados"] = ["DIMM"]
 
-    slots = integer(attr(mapping, "RAM_SLOTS_NUMBER", "MEMORY_SLOTS_NUMBER", "Quantidade de slots de memória"))
+    slots = integer(attr(mapping, "RAM_SLOTS_NUMBER", "MEMORY_SLOTS_NUMBER", "Quantidade de slots de memória", "Ramslots", "RAM Slots", "Memory Slots"))
     slot_source = mem_details or mem or ""
     if slots is None:
         m = re.search(r"\b(\d+)\s*(?:slots?|x)\s*(?:DDR[345]\s*)?(?:U?DIMM|SO[-_ ]?DIMM)?\b", slot_source, re.I)
@@ -626,6 +626,7 @@ def extract_motherboard(mapping, text):
     max_memory = capacity_gb(attr(
         mapping,
         "MAX_RAM_MEMORY_CAPACITY", "MAX_MEMORY_CAPACITY", "Capacidade máxima de memória",
+        "Memory Capacity", "Maximum Memory", "Max Memory",
         "Memória da Placa Mãe", "Memória da Placa-Mãe",
     ))
     if max_memory is None:
@@ -655,7 +656,7 @@ def extract_motherboard(mapping, text):
                 specs["frequenciasMemoriaJedecMhz"] = vals
 
     storage_text = attr(mapping, "Interface de Armazenamento", "Armazenar", "Armazenamento") or text or ""
-    sata = integer(attr(mapping, "SATA_PORTS_NUMBER", "Quantidade de portas SATA"))
+    sata = integer(attr(mapping, "SATA_PORTS_NUMBER", "Quantidade de portas SATA", "SATA", "SATA Ports"))
     if sata is None:
         m = re.search(r"\b(\d+)\s+(?:conectores?|portas?)\s+SATA\b|\b(\d+)\s*[xX]\s*SATA\b", storage_text, re.I)
         if m:
@@ -664,13 +665,40 @@ def extract_motherboard(mapping, text):
 
     m2 = integer(attr(mapping, "M2_SLOTS_NUMBER", "Quantidade de slots M.2", "Slots M.2"))
     if m2 is None:
+        # PC-Kombo separa os slots por geração: M.2 (PCI-E 3.0), 4.0 e 5.0.
+        m2_counts = []
+        for generation in (3, 4, 5):
+            value = integer(attr(
+                mapping,
+                f"M.2 (PCI-E {generation}.0)", f"M.2 (PCIe {generation}.0)",
+                f"M2 PCI-E {generation}.0", f"M2 PCIe {generation}.0",
+            ))
+            if value is not None and value > 0:
+                m2_counts.append(value)
+        if m2_counts:
+            m2 = sum(m2_counts)
+    if m2 is None:
         m = re.search(r"\b(\d+)\s+(?:conectores?|slots?)\s+M\.?(?:2)\b|\b(\d+)\s*[xX]\s*M\.?(?:2)\b", storage_text, re.I)
         if m:
             m2 = int(m.group(1) or m.group(2))
     set_if(specs, "slotsM2", m2)
 
-    # Para a versão da placa, prioriza o slot principal explicitamente descrito.
+    # Para a versão PCIe, dados estruturados com contagem > 0 são mais seguros
+    # que simplesmente encontrar o primeiro rótulo da página (que pode valer 0).
     pcie = attr(mapping, "PCIE_VERSION", "PCI_EXPRESS_VERSION", "Versão PCIe")
+    if not pcie:
+        generations = []
+        for generation in (3, 4, 5):
+            for width in (1, 4, 8, 16):
+                count = integer(attr(
+                    mapping,
+                    f"PCI-E {generation}.0 x{width}", f"PCIe {generation}.0 x{width}",
+                    f"PCI Express {generation}.0 x{width}",
+                ))
+                if count is not None and count > 0:
+                    generations.append(generation)
+        if generations:
+            pcie = f"{max(generations)}.0"
     if not pcie:
         pcie = first_match(text, r"(?:slot\s+principal\s+)?PCI(?:e|[- ]?E)?\s*([345](?:\.0)?)\s*x?16")
     if not pcie:
@@ -719,14 +747,31 @@ def extract_motherboard(mapping, text):
     set_if(specs, "biosMinima", bios_min)
 
     outputs = []
-    for label, pattern in [
-        ("HDMI", r"\bHDMI\b"),
-        ("DisplayPort", r"\bDisplay\s*Port\b|\bDP\b"),
-        ("DVI", r"\bDVI\b"),
-        ("VGA", r"\bVGA\b"),
-    ]:
-        if re.search(pattern, text or "", re.I):
-            outputs.append(label)
+    # Quando a fonte traz contagem explícita (ex.: PC-Kombo), valor 0 não pode
+    # virar uma saída existente só porque o rótulo aparece na ficha.
+    explicit_output_aliases = [
+        ("HDMI", ("HDMI", "HDMI Ports")),
+        ("DisplayPort", ("Display Port", "DisplayPort", "DisplayPort Ports")),
+        ("DVI", ("DVI", "DVI Ports")),
+        ("VGA", ("VGA", "VGA Ports")),
+    ]
+    explicit_seen = False
+    for label, aliases in explicit_output_aliases:
+        raw_count = attr(mapping, *aliases)
+        if raw_count is not None:
+            explicit_seen = True
+            count = integer(raw_count)
+            if count is not None and count > 0:
+                outputs.append(label)
+    if not explicit_seen:
+        for label, pattern in [
+            ("HDMI", r"\bHDMI\b"),
+            ("DisplayPort", r"\bDisplay\s*Port\b|\bDP\b"),
+            ("DVI", r"\bDVI\b"),
+            ("VGA", r"\bVGA\b"),
+        ]:
+            if re.search(pattern, text or "", re.I):
+                outputs.append(label)
     if outputs:
         specs["saidasVideo"] = outputs
     return specs
@@ -752,6 +797,15 @@ def extract_ram(mapping, text):
         specs["formato"] = "SO_DIMM"
     elif "dimm" in token or re.search(r"\b(?:U?DIMM|UDIMM)\b", text, re.I):
         specs["formato"] = "DIMM"
+    elif re.search(r"\b(?:Vengeance\s+LPX|Dominator\s+Platinum)\b", text, re.I):
+        # Essas linhas usam módulos DIMM de desktop; a família comercial é
+        # específica o bastante para não confundir com Vengeance SO-DIMM.
+        specs["formato"] = "DIMM"
+
+    corsair_desktop_ddr4 = bool(
+        re.search(r"\b(?:Vengeance\s+LPX|Dominator\s+Platinum(?:\s+RGB)?)\b", text, re.I)
+        and re.search(r"\bDDR4\b", text, re.I)
+    )
 
     # Formatos de kit: 2x8GB, 16 GB Kit of 2, Size 32 GB / Sticks 2.
     kit = re.search(r"\b(\d+)\s*[xX]\s*(\d+(?:[.,]\d+)?)\s*GB\b", text, re.I)
@@ -767,6 +821,8 @@ def extract_ram(mapping, text):
         ))
         if qty is None:
             m = re.search(r"\bKit\s+(?:of\s+)?(\d+)\b|\b(\d+)\s+(?:sticks?|modules?)\b", text, re.I)
+            if m is None and re.search(r"\bDual[- ]Kit\b", text, re.I):
+                qty = 2
             if m:
                 qty = int(m.group(1) or m.group(2))
         set_if(specs, "quantidadeModulos", qty)
@@ -838,10 +894,15 @@ def extract_ram(mapping, text):
             registered = False
         elif re.search(r"\bregistered\b|\bRDIMM\b", text, re.I):
             registered = True
+    if registered is None and corsair_desktop_ddr4:
+        registered = False
     set_if(specs, "registrada", registered)
 
+    if specs.get("ecc") is None and corsair_desktop_ddr4:
+        specs["ecc"] = False
+
     xmp = boolean(attr(mapping, "XMP", "Intel XMP", "XMP Support"))
-    if xmp is True or re.search(r"\bXMP\b", text, re.I):
+    if xmp is True or re.search(r"\bXMP\b", text, re.I) or corsair_desktop_ddr4:
         specs["suportaXmp"] = True
     expo = boolean(attr(mapping, "EXPO", "AMD EXPO", "EXPO Support"))
     if expo is True or re.search(r"\bEXPO\b", text, re.I):
@@ -876,6 +937,8 @@ def extract_gpu(mapping, text):
         or first_match(text, r"\b(NVIDIA\s+GeForce\s+(?:RTX|GTX|GT|GTS)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
         or first_match(text, r"\b(Intel\s+Arc\s+[A-Z]\d{3,4})\b")
         or first_match(text, r"\b((?:Radeon\s+)?(?:RX\s*\d{3,4}(?:M|S)?(?:\s*(?:XTX|XT|GRE))?|HD\s*\d{3,4}M?)|(?:RTX|GTX)\s*\d{3,4}(?:\s*(?:Ti|SUPER))?)\b")
+        or first_match(text, r"\b((?:RTX|GTX)\s*\d{3,4}\s*(?:TI|SUPER)?)\b")
+        or first_match(text, r"\b((?:RX)\s*\d{3,4}\s*(?:XTX|XT|GRE)?)\b")
     )
     generic_family = bool(gpu and re.search(r"\b(?:s[eé]rie|series)\b", str(gpu), re.I))
     if exact_gpu and (not gpu or generic_family):

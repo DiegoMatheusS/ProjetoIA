@@ -309,6 +309,9 @@ class HardwareDiscoveryService:
         }
 
         enrichment_disabled = os.getenv("ENRICHMENT_DISABLE", "false").strip().casefold() in {"1", "true", "sim", "yes"}
+        reference_sources = list((candidate.resumo or {}).get("reference_sources") or [])
+        already_used_sources = {candidate.fonte}
+        already_used_sources.update(str(source.get("fonte") or "").strip().upper() for source in reference_sources if source.get("fonte"))
         if enrich and not enrichment_disabled and identity_is_strong(identity) and technical_missing_fields(result):
             enricher = TechnicalEnricher(
                 auto_mode=True,
@@ -316,7 +319,7 @@ class HardwareDiscoveryService:
                 max_sources_override=self.detail_enrichment_sources,
                 source_timeout_override=max(2, int(self.detail_enrichment_timeout / max(1, self.detail_enrichment_sources))),
                 target_coverage_override=self.bulk_target_coverage if bulk_mode else 1.0,
-                excluded_sources={candidate.fonte} if bulk_mode else None,
+                excluded_sources=already_used_sources if bulk_mode else None,
             )
             if bool(bulk_mode) and not self.bulk_browser_fallback:
                 for source_provider in enricher.providers:
@@ -345,6 +348,7 @@ class HardwareDiscoveryService:
             "erro": detail.get("erro"),
             "modoColeta": detail.get("modoColeta") or "CATALOGO",
         }]
+        source_list.extend(reference_sources)
         source_list.extend(info.get("fontesConsultadas") or [])
         # Remove repetições de fonte/url preservando ordem.
         unique_sources = []
@@ -363,6 +367,7 @@ class HardwareDiscoveryService:
             "especificacoesEncontradas": specs,
             "camposEsperados": result.get("camposEspecificacaoEsperados") or expected,
             "camposAusentes": technical_missing_fields(result),
+            "camposAindaAusentes": technical_missing_fields(result),
             "camposObrigatoriosAusentes": required_missing_fields(result),
             "camposEssenciaisAusentes": essential_missing_fields(result),
             "coberturaTecnica": round(technical_coverage(result), 4),
@@ -537,6 +542,10 @@ class HardwareDiscoveryService:
                 "especificacoesEncontradas": completed_specs,
             }
             item["camposAusentes"] = technical_missing_fields(missing_input)
+            # Alias explícito para consumidores que exibem o bloco "Campos ainda
+            # ausentes". Não confundir com campos obrigatórios: aqui são TODAS as
+            # lacunas do schema técnico.
+            item["camposAindaAusentes"] = list(item["camposAusentes"])
             item["camposObrigatoriosAusentes"] = required_missing_fields(missing_input)
             required_missing = item["camposObrigatoriosAusentes"]
             conflicts = item.get("conflitos") or []

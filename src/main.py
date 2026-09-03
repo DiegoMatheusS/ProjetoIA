@@ -12,6 +12,7 @@ from .scrapers.magazine_scraper import MagazineScraper
 from .extractors.category import detect_category
 from .extractors.backend_schemas import SCHEMAS, REQUIRED, CATEGORY_SLUGS
 from .extractors.ml_specs import extract_specs
+from .extractors.dto_normalizer import normalize_specs_for_backend
 from .utils.data_handler import DataHandler
 from .utils.sites import detect_site
 
@@ -56,6 +57,9 @@ def build_result(raw, forced_category=None):
         raw.get("attributes") or [],
         context_text=text,
     )
+    # Última barreira do contrato: enum/data/boolean/número só saem em formato
+    # aceito pelo DTO do CriaByte. Ambiguidade vira ausência, nunca chute.
+    specs = normalize_specs_for_backend(category, specs)
 
     schema = SCHEMAS.get(category) if category else None
     tipo_cadastro, spec_field, expected = schema if schema else (None, None, [])

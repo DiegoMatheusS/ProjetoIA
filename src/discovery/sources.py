@@ -211,6 +211,27 @@ class DiscoverySourceCatalog:
         return best
 
     @staticmethod
+    def _gpu_reference_key(value: str | None) -> str | None:
+        """Chave curta do chip/modelo para reconciliar AIBs com a GPU de referência.
+
+        Ex.: "ASUS Dual RTX5060TI-O16G" -> "rtx5060ti" e
+        "Sapphire Pulse Radeon RX 6600 Gaming" -> "rx6600".
+        """
+        text = re.sub(r"[^A-Za-z0-9]+", " ", value or "").upper()
+        compact = re.sub(r"[^A-Z0-9]+", "", text)
+        patterns = [
+            (r"(?:GEFORCE)?(RTX|GTX|GTS|GT)(\d{3,4})(TI|SUPER)?", lambda m: f"{m.group(1).lower()}{m.group(2)}{(m.group(3) or '').lower()}"),
+            (r"(?:RADEON)?RX(\d{3,4})(XTX|XT|GRE|M|S)?", lambda m: f"rx{m.group(1)}{(m.group(2) or '').lower()}"),
+            (r"(?:RADEON)?HD(\d{3,4})(M)?", lambda m: f"hd{m.group(1)}{(m.group(2) or '').lower()}"),
+            (r"(?:INTEL)?ARC([AB]\d{3})", lambda m: f"arc{m.group(1).lower()}"),
+        ]
+        for pattern, build in patterns:
+            match = re.search(pattern, compact, re.I)
+            if match:
+                return build(match)
+        return None
+
+    @staticmethod
     def _techpowerup_summary(name: str, row_text: str, cells: list[str] | None = None) -> dict:
         """Extrai a própria linha da GPU Database, sem abrir a ficha individual."""
         specs = {}
@@ -793,6 +814,67 @@ class DiscoverySourceCatalog:
         result = self._dedupe(found)[:limit]
         return result, None if result else (error or "NAO_ENCONTRADO")
 
+    def _techpowerup_reference_index(self):
+        """Baixa UMA vez a GPU Database e monta um índice por GPU de referência.
+
+        Isso enriquece placas AIB vindas do PC-Kombo sem fazer uma busca externa
+        por candidato. É muito mais barato do que abrir 20 páginas individualmente.
+        """
+        url = "https://www.techpowerup.com/gpu-specs/"
+        html, final, error = self._fetch_html(url, ["techpowerup.com"])
+        if not html:
+            return {}, error or "NAO_ENCONTRADO"
+        soup = BeautifulSoup(html, "html.parser")
+        index = {}
+        for link in soup.select('a[href*="/gpu-specs/"]'):
+            href = link.get("href") or ""
+            if not re.search(r"/gpu-specs/[^/?#]+\.c\d+", href, re.I):
+                continue
+            raw_name = self._norm(link.get_text(" ", strip=True))
+            name = re.sub(r"\s+(?:Rebrand\s+)?Specs\s*$", "", raw_name, flags=re.I).strip()
+            key = self._gpu_reference_key(name)
+            if not key:
+                continue
+            row = link.find_parent("tr")
+            cells = []
+            if row is not None:
+                cells = [self._norm(cell.get_text(" ", strip=True)) for cell in row.find_all(["th", "td"], recursive=False)]
+            row_text = self._norm(row.get_text(" ", strip=True)) if row is not None else self._item_context(link)
+            specs = self._techpowerup_summary(name, row_text or name, cells)
+            # Prefere a linha mais informativa para uma mesma chave.
+            current = index.get(key)
+            if current and len([v for v in current.get("specs", {}).values() if v not in (None, "", [])]) >= len([v for v in specs.values() if v not in (None, "", [])]):
+                continue
+            index[key] = {
+                "fonte": "TECHPOWERUP",
+                "url": urljoin(final, href),
+                "nome": name,
+                "specs": specs,
+            }
+        return index, None if index else (error or "NAO_ENCONTRADO")
+
+    def _merge_gpu_reference_specs(self, candidates, reference_index):
+        merged = 0
+        for candidate in candidates:
+            key = self._gpu_reference_key(candidate.nome)
+            reference = reference_index.get(key) if key else None
+            if not reference:
+                continue
+            resumo = dict(candidate.resumo or {})
+            specs = dict(resumo.get("specs") or {})
+            for field, value in (reference.get("specs") or {}).items():
+                if specs.get(field) in (None, "", []) and value not in (None, "", []):
+                    specs[field] = value
+            resumo["specs"] = specs
+            refs = list(resumo.get("reference_sources") or [])
+            refs.append({"fonte": "TECHPOWERUP", "url": reference.get("url"), "ok": True, "modoColeta": "CATALOGO_REFERENCIA"})
+            # dedupe
+            seen = set()
+            resumo["reference_sources"] = [r for r in refs if not ((r.get("fonte"), r.get("url")) in seen or seen.add((r.get("fonte"), r.get("url"))))]
+            candidate.resumo = resumo
+            merged += 1
+        return merged
+
     def _techpowerup(self, marca=None, consulta=None, limit=50):
         url = "https://www.techpowerup.com/gpu-specs/"
 
@@ -872,9 +954,12 @@ class DiscoverySourceCatalog:
 
         all_candidates = []
         diagnostics = []
+        processed_sources = set()
         per_source_limit = max(limit, min(80, limit * 2))
         for source in selected:
             source = str(source or "").strip().upper()
+            if source in processed_sources:
+                continue
             try:
                 handlers = {
                     "PC_KOMBO": lambda: self._pc_kombo(categoria, marca, consulta, per_source_limit),
@@ -891,8 +976,26 @@ class DiscoverySourceCatalog:
                     items, error = self._search_source(source, categoria, marca, consulta, per_source_limit)
             except Exception as exc:
                 items, error = [], f"ERRO_FONTE: {type(exc).__name__}: {exc}"
+            processed_sources.add(source)
             diagnostics.append({"fonte": source, "encontrados": len(items), "erro": error})
             all_candidates.extend(items)
+
+            # GPU: quando PC-Kombo já preencheu a página, ainda aproveitamos UMA
+            # leitura da tabela do TechPowerUp para completar VRAM/barramento/PCIe
+            # e clocks por GPU de referência. Não abre uma página por placa.
+            if categoria == "PLACA_VIDEO" and source == "PC_KOMBO" \
+                    and "TECHPOWERUP" in [str(x).strip().upper() for x in selected]:
+                reference_index, ref_error = self._techpowerup_reference_index()
+                merged = self._merge_gpu_reference_specs(all_candidates, reference_index) if reference_index else 0
+                processed_sources.add("TECHPOWERUP")
+                diagnostics.append({
+                    "fonte": "TECHPOWERUP",
+                    "encontrados": len(reference_index),
+                    "mesclados": merged,
+                    "erro": ref_error,
+                    "modo": "CATALOGO_REFERENCIA",
+                })
+
             if len(self._dedupe(all_candidates)) >= limit:
                 # Não faz crawling adicional se já temos candidatos suficientes.
                 break

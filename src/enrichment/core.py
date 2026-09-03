@@ -9,6 +9,7 @@ from .providers import (
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED
 from ..extractors.ml_specs import extract_specs
+from ..extractors.dto_normalizer import normalize_specs_for_backend
 
 
 def _missing(value):
@@ -26,10 +27,10 @@ def _normalized_for_compare(value):
 
 
 def complete_specs(category, specs):
-    """Retorna todos os campos do schema técnico com None para os ausentes."""
+    """Retorna schema completo já normalizado para o DTO do backend."""
     schema = SCHEMAS.get(category) if category else None
     expected = (schema[2] if schema else None) or []
-    source = dict(specs or {})
+    source = normalize_specs_for_backend(category, specs)
     completed = {field: source.get(field) for field in expected}
     for key, value in source.items():
         if key not in completed:
