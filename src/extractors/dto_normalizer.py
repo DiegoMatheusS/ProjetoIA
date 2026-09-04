@@ -85,9 +85,17 @@ def _to_bool(value: Any):
     if isinstance(value, (int, float)) and value in {0, 1}:
         return bool(value)
     token = _token(value)
-    if token in {"true", "sim", "yes", "y", "1", "suportado", "supported", "incluido", "included"}:
+    if token in {
+        "true", "sim", "yes", "y", "1", "suportado", "supported", "incluido", "included",
+        "habilitado", "enabled", "ativo", "active", "presente", "present", "possui", "has",
+        "compativel", "compatible", "disponivel", "available",
+    }:
         return True
-    if token in {"false", "nao", "no", "n", "0", "nao_suportado", "unsupported", "sem", "none", "not_included"}:
+    if token in {
+        "false", "nao", "no", "n", "0", "nao_suportado", "unsupported", "sem", "none",
+        "not_included", "desabilitado", "disabled", "inativo", "inactive", "ausente", "absent",
+        "nao_possui", "does_not_have", "incompativel", "incompatible", "indisponivel", "unavailable",
+    }:
         return False
     return None
 
@@ -229,6 +237,21 @@ def _storage_interface(value: Any):
     return None
 
 
+
+def _m2_key(value: Any):
+    token = _token(value)
+    raw = _clean_text(value) or ""
+    if not token:
+        return None
+    # B+M / B-M / B M / B&M são o mesmo enum B_M no backend.
+    if re.search(r"\bB\s*(?:\+|&|/|-|_)\s*M\b", raw, re.I) or token in {"b_m", "bm", "b_and_m", "b_plus_m"}:
+        return "B_M"
+    if token in {"m", "m_key", "key_m", "chave_m"} or re.search(r"\bM[- ]?Key\b", raw, re.I):
+        return "M"
+    if token in {"b", "b_key", "key_b", "chave_b"} or re.search(r"\bB[- ]?Key\b", raw, re.I):
+        return "B"
+    return None
+
 def _modularity(value: Any):
     token = _token(value)
     text = _clean_text(value) or ""
@@ -317,6 +340,106 @@ def _pcie_version(value: Any):
     return number
 
 
+
+def _to_mhz(value: Any):
+    if value is None or isinstance(value, bool):
+        return None
+    text = _clean_text(value) or ""
+    # DDR5-6000 / DDR 4 3200 / PC5-48000 -> usa o clock explícito da memória,
+    # nunca o número da geração DDR.
+    m = re.search(r"\bDDR\s*[345]\s*[-_/ ]\s*(\d{3,5})\b", text, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"([-+]?\d[\d.,]*)\s*(GHz|MHz|MT/s|MTs|MHz effective)\b", text, re.I)
+    if m:
+        n = _to_number(m.group(1))
+        if n is None:
+            return None
+        unit = m.group(2).casefold()
+        return int(round(n * 1000)) if "ghz" in unit else int(round(n))
+    n = _to_number(value)
+    if n is None:
+        return None
+    # Em campos de frequência, valores abaixo de 20 quase sempre vieram em GHz.
+    return int(round(n * 1000 if abs(n) < 20 else n))
+
+
+def _to_gb(value: Any):
+    if value is None or isinstance(value, bool):
+        return None
+    text = _clean_text(value) or ""
+    m = re.search(r"([-+]?\d[\d.,]*)\s*(TB|GB|MB)\b", text, re.I)
+    if m:
+        n = _to_number(m.group(1))
+        if n is None:
+            return None
+        unit = m.group(2).upper()
+        if unit == "TB":
+            n *= 1024
+        elif unit == "MB":
+            n /= 1024
+        return int(round(n)) if float(n).is_integer() else round(float(n), 3)
+    return _to_number(value)
+
+
+def _to_mb(value: Any):
+    if value is None or isinstance(value, bool):
+        return None
+    text = _clean_text(value) or ""
+    m = re.search(r"([-+]?\d[\d.,]*)\s*(GB|MB|KB)\b", text, re.I)
+    if m:
+        n = _to_number(m.group(1))
+        if n is None:
+            return None
+        unit = m.group(2).upper()
+        if unit == "GB":
+            n *= 1024
+        elif unit == "KB":
+            n /= 1024
+        return round(float(n), 3)
+    return _to_float(value)
+
+
+def _to_mm(value: Any):
+    if value is None or isinstance(value, bool):
+        return None
+    text = _clean_text(value) or ""
+    m = re.search(r"([-+]?\d[\d.,]*)\s*(mm|cm)\b", text, re.I)
+    if m:
+        n = _to_number(m.group(1))
+        if n is None:
+            return None
+        return float(n) * 10 if m.group(2).casefold() == "cm" else float(n)
+    return _to_float(value)
+
+
+def _to_watts(value: Any):
+    if value is None or isinstance(value, bool):
+        return None
+    text = _clean_text(value) or ""
+    m = re.search(r"([-+]?\d[\d.,]*)\s*(kW|W)\b", text, re.I)
+    if m:
+        n = _to_number(m.group(1))
+        if n is None:
+            return None
+        return int(round(n * 1000)) if m.group(2).casefold() == "kw" else int(round(n))
+    return _to_int(value)
+
+
+def _frequency_list(value: Any):
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    result = []
+    for item in values:
+        text = str(item or "")
+        # Preserva a ordem da ficha (ex.: 7600/7200/6800/6400). Como frequências
+        # de RAM relevantes têm 3-5 dígitos, DDR5 nunca vira o número 5.
+        for raw in re.findall(r"\b(\d{3,5})\b", text):
+            n = int(raw)
+            if 400 <= n <= 20000:
+                result.append(n)
+    return _unique(result) or None
+
+
 def _iso_date(value: Any):
     """Normaliza somente datas completas e confiáveis para ISO 8601 UTC.
 
@@ -339,10 +462,29 @@ def _iso_date(value: Any):
         except ValueError:
             return None
 
+    # Meses em pt-BR/pt-PT são convertidos para inglês apenas para parsing.
+    month_map = {
+        "janeiro": "January", "jan": "Jan", "fevereiro": "February", "fev": "Feb",
+        "marco": "March", "março": "March", "mar": "Mar", "abril": "April", "abr": "Apr",
+        "maio": "May", "mai": "May", "junho": "June", "jun": "Jun", "julho": "July", "jul": "Jul",
+        "agosto": "August", "ago": "Aug", "setembro": "September", "set": "Sep",
+        "outubro": "October", "out": "Oct", "novembro": "November", "nov": "Nov",
+        "dezembro": "December", "dez": "Dec",
+    }
+    parse_text = text
+    tokenized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    for pt, en in month_map.items():
+        pt_ascii = unicodedata.normalize("NFKD", pt).encode("ascii", "ignore").decode("ascii")
+        if re.search(rf"\b{re.escape(pt_ascii)}\b", tokenized, re.I):
+            parse_text = re.sub(rf"\b{re.escape(pt)}\b", en, parse_text, flags=re.I)
+            tokenized = re.sub(rf"\b{re.escape(pt_ascii)}\b", en, tokenized, flags=re.I)
+    if parse_text == text and tokenized != text:
+        parse_text = tokenized
+
     # Formatos com nome do mês são inequívocos.
     for fmt in ("%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
         try:
-            dt = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(parse_text, fmt).replace(tzinfo=timezone.utc)
             return dt.strftime("%Y-%m-%dT00:00:00.000Z")
         except ValueError:
             pass
@@ -399,6 +541,43 @@ INT_LIST_FIELDS = {
 }
 
 
+
+MHZ_FIELDS = {
+    "PROCESSADOR": {"frequenciaBaseMhz", "frequenciaTurboMhz", "frequenciaMemoriaMaximaMhz"},
+    "PLACA_MAE": set(),
+    "MEMORIA_RAM": {"frequenciaMhz", "frequenciaJedecMhz"},
+    "PLACA_VIDEO": {"clockBaseMhz", "clockBoostMhz"},
+}
+
+GB_FIELDS = {
+    "PROCESSADOR": {"capacidadeMemoriaMaximaGb"},
+    "PLACA_MAE": {"capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb"},
+    "MEMORIA_RAM": {"capacidadePorModuloGb"},
+    "PLACA_VIDEO": {"memoriaVideoGb"},
+    "ARMAZENAMENTO": {"capacidadeGb"},
+}
+
+MB_FIELDS = {"PROCESSADOR": {"cacheL2Mb", "cacheL3Mb"}}
+
+MM_FIELDS = {
+    "MEMORIA_RAM": {"alturaMm"},
+    "PLACA_VIDEO": {"comprimentoMm", "alturaMm", "espessuraMm"},
+    "ARMAZENAMENTO": {"alturaMm", "larguraMm", "profundidadeMm", "espessuraMm"},
+    "FONTE": {"comprimentoMm", "larguraMm", "alturaMm"},
+    "GABINETE": {"alturaMm", "larguraMm", "profundidadeMm", "comprimentoMaximoFonteMm", "comprimentoMaximoGpuMm", "alturaMaximaGpuMm", "alturaMaximaCoolerCpuMm", "espacoGerenciamentoCabosMm"},
+    "COOLER": {"alturaMm", "larguraMm", "profundidadeMm", "alturaLivreRamMm", "tamanhoRadiadorMm", "espessuraRadiadorMm", "tamanhoVentoinhaMm", "espessuraVentoinhaMm", "comprimentoMangueirasMm"},
+    "VENTOINHA": {"tamanhoMm", "espessuraMm"},
+}
+
+WATT_FIELDS = {
+    "PROCESSADOR": {"tdpWatts"},
+    "MEMORIA_RAM": {"consumoWatts"},
+    "PLACA_VIDEO": {"consumoWatts", "potenciaFonteRecomendadaWatts"},
+    "ARMAZENAMENTO": {"consumoWatts"},
+    "FONTE": {"potenciaWatts"},
+    "COOLER": {"capacidadeTermicaWatts", "consumoBombaWatts", "consumoWatts"},
+}
+
 def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dict:
     """Última barreira antes do payload do CriaByte.
 
@@ -412,15 +591,38 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
     for field in BOOL_FIELDS.get(category, set()):
         if field in normalized and normalized[field] is not None:
             normalized[field] = _to_bool(normalized[field])
-    for field in INT_FIELDS.get(category, set()):
+
+    specialized = set()
+    for field in MHZ_FIELDS.get(category, set()):
         if field in normalized and normalized[field] is not None:
+            normalized[field] = _to_mhz(normalized[field])
+            specialized.add(field)
+    for field in GB_FIELDS.get(category, set()):
+        if field in normalized and normalized[field] is not None:
+            normalized[field] = _to_gb(normalized[field])
+            specialized.add(field)
+    for field in MB_FIELDS.get(category, set()):
+        if field in normalized and normalized[field] is not None:
+            normalized[field] = _to_mb(normalized[field])
+            specialized.add(field)
+    for field in MM_FIELDS.get(category, set()):
+        if field in normalized and normalized[field] is not None:
+            normalized[field] = _to_mm(normalized[field])
+            specialized.add(field)
+    for field in WATT_FIELDS.get(category, set()):
+        if field in normalized and normalized[field] is not None:
+            normalized[field] = _to_watts(normalized[field])
+            specialized.add(field)
+
+    for field in INT_FIELDS.get(category, set()):
+        if field not in specialized and field in normalized and normalized[field] is not None:
             normalized[field] = _to_int(normalized[field])
     for field in FLOAT_FIELDS.get(category, set()):
-        if field in normalized and normalized[field] is not None:
+        if field not in specialized and field in normalized and normalized[field] is not None:
             normalized[field] = _to_float(normalized[field])
     for field in INT_LIST_FIELDS.get(category, set()):
         if field in normalized and normalized[field] is not None:
-            normalized[field] = _int_list(normalized[field])
+            normalized[field] = _frequency_list(normalized[field]) if "frequenciasMemoria" in field else _int_list(normalized[field])
 
     if category == "PROCESSADOR":
         if "tiposMemoriaSuportados" in normalized:
@@ -459,6 +661,8 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
             normalized["formato"] = _storage_format(normalized.get("formato"))
         if "interface" in normalized:
             normalized["interface"] = _storage_interface(normalized.get("interface"))
+        if "chaveM2" in normalized:
+            normalized["chaveM2"] = _m2_key(normalized.get("chaveM2"))
 
     elif category == "FONTE":
         if "formato" in normalized:

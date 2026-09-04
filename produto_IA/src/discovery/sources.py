@@ -486,6 +486,43 @@ class DiscoverySourceCatalog:
             mem_types = list(dict.fromkeys(x.upper() for x in re.findall(r"\bDDR[345]\b", raw, re.I)))
             if mem_types:
                 specs["tiposMemoriaSuportados"] = mem_types
+            if re.search(r"\b(?:U?DIMM)\b", raw, re.I):
+                specs["formatosMemoriaSuportados"] = ["DIMM"]
+            elif re.search(r"\bSO[- ]?DIMM\b", raw, re.I):
+                specs["formatosMemoriaSuportados"] = ["SO_DIMM"]
+            # Campos que às vezes aparecem no próprio card/linha do catálogo.
+            max_mem = re.search(r"(?:Max(?:imum)?\s+Memory|Memory\s+Max|RAM\s+max(?:imum)?)\D{0,16}(\d+(?:[.,]\d+)?)\s*(GB|TB)", raw, re.I)
+            if max_mem:
+                value = float(max_mem.group(1).replace(",", ".")) * (1024 if max_mem.group(2).upper() == "TB" else 1)
+                specs["capacidadeMaximaMemoriaGb"] = int(round(value))
+            sata = re.search(r"\b(\d+)\s*[xX]?\s*SATA(?:\s*6G)?\b", raw, re.I)
+            if sata:
+                specs["portasSata"] = int(sata.group(1))
+            m2 = re.search(r"\b(\d+)\s*[xX]?\s*M\.?2\b", raw, re.I)
+            if m2:
+                specs["slotsM2"] = int(m2.group(1))
+            pcie = re.search(r"\bPCIe?\s*([345])(?:[.,]0)?(?:\s*[xX]\s*16)?\b", raw, re.I)
+            if pcie:
+                specs["versaoPcie"] = f"{pcie.group(1)}.0"
+            if re.search(r"\bWi[- ]?Fi(?:\s*[4567](?:E)?)?\b", raw, re.I):
+                specs["wifi"] = True
+            if re.search(r"\bBluetooth(?:\s*[45](?:[.,]\d)?)?\b", raw, re.I):
+                specs["bluetooth"] = True
+            lan = re.search(r"\b((?:1|2[.,]5|5|10)\s*Gb(?:it)?/?s(?:\s+LAN|\s+Ethernet)?|(?:1|2[.,]5|5|10)GbE)\b", raw, re.I)
+            if lan:
+                specs["ethernet"] = lan.group(1).replace(",", ".")
+            if re.search(r"\bXMP\b", raw, re.I):
+                specs["suportaXmp"] = True
+            if re.search(r"\bEXPO\b", raw, re.I):
+                specs["suportaExpo"] = True
+            if re.search(r"\bBIOS\s+Flashback\b|\bFlash\s+BIOS\b|\bQ[- ]Flash\s+Plus\b", raw, re.I):
+                specs["biosFlashback"] = True
+            outputs = []
+            for label, pat in [("HDMI", r"\bHDMI\b"), ("DisplayPort", r"\bDisplay\s*Port\b|\bDP\b"), ("DVI", r"\bDVI\b"), ("VGA", r"\bVGA\b")]:
+                if re.search(pat, raw, re.I):
+                    outputs.append(label)
+            if outputs:
+                specs["saidasVideo"] = outputs
 
         elif categoria == "MEMORIA_RAM":
             ddr = re.search(r"\b(DDR[345])(?:[- ](\d{3,5}))?\b", raw, re.I)
@@ -581,10 +618,48 @@ class DiscoverySourceCatalog:
             bus = re.search(r"\b(\d{2,4})\s*bit\b", raw, re.I)
             if bus:
                 specs["barramentoBits"] = int(bus.group(1))
-            pcie = re.search(r"\bPCIe?\s*(\d)(?:\.0)?\s*[xX]\s*(\d+)\b", raw, re.I)
+            pcie = re.search(r"\bPCIe?\s*(\d)(?:[.,]0)?\s*[xX]\s*(\d+)\b", raw, re.I)
             if pcie:
                 specs["geracaoPcie"] = int(pcie.group(1))
                 specs["larguraPcie"] = int(pcie.group(2))
+            base = re.search(r"(?:Base|GPU)\s*Clock\D{0,12}(\d{3,5})\s*MHz", raw, re.I)
+            boost = re.search(r"(?:Boost|Game)\s*Clock\D{0,12}(\d{3,5})\s*MHz", raw, re.I)
+            if base:
+                specs["clockBaseMhz"] = int(base.group(1))
+            if boost:
+                specs["clockBoostMhz"] = int(boost.group(1))
+            length = re.search(r"(?:Length|Comprimento)\D{0,12}(\d+(?:[.,]\d+)?)\s*(mm|cm)", raw, re.I)
+            if length:
+                v = float(length.group(1).replace(",", ".")) * (10 if length.group(2).lower() == "cm" else 1)
+                specs["comprimentoMm"] = round(v, 2)
+            slots = (
+                re.search(r"\b(\d(?:[.,]\d+)?)\s*slots?\b", raw, re.I)
+                or re.search(r"(?:Slot\s+width|Thickness)\D{0,12}(\d(?:[.,]\d+)?)\s*(?:slots?)?", raw, re.I)
+            )
+            if slots:
+                specs["slotsOcupados"] = float(slots.group(1).replace(",", "."))
+            rec = re.search(r"(?:Recommended\s+PSU|Fonte\s+recomendada)\D{0,14}(\d{3,4})\s*W", raw, re.I)
+            if rec:
+                specs["potenciaFonteRecomendadaWatts"] = int(rec.group(1))
+            # Conectores e saídas só entram quando a quantidade é explícita.
+            for field, pat in [
+                ("conectoresPcie8Pinos", r"\b(\d+)\s*[xX]\s*(?:8[- ]?pin|8\s*pinos?)\b"),
+                ("conectoresPcie6Pinos", r"\b(\d+)\s*[xX]\s*(?:6[- ]?pin|6\s*pinos?)\b"),
+                ("conectores12vhpwr", r"\b(\d+)\s*[xX]\s*12VHPWR\b"),
+                ("conectores12v2x6", r"\b(\d+)\s*[xX]\s*12V[- ]?2x6\b"),
+                ("hdmi", r"\b(\d+)\s*[xX]\s*HDMI\b"),
+                ("displayPort", r"\b(\d+)\s*[xX]\s*(?:DisplayPort|DP)\b"),
+            ]:
+                m = re.search(pat, raw, re.I)
+                if m:
+                    specs[field] = int(m.group(1))
+            outs = []
+            if specs.get("hdmi"):
+                outs.append(f"{specs['hdmi']}x HDMI")
+            if specs.get("displayPort"):
+                outs.append(f"{specs['displayPort']}x DisplayPort")
+            if outs:
+                specs["saidasVideo"] = outs
 
         elif categoria == "ARMAZENAMENTO":
             # Aceita GB/TB e NVMe/NVM/SATA.
@@ -624,6 +699,16 @@ class DiscoverySourceCatalog:
                 specs["leituraSequencialMbps"] = int(read.group(1))
             if write:
                 specs["escritaSequencialMbps"] = int(write.group(1))
+            key = re.search(r"(?:M\.?2\s+)?Key\s*[: -]?\s*([BME])\b|\b([BME])[- ]Key\b", raw, re.I)
+            if key:
+                specs["chaveM2"] = (key.group(1) or key.group(2)).upper()
+            if re.search(r"\b(?:with\s+)?heatsink\b|\bcom\s+dissipador\b", raw, re.I):
+                specs["possuiDissipador"] = True
+            elif re.search(r"\bwithout\s+heatsink\b|\bsem\s+dissipador\b", raw, re.I):
+                specs["possuiDissipador"] = False
+            power = re.search(r"(?:Power|Consumo)\D{0,12}(\d+(?:[.,]\d+)?)\s*W", raw, re.I)
+            if power:
+                specs["consumoWatts"] = float(power.group(1).replace(",", "."))
 
         elif categoria == "FONTE":
             fmt_match = re.search(r"\b(ATX(?: PS/2)?|SFX(?:-L)?|TFX|Flex-?ATX|PS/2)\b", raw, re.I)
@@ -643,9 +728,30 @@ class DiscoverySourceCatalog:
                 specs["modularidade"] = "NAO_MODULAR"
             elif re.search(r"\bmodular\b", low):
                 specs["modularidade"] = "MODULAR"
-            atx_standard = re.search(r"\bATX\s*(3\.[01])\b", raw, re.I)
+            atx_standard = re.search(r"\bATX\s*(\d(?:[.,]\d+)?)\b", raw, re.I)
             if atx_standard:
-                specs["padraoAtx"] = atx_standard.group(1)
+                specs["padraoAtx"] = atx_standard.group(1).replace(",", ".")
+            eff = re.search(r"(?:Efficiency|Efici[eê]ncia)\D{0,12}(\d{2,3}(?:[.,]\d+)?)\s*%", raw, re.I)
+            if eff:
+                specs["eficienciaPercentual"] = float(eff.group(1).replace(",", "."))
+            for field, pat in [
+                ("conectoresAtx24Pinos", r"\b(\d+)\s*[xX]\s*(?:ATX\s*)?24[- ]?pin\b"),
+                ("conectoresEpsCpu", r"\b(\d+)\s*[xX]\s*(?:EPS|CPU)\s*(?:4\+4|8)[- ]?pin\b"),
+                ("conectoresPcie8Pinos", r"\b(\d+)\s*[xX]\s*(?:PCIe?\s*)?(?:6\+2|8)[- ]?pin\b"),
+                ("conectores12vhpwr", r"\b(\d+)\s*[xX]\s*12VHPWR\b"),
+                ("conectores12v2x6", r"\b(\d+)\s*[xX]\s*12V[- ]?2x6\b"),
+                ("conectoresSata", r"\b(\d+)\s*[xX]\s*SATA(?:\s+power)?\b"),
+                ("conectoresMolex", r"\b(\d+)\s*[xX]\s*Molex\b"),
+            ]:
+                m = re.search(pat, raw, re.I)
+                if m:
+                    specs[field] = int(m.group(1))
+            prots = [x.upper() for x in re.findall(r"\b(OVP|UVP|OCP|OPP|OTP|SCP|SIP)\b", raw, re.I)]
+            if prots:
+                specs["protecoes"] = list(dict.fromkeys(prots))
+            vin = re.search(r"(?:Input(?:\s+Voltage)?|Tens[aã]o\s+de\s+entrada)\D{0,8}(\d{2,3}\s*[-–]\s*\d{2,3}\s*V)", raw, re.I)
+            if vin:
+                specs["tensaoEntrada"] = re.sub(r"\s+", "", vin.group(1)).replace("–", "-")
 
         elif categoria == "GABINETE":
             low = raw.casefold()
@@ -665,6 +771,32 @@ class DiscoverySourceCatalog:
                     boards.append(norm)
             if boards:
                 specs["formatosPlacaMaeSuportados"] = boards
+            psu_formats = []
+            for token in re.findall(r"\b(?:ATX|SFX(?:-L)?|TFX|Flex-?ATX)\b", raw, re.I):
+                norm = token.upper().replace("-", "_")
+                if norm not in psu_formats:
+                    psu_formats.append(norm)
+            if psu_formats:
+                specs["formatosFonteSuportados"] = psu_formats
+            dims = re.search(r"(?:Dimensions?|Dimens[oõ]es)\D{0,10}(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*mm", raw, re.I)
+            if dims:
+                # Ordem de gabinete mais comum em fichas: H x W x D.
+                specs["alturaMm"] = float(dims.group(1).replace(",", "."))
+                specs["larguraMm"] = float(dims.group(2).replace(",", "."))
+                specs["profundidadeMm"] = float(dims.group(3).replace(",", "."))
+            for field, pat in [
+                ("comprimentoMaximoGpuMm", r"(?:Max(?:imum)?\s+GPU(?:\s+Length)?|GPU\s+Clearance|Comprimento\s+m[aá]ximo\s+(?:da\s+)?GPU)\D{0,12}(\d+(?:[.,]\d+)?)\s*mm"),
+                ("alturaMaximaCoolerCpuMm", r"(?:CPU\s+Cooler\s+Clearance|Max(?:imum)?\s+CPU\s+Cooler(?:\s+Height)?|Altura\s+m[aá]xima\s+(?:do\s+)?cooler)\D{0,12}(\d+(?:[.,]\d+)?)\s*mm"),
+                ("comprimentoMaximoFonteMm", r"(?:Max(?:imum)?\s+PSU(?:\s+Length)?|PSU\s+Clearance|Comprimento\s+m[aá]ximo\s+(?:da\s+)?fonte)\D{0,12}(\d+(?:[.,]\d+)?)\s*mm"),
+            ]:
+                m = re.search(pat, raw, re.I)
+                if m:
+                    specs[field] = float(m.group(1).replace(",", "."))
+            rear = re.search(r"(?:Expansion\s+Slots?|Slots?\s+traseiros?)\D{0,8}(\d+)", raw, re.I)
+            if rear:
+                specs["slotsTraseiros"] = int(rear.group(1))
+            if re.search(r"\bvertical\s+GPU\b|\bGPU\s+vertical\b", raw, re.I):
+                specs["suportaGpuVertical"] = True
             if "tempered glass" in low or "window" in low:
                 # Informação útil fica no nome/descrição, mas não existe campo de vidro no schema.
                 pass

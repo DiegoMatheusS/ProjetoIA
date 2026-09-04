@@ -1,3 +1,10 @@
+## v14.20.6 - normalização ampla e fichas técnicas
+
+- Normaliza variações de enum, unidade, booleano e data antes do DTO.
+- Reforça parser de placa-mãe, GPU, armazenamento, fonte e gabinete.
+- Fichas abaixo de 65% podem tentar uma terceira fonte dentro do mesmo orçamento global.
+- 291 testes passam na raiz e em `produto_IA`.
+
 ## v14.20.4 - fichas mais ricas + payload compatível com DTO
 
 - Reforça RAM, placa de vídeo e placa-mãe sem regredir o processador.

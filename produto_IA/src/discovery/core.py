@@ -314,11 +314,18 @@ class HardwareDiscoveryService:
         already_used_sources = {candidate.fonte}
         already_used_sources.update(str(source.get("fonte") or "").strip().upper() for source in reference_sources if source.get("fonte"))
         if enrich and not enrichment_disabled and identity_is_strong(identity) and technical_missing_fields(result):
+            coverage_before_enrichment = technical_coverage(result)
+            # v14.20.6: ficha realmente fraca (<65%) ganha uma terceira tentativa
+            # técnica, mas dentro do MESMO orçamento global. Fichas já razoáveis
+            # continuam com duas fontes para preservar velocidade.
+            adaptive_sources = self.detail_enrichment_sources
+            if bulk_mode and coverage_before_enrichment < 0.65:
+                adaptive_sources = max(adaptive_sources, 3)
             enricher = TechnicalEnricher(
                 auto_mode=True,
                 total_timeout_override=self.detail_enrichment_timeout,
-                max_sources_override=self.detail_enrichment_sources,
-                source_timeout_override=max(2, int(self.detail_enrichment_timeout / max(1, self.detail_enrichment_sources))),
+                max_sources_override=adaptive_sources,
+                source_timeout_override=max(2, int(self.detail_enrichment_timeout / max(1, adaptive_sources))),
                 target_coverage_override=self.bulk_target_coverage if bulk_mode else 1.0,
                 excluded_sources=already_used_sources if bulk_mode else None,
             )

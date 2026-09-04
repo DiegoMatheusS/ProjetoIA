@@ -1,0 +1,35 @@
+CriaByte Produto IA v14.20.6 SAFE
+
+Objetivos desta atualização:
+- aceitar formatos técnicos equivalentes antes de montar o DTO do CriaByte;
+- melhorar extração de placa-mãe, GPU, armazenamento, fonte e gabinete;
+- manter RAM/processador já melhorados;
+- dar uma terceira tentativa de fonte somente para fichas abaixo de 65%, sem ampliar o orçamento global da busca.
+
+Normalização adicionada/reforçada:
+- DDR4, ddr4, Ddr4, DDR 4 -> DDR4;
+- DDR4/DDR5, DDR4 + DDR5, listas -> [DDR4, DDR5];
+- GHz/MHz/MT/s -> MHz;
+- TB/GB/MB -> GB quando o campo exige GB;
+- GB/MB/KB -> MB para cache;
+- cm/mm -> mm;
+- kW/W -> W;
+- booleanos em português/inglês, maiúsculas/minúsculas;
+- formatos de placa-mãe, memória, fonte e armazenamento;
+- interface NVMe/SATA/SAS;
+- chave M.2 B/M/B_M;
+- modularidade da fonte;
+- tipo de cooler e conector de ventoinha;
+- datas completas ISO/inglês/português; ano ou mês/ano continuam null para não inventar data.
+
+Parser de catálogo reforçado:
+- PLACA_MAE: capacidade RAM, DIMM/SO-DIMM, SATA, M.2, PCIe, Wi-Fi, Bluetooth, Ethernet, XMP, EXPO, BIOS Flashback, saídas de vídeo;
+- PLACA_VIDEO: clocks, PCIe/largura, comprimento, slots, fonte recomendada, conectores e saídas;
+- ARMAZENAMENTO: chave M.2, dissipador, consumo, PCIe, leitura/escrita;
+- FONTE: ATX, eficiência, conectores, proteções e tensão de entrada;
+- GABINETE: dimensões, formatos, clearance GPU/cooler/fonte, slots e GPU vertical.
+
+Validação:
+- raiz: 291/291 testes passaram;
+- produto_IA: 291/291 testes passaram;
+- compileall src: OK nas duas estruturas.
