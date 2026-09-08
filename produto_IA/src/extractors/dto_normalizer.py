@@ -100,6 +100,9 @@ def _to_bool(value: Any):
     return None
 
 
+VALID_MEMORY_TYPES = {"DDR3", "DDR4", "DDR5"}
+
+
 def _memory_types(value: Any):
     values = value if isinstance(value, (list, tuple, set)) else [value]
     found = []
@@ -739,9 +742,41 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     if category in {"PROCESSADOR", "PLACA_MAE"}:
         memory = _memory_types(specs.get("tiposMemoriaSuportados"))
         specs["tiposMemoriaSuportados"] = [
-            value for value in (memory or []) if value in {"DDR3", "DDR4", "DDR5"}
+            value for value in (memory or []) if value in VALID_MEMORY_TYPES
         ] or None
 
     output["categoria"] = category
     output[spec_field] = specs
     return output
+
+
+def registration_payload_issues(category: str | None, payload: dict | None) -> list[str]:
+    """Valida somente requisitos que NÃO podem sair inválidos da Produto IA.
+
+    Esta checagem acontece depois da normalização e antes da resposta HTTP da
+    descoberta. O objetivo é impedir que o frontend receba um payload que o DTO
+    do CriaByte certamente recusará.
+
+    Hoje a barreira rígida cobre ``tiposMemoriaSuportados`` para PROCESSADOR e
+    PLACA_MAE: é campo obrigatório, deve ser array não vazio e conter apenas
+    DDR3/DDR4/DDR5. A Produto IA nunca inventa o tipo; se não confirmar pelo
+    menos um valor válido, o candidato não é exposto como cadastrável.
+    """
+    category = str(category or (payload or {}).get("categoria") or "").upper()
+    if category not in {"PROCESSADOR", "PLACA_MAE"}:
+        return []
+
+    spec_field = SPEC_FIELD_BY_HARDWARE_CATEGORY.get(category)
+    specs = (payload or {}).get(spec_field) if spec_field else None
+    if not isinstance(specs, dict):
+        return [f"{spec_field or 'especificacao'}.tiposMemoriaSuportados ausente"]
+
+    value = specs.get("tiposMemoriaSuportados")
+    if not isinstance(value, list) or not value:
+        return [f"{spec_field}.tiposMemoriaSuportados deve ser array não vazio"]
+
+    invalid = [item for item in value if item not in VALID_MEMORY_TYPES]
+    if invalid:
+        return [f"{spec_field}.tiposMemoriaSuportados contém valor inválido: {invalid}"]
+
+    return []

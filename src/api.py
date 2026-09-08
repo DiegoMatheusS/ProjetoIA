@@ -13,7 +13,7 @@ from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
-from .extractors.dto_normalizer import normalize_hardware_payload_for_backend
+from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
 
 
 app = FastAPI(
@@ -96,11 +96,19 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     items = result.get("itens")
     if not isinstance(items, list):
         return result
+    safe_items = []
+    discarded = 0
     for item in items:
         if not isinstance(item, dict):
             continue
         raw = item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware")
         safe = normalize_hardware_payload_for_backend(category, raw if isinstance(raw, dict) else {})
+        # Última barreira HTTP: item inválido não é serializado. Isso garante que
+        # tiposMemoriaSuportados nunca saia null/[]/string/enum composto para o
+        # backend CriaByte nas categorias onde o campo é obrigatório.
+        if registration_payload_issues(category, safe):
+            discarded += 1
+            continue
         item["payload"] = safe
         item["payloadHardware"] = safe
         spec_field = {
@@ -116,6 +124,11 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
         }.get(category)
         if spec_field and isinstance(safe.get(spec_field), dict):
             item["especificacoesEncontradas"] = safe[spec_field]
+        safe_items.append(item)
+    result["itens"] = safe_items
+    result["quantidadeRetornada"] = len(safe_items)
+    if discarded:
+        result["descartadosPayloadObrigatorio"] = int(result.get("descartadosPayloadObrigatorio") or 0) + discarded
     return result
 
 

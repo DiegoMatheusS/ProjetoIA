@@ -458,6 +458,23 @@ class DiscoverySourceCatalog:
             if tdp:
                 specs["tdpWatts"] = int(tdp.group(1))
 
+            # Alguns cards do PC-Kombo trazem o controlador de memória no próprio
+            # resumo (DDR4, DDR5, DDR4/DDR5, DDR5-5600 etc.). Capturamos isso já
+            # no catálogo para evitar depender da abertura individual da ficha.
+            mem_matches = re.findall(r"\bDDR\s*[-_ ]?([345])(?:\s*[-_/ ]\s*(\d{3,5}))?\b", raw, re.I)
+            if mem_matches:
+                mem_types = []
+                mem_freqs = []
+                for generation, frequency in mem_matches:
+                    value = f"DDR{generation}"
+                    if value not in mem_types:
+                        mem_types.append(value)
+                    if frequency:
+                        mem_freqs.append(int(frequency))
+                specs["tiposMemoriaSuportados"] = mem_types
+                if mem_freqs:
+                    specs["frequenciaMemoriaMaximaMhz"] = max(mem_freqs)
+
         elif categoria == "PLACA_MAE":
             m = re.search(
                 r"\b(E-ATX|ATX|Micro-ATX|Mini-ATX|Mini-ITX|Mini-DTX|ITX|CEB|EEB|XL-ATX)\s+Socket\s+(.+?)\s+Chipset\s+([^ ]+)\s+(\d+)\s+Ramslots\b",

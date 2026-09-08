@@ -47,7 +47,10 @@ PROVIDER_PRIORITY = {
     # enriquecimento. Colocamos primeiro as fontes técnicas especializadas que
     # realmente costumam preencher lacunas, mantendo o MESMO número máximo de
     # consultas para não voltar a aumentar a latência.
-    "PROCESSADOR": ["ICECAT", "CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    # CPU: prioriza fontes especializadas capazes de confirmar memória/sockets.
+    # Icecat fica como fallback; em lote ele consumia uma tentativa sem resolver
+    # tiposMemoriaSuportados em vários modelos.
+    "PROCESSADOR": ["CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
     "PLACA_VIDEO": ["ICECAT", "TECHPOWERUP", "GEIZHALS", "WIKICHIP", "FABRICANTE_OFICIAL", "PC_KOMBO"],
     "PLACA_MAE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
     "MEMORIA_RAM": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],

@@ -321,6 +321,13 @@ class HardwareDiscoveryService:
             adaptive_sources = self.detail_enrichment_sources
             if bulk_mode and coverage_before_enrichment < 0.65:
                 adaptive_sources = max(adaptive_sources, 3)
+            # v14.20.7: tiposMemoriaSuportados é obrigatório em CPU/placa-mãe.
+            # Mesmo com cobertura razoável, continue tentando fontes técnicas se
+            # esse campo ainda estiver ausente. O orçamento total continua igual.
+            current_specs = result.get("especificacoesEncontradas") or {}
+            if bulk_mode and categoria in {"PROCESSADOR", "PLACA_MAE"} \
+                    and not current_specs.get("tiposMemoriaSuportados"):
+                adaptive_sources = max(adaptive_sources, 5)
             enricher = TechnicalEnricher(
                 auto_mode=True,
                 total_timeout_override=self.detail_enrichment_timeout,
@@ -589,6 +596,7 @@ class HardwareDiscoveryService:
                     item["avisos"].append("Detalhamento técnico não concluiu dentro do orçamento desta busca; tente detalhar este item individualmente.")
             if required_missing:
                 item["avisos"].append("Ficha técnica ainda parcial após as consultas disponíveis; revise os campos ausentes antes do cadastro.")
+
             items.append(item)
 
         items = self._dedupe_items(items)

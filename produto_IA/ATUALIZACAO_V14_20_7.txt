@@ -1,0 +1,29 @@
+Projeto IA v14.20.7 SAFE
+
+Correção principal:
+- tiposMemoriaSuportados é obrigatório em PROCESSADOR e PLACA_MAE.
+- A Produto IA normaliza variações como DDR4, ddr4, Ddr4, DDR 4,
+  DDR4/DDR5, DDR4 + DDR5 e DDR5-5600.
+- O payload de cadastro só aceita array não vazio com DDR3, DDR4 e/ou DDR5.
+- Se nenhuma geração válida for confirmada, o candidato NÃO é devolvido ao
+  frontend como cadastrável; ele é descartado da resposta de descoberta.
+- A barreira HTTP repete a validação para impedir regressões.
+- PC-Kombo agora aproveita DDR e frequência de memória quando já aparecem no
+  resumo do processador.
+- Processadores priorizam CPU-Monkey, CPU-World e WikiChip antes de Icecat para
+  aumentar a chance de preencher o controlador de memória.
+- Quando tiposMemoriaSuportados está ausente, a descoberta pode tentar até 5
+  fontes dentro do mesmo orçamento total de tempo.
+
+Nunca sai no payload cadastrável:
+- null
+- []
+- "DDR5"
+- ["DDR4/DDR5"]
+- ["DDR5-5600"]
+
+Saídas válidas:
+- ["DDR3"]
+- ["DDR4"]
+- ["DDR5"]
+- ["DDR4", "DDR5"]

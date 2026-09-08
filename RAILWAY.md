@@ -1,3 +1,11 @@
+# v14.20.7 — campo obrigatório tiposMemoriaSuportados
+
+- PROCESSADOR e PLACA_MAE: `tiposMemoriaSuportados` só sai no payload HTTP como array não vazio de `DDR3`, `DDR4` e/ou `DDR5`.
+- Normaliza `DDR4`, `ddr4`, `Ddr4`, `DDR 4`, `DDR4/DDR5`, `DDR4 + DDR5` e `DDR5-5600`.
+- Se o dado obrigatório não puder ser confirmado, o candidato é removido da resposta HTTP de descoberta em vez de enviar `null`/`[]` ao backend.
+- Processadores passam a priorizar CPU-Monkey, CPU-World e WikiChip e podem tentar até 5 fontes dentro do mesmo orçamento quando o tipo de memória estiver ausente.
+- O resumo do PC-Kombo agora também captura DDR e a frequência máxima de memória quando presentes no card do processador.
+
 ## v14.20.4 - fichas mais ricas + payload compatível com DTO
 
 - Reforça RAM, placa de vídeo e placa-mãe sem regredir o processador.
