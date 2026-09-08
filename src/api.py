@@ -89,28 +89,45 @@ def _validate_api_key(x_api_key: str | None) -> None:
 def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[str, Any]:
     """Última barreira HTTP da descoberta.
 
-    O backend CriaByte reenvia ``item.payload`` ao DTO de cadastro. Por isso o
-    objeto é normalizado imediatamente antes da serialização HTTP, mesmo que o
-    núcleo já tenha feito a mesma proteção.
+    O hardware deve continuar visível mesmo quando uma ficha obrigatória ainda
+    estiver incompleta. Porém o payload nunca deve serializar
+    ``tiposMemoriaSuportados: null`` (nem string/array composto). Itens que ainda
+    não possuem um valor confirmado são marcados explicitamente como não
+    cadastráveis, sem serem removidos da busca.
     """
     items = result.get("itens")
     if not isinstance(items, list):
         return result
+
     safe_items = []
-    discarded = 0
+    registerable = 0
+    incomplete = 0
     for item in items:
         if not isinstance(item, dict):
             continue
         raw = item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware")
         safe = normalize_hardware_payload_for_backend(category, raw if isinstance(raw, dict) else {})
-        # Última barreira HTTP: item inválido não é serializado. Isso garante que
-        # tiposMemoriaSuportados nunca saia null/[]/string/enum composto para o
-        # backend CriaByte nas categorias onde o campo é obrigatório.
-        if registration_payload_issues(category, safe):
-            discarded += 1
-            continue
+        issues = registration_payload_issues(category, safe)
+
         item["payload"] = safe
         item["payloadHardware"] = safe
+        item["cadastravel"] = not bool(issues)
+        item["cadastroBloqueado"] = bool(issues)
+        item["motivosNaoCadastravel"] = list(issues)
+
+        avisos = list(item.get("avisos") or [])
+        if issues:
+            incomplete += 1
+            aviso = (
+                "Cadastro bloqueado: falta confirmar campo obrigatório da ficha técnica. "
+                "O hardware continua visível para revisão e nova tentativa de enriquecimento."
+            )
+            if aviso not in avisos:
+                avisos.append(aviso)
+        else:
+            registerable += 1
+        item["avisos"] = avisos
+
         spec_field = {
             "PROCESSADOR": "especificacaoProcessador",
             "PLACA_MAE": "especificacaoPlacaMae",
@@ -125,10 +142,14 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
         if spec_field and isinstance(safe.get(spec_field), dict):
             item["especificacoesEncontradas"] = safe[spec_field]
         safe_items.append(item)
+
     result["itens"] = safe_items
     result["quantidadeRetornada"] = len(safe_items)
-    if discarded:
-        result["descartadosPayloadObrigatorio"] = int(result.get("descartadosPayloadObrigatorio") or 0) + discarded
+    result["quantidadeCadastravel"] = registerable
+    result["quantidadeComCadastroBloqueado"] = incomplete
+    # Mantém o campo antigo apenas como diagnóstico de compatibilidade, mas não
+    # há mais descarte por campo obrigatório na v14.20.8.
+    result["descartadosPayloadObrigatorio"] = 0
     return result
 
 

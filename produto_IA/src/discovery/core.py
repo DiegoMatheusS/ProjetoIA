@@ -319,20 +319,39 @@ class HardwareDiscoveryService:
             # técnica, mas dentro do MESMO orçamento global. Fichas já razoáveis
             # continuam com duas fontes para preservar velocidade.
             adaptive_sources = self.detail_enrichment_sources
+            enrichment_timeout = self.detail_enrichment_timeout
             if bulk_mode and coverage_before_enrichment < 0.65:
                 adaptive_sources = max(adaptive_sources, 3)
-            # v14.20.7: tiposMemoriaSuportados é obrigatório em CPU/placa-mãe.
-            # Mesmo com cobertura razoável, continue tentando fontes técnicas se
-            # esse campo ainda estiver ausente. O orçamento total continua igual.
+
             current_specs = result.get("especificacoesEncontradas") or {}
-            if bulk_mode and categoria in {"PROCESSADOR", "PLACA_MAE"} \
+            weak_search_categories = {
+                "PLACA_VIDEO", "PLACA_MAE", "ARMAZENAMENTO", "FONTE",
+                "GABINETE", "COOLER", "VENTOINHA",
+            }
+            # v14.20.8: fichas fracas dessas categorias consultam mais fontes com
+            # tempo suficiente por fonte. RAM não entra nesta regra nova.
+            if bulk_mode and categoria in weak_search_categories:
+                if coverage_before_enrichment < 0.55:
+                    adaptive_sources = max(adaptive_sources, 4)
+                    enrichment_timeout = max(enrichment_timeout, 12.0)
+                elif coverage_before_enrichment < 0.75:
+                    adaptive_sources = max(adaptive_sources, 3)
+                    enrichment_timeout = max(enrichment_timeout, 9.0)
+
+            # PROCESSADOR: não filtra mais a CPU quando a memória ainda não foi
+            # confirmada. Antes disso, dá uma busca técnica reforçada para tentar
+            # preencher o campo obrigatório com fonte real, sem inventar dado.
+            if bulk_mode and categoria == "PROCESSADOR" \
                     and not current_specs.get("tiposMemoriaSuportados"):
-                adaptive_sources = max(adaptive_sources, 5)
+                adaptive_sources = max(adaptive_sources, 4)
+                enrichment_timeout = max(enrichment_timeout, 12.0)
+
+            per_source_timeout = max(2, int(enrichment_timeout / max(1, adaptive_sources)))
             enricher = TechnicalEnricher(
                 auto_mode=True,
-                total_timeout_override=self.detail_enrichment_timeout,
+                total_timeout_override=enrichment_timeout,
                 max_sources_override=adaptive_sources,
-                source_timeout_override=max(2, int(self.detail_enrichment_timeout / max(1, adaptive_sources))),
+                source_timeout_override=per_source_timeout,
                 target_coverage_override=self.bulk_target_coverage if bulk_mode else 1.0,
                 excluded_sources=already_used_sources if bulk_mode else None,
             )

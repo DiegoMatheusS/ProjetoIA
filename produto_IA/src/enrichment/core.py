@@ -50,15 +50,19 @@ PROVIDER_PRIORITY = {
     # CPU: prioriza fontes especializadas capazes de confirmar memória/sockets.
     # Icecat fica como fallback; em lote ele consumia uma tentativa sem resolver
     # tiposMemoriaSuportados em vários modelos.
-    "PROCESSADOR": ["CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
-    "PLACA_VIDEO": ["ICECAT", "TECHPOWERUP", "GEIZHALS", "WIKICHIP", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "PLACA_MAE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "PROCESSADOR": ["CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "FABRICANTE_OFICIAL", "GEIZHALS", "ICECAT", "PC_KOMBO"],
+    # GPU: TechPowerUp/Geizhals normalmente têm ficha técnica mais densa que o
+    # Icecat para clocks, VRAM, barramento, TGP, dimensões e conectores.
+    "PLACA_VIDEO": ["TECHPOWERUP", "GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "WIKICHIP", "PC_KOMBO"],
+    # Demais categorias com baixa cobertura: prioriza catálogo técnico + ficha
+    # oficial antes do Icecat. RAM permanece com a ordem já aprovada.
+    "PLACA_MAE": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
     "MEMORIA_RAM": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "ARMAZENAMENTO": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "FONTE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "GABINETE": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "COOLER": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
-    "VENTOINHA": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
+    "ARMAZENAMENTO": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
+    "FONTE": ["FABRICANTE_OFICIAL", "GEIZHALS", "ICECAT", "PC_KOMBO"],
+    "GABINETE": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
+    "COOLER": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
+    "VENTOINHA": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
 }
 
 

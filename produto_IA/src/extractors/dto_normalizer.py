@@ -716,9 +716,10 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     um enum composto (ex.: ``DDR4/DDR5``), esta função normaliza novamente o
     bloco técnico *aninhado* que será reenviado pelo frontend ao Nest.
 
-    Não inventa dados: valores incompatíveis viram ``None``. Em especial,
-    ``tiposMemoriaSuportados`` de PROCESSADOR/PLACA_MAE nunca pode sair com
-    itens fora de DDR3/DDR4/DDR5.
+    Não inventa dados. Em especial, ``tiposMemoriaSuportados`` de
+    PROCESSADOR/PLACA_MAE nunca pode sair como ``null`` nem com itens fora de
+    DDR3/DDR4/DDR5. Quando a geração não foi confirmada, a chave é omitida do
+    payload de cadastro e o item é marcado como não cadastrável pela API.
     """
     category = str(category or (payload or {}).get("categoria") or "").upper()
     output = dict(payload or {})
@@ -739,11 +740,19 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
         specs = {field: specs.get(field) for field in expected}
 
     # Defesa explícita para o erro real visto no DTO do Nest.
+    # Campo obrigatório desconhecido NÃO pode virar null/[]/string. Se ainda não
+    # foi confirmado, omitimos a chave e a barreira HTTP marca a ficha como não
+    # cadastrável. Assim o hardware continua visível sem produzir um payload que
+    # finja possuir um valor válido.
     if category in {"PROCESSADOR", "PLACA_MAE"}:
-        memory = _memory_types(specs.get("tiposMemoriaSuportados"))
-        specs["tiposMemoriaSuportados"] = [
-            value for value in (memory or []) if value in VALID_MEMORY_TYPES
-        ] or None
+        memory = [
+            value for value in (_memory_types(specs.get("tiposMemoriaSuportados")) or [])
+            if value in VALID_MEMORY_TYPES
+        ]
+        if memory:
+            specs["tiposMemoriaSuportados"] = memory
+        else:
+            specs.pop("tiposMemoriaSuportados", None)
 
     output["categoria"] = category
     output[spec_field] = specs

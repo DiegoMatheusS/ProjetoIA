@@ -55,7 +55,7 @@ def test_required_processor_memory_missing_or_invalid_is_not_registration_safe(r
     assert registration_payload_issues("PROCESSADOR", payload)
 
 
-def test_http_guard_drops_processor_item_instead_of_sending_null_memory_types():
+def test_http_guard_keeps_processor_visible_without_sending_null_memory_types():
     result = {
         "itens": [
             {
@@ -82,11 +82,18 @@ def test_http_guard_drops_processor_item_instead_of_sending_null_memory_types():
         "quantidadeRetornada": 2,
     }
     out = _sanitize_discovery_result("PROCESSADOR", result)
-    assert out["quantidadeRetornada"] == 1
-    assert len(out["itens"]) == 1
-    spec = out["itens"][0]["payload"]["especificacaoProcessador"]
-    assert spec["tiposMemoriaSuportados"] == ["DDR5"]
-    assert out["descartadosPayloadObrigatorio"] == 1
+    assert out["quantidadeRetornada"] == 2
+    assert len(out["itens"]) == 2
+    incomplete = out["itens"][0]
+    incomplete_spec = incomplete["payload"]["especificacaoProcessador"]
+    assert "tiposMemoriaSuportados" not in incomplete_spec
+    assert incomplete["cadastravel"] is False
+    assert incomplete["cadastroBloqueado"] is True
+    assert incomplete["motivosNaoCadastravel"]
+    valid = out["itens"][1]
+    assert valid["payload"]["especificacaoProcessador"]["tiposMemoriaSuportados"] == ["DDR5"]
+    assert valid["cadastravel"] is True
+    assert out["descartadosPayloadObrigatorio"] == 0
 
 
 class _CatalogMissingRequiredMemory:
@@ -105,7 +112,7 @@ class _CatalogMissingRequiredMemory:
         ], []
 
 
-def test_http_discovery_does_not_expose_uncadastrable_processor_payload_with_null_memory():
+def test_http_discovery_keeps_uncadastrable_processor_visible_without_null_memory():
     service = HardwareDiscoveryService(catalog=_CatalogMissingRequiredMemory())
     internal = service.discover(
         "PROCESSADOR",
@@ -116,11 +123,16 @@ def test_http_discovery_does_not_expose_uncadastrable_processor_payload_with_nul
     )
     # O núcleo pode manter a ficha para diagnóstico/revisão interna.
     assert len(internal["itens"]) == 1
-    # Mas a resposta HTTP real nunca serializa o payload obrigatório inválido.
+    # A resposta HTTP mantém a CPU visível, mas não serializa o campo obrigatório
+    # como null e marca claramente que o cadastro está bloqueado.
     out = _sanitize_discovery_result("PROCESSADOR", internal)
-    assert out["itens"] == []
-    assert out["quantidadeRetornada"] == 0
-    assert out["descartadosPayloadObrigatorio"] == 1
+    assert len(out["itens"]) == 1
+    assert out["quantidadeRetornada"] == 1
+    item = out["itens"][0]
+    assert item["cadastravel"] is False
+    assert item["cadastroBloqueado"] is True
+    assert "tiposMemoriaSuportados" not in item["payload"]["especificacaoProcessador"]
+    assert out["descartadosPayloadObrigatorio"] == 0
 
 
 def test_pc_kombo_cpu_catalog_summary_extracts_memory_types_and_frequency():
