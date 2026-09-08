@@ -717,9 +717,10 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     bloco técnico *aninhado* que será reenviado pelo frontend ao Nest.
 
     Não inventa dados. Em especial, ``tiposMemoriaSuportados`` de
-    PROCESSADOR/PLACA_MAE nunca pode sair como ``null`` nem com itens fora de
-    DDR3/DDR4/DDR5. Quando a geração não foi confirmada, a chave é omitida do
-    payload de cadastro e o item é marcado como não cadastrável pela API.
+    PROCESSADOR/PLACA_MAE nunca pode sair como ``null``, string simples ou com
+    itens fora de DDR3/DDR4/DDR5. Quando a geração não foi confirmada, o campo
+    permanece presente como ``[]`` ("não informado"), conforme o contrato atual
+    do backend do CriaByte.
     """
     category = str(category or (payload or {}).get("categoria") or "").upper()
     output = dict(payload or {})
@@ -739,20 +740,16 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     if expected:
         specs = {field: specs.get(field) for field in expected}
 
-    # Defesa explícita para o erro real visto no DTO do Nest.
-    # Campo obrigatório desconhecido NÃO pode virar null/[]/string. Se ainda não
-    # foi confirmado, omitimos a chave e a barreira HTTP marca a ficha como não
-    # cadastrável. Assim o hardware continua visível sem produzir um payload que
-    # finja possuir um valor válido.
+    # Contrato atual do CriaByte: o campo deve SEMPRE existir e ser array.
+    # Se a geração foi confirmada, enviamos apenas enums válidos. Se não foi,
+    # enviamos [] para representar "não informado". Nunca enviamos null, string
+    # simples, valor composto (DDR4/DDR5) nem frequência (DDR5-5600).
     if category in {"PROCESSADOR", "PLACA_MAE"}:
         memory = [
             value for value in (_memory_types(specs.get("tiposMemoriaSuportados")) or [])
             if value in VALID_MEMORY_TYPES
         ]
-        if memory:
-            specs["tiposMemoriaSuportados"] = memory
-        else:
-            specs.pop("tiposMemoriaSuportados", None)
+        specs["tiposMemoriaSuportados"] = memory
 
     output["categoria"] = category
     output[spec_field] = specs
@@ -766,10 +763,10 @@ def registration_payload_issues(category: str | None, payload: dict | None) -> l
     descoberta. O objetivo é impedir que o frontend receba um payload que o DTO
     do CriaByte certamente recusará.
 
-    Hoje a barreira rígida cobre ``tiposMemoriaSuportados`` para PROCESSADOR e
-    PLACA_MAE: é campo obrigatório, deve ser array não vazio e conter apenas
-    DDR3/DDR4/DDR5. A Produto IA nunca inventa o tipo; se não confirmar pelo
-    menos um valor válido, o candidato não é exposto como cadastrável.
+    A barreira cobre ``tiposMemoriaSuportados`` para PROCESSADOR e PLACA_MAE.
+    O campo deve existir como array. Array vazio é válido e significa "não
+    informado". Quando houver valores, cada item deve ser exatamente DDR3,
+    DDR4 ou DDR5.
     """
     category = str(category or (payload or {}).get("categoria") or "").upper()
     if category not in {"PROCESSADOR", "PLACA_MAE"}:
@@ -781,8 +778,8 @@ def registration_payload_issues(category: str | None, payload: dict | None) -> l
         return [f"{spec_field or 'especificacao'}.tiposMemoriaSuportados ausente"]
 
     value = specs.get("tiposMemoriaSuportados")
-    if not isinstance(value, list) or not value:
-        return [f"{spec_field}.tiposMemoriaSuportados deve ser array não vazio"]
+    if not isinstance(value, list):
+        return [f"{spec_field}.tiposMemoriaSuportados deve ser array"]
 
     invalid = [item for item in value if item not in VALID_MEMORY_TYPES]
     if invalid:

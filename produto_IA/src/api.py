@@ -89,11 +89,10 @@ def _validate_api_key(x_api_key: str | None) -> None:
 def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[str, Any]:
     """Última barreira HTTP da descoberta.
 
-    O hardware deve continuar visível mesmo quando uma ficha obrigatória ainda
-    estiver incompleta. Porém o payload nunca deve serializar
-    ``tiposMemoriaSuportados: null`` (nem string/array composto). Itens que ainda
-    não possuem um valor confirmado são marcados explicitamente como não
-    cadastráveis, sem serem removidos da busca.
+    O hardware deve continuar visível mesmo quando a geração da memória não foi
+    confirmada. O payload nunca serializa ``tiposMemoriaSuportados: null`` nem
+    string/array composto: quando não informado, envia ``[]``. O backend atual
+    aceita esse array vazio como "não informado".
     """
     items = result.get("itens")
     if not isinstance(items, list):
@@ -148,7 +147,7 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     result["quantidadeCadastravel"] = registerable
     result["quantidadeComCadastroBloqueado"] = incomplete
     # Mantém o campo antigo apenas como diagnóstico de compatibilidade, mas não
-    # há mais descarte por campo obrigatório na v14.20.8.
+    # v14.20.9: [] representa tipo de memória não informado; não há bloqueio por ausência.
     result["descartadosPayloadObrigatorio"] = 0
     return result
 

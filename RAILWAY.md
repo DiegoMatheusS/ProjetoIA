@@ -1,3 +1,11 @@
+# v14.20.9 — tiposMemoriaSuportados vazio como []
+
+- PROCESSADOR e PLACA_MAE sempre serializam `tiposMemoriaSuportados` como array.
+- Quando a IA não confirmar DDR3/DDR4/DDR5, envia `[]` ("não informado").
+- Nunca envia `null`, string simples, array composto ou frequência sem normalizar.
+- Exemplos: `"DDR5" -> ["DDR5"]`, `["DDR4/DDR5"] -> ["DDR4", "DDR5"]`, `["DDR5-5600"] -> ["DDR5"]`.
+- Hardware não é bloqueado apenas porque o tipo de memória ficou `[]`, conforme o backend atualizado.
+
 # v14.20.7 — campo obrigatório tiposMemoriaSuportados
 
 - PROCESSADOR e PLACA_MAE: `tiposMemoriaSuportados` só sai no payload HTTP como array não vazio de `DDR3`, `DDR4` e/ou `DDR5`.

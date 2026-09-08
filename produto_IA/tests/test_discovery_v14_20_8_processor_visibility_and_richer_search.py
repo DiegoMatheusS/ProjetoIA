@@ -3,7 +3,7 @@ from src.enrichment.core import PROVIDER_PRIORITY
 from src.extractors.dto_normalizer import normalize_hardware_payload_for_backend
 
 
-def test_processor_missing_memory_is_visible_but_not_registerable_and_never_null():
+def test_processor_missing_memory_is_visible_registerable_and_serialized_as_empty_array():
     result = {
         "itens": [{
             "payload": {
@@ -21,10 +21,10 @@ def test_processor_missing_memory_is_visible_but_not_registerable_and_never_null
     out = _sanitize_discovery_result("PROCESSADOR", result)
     assert out["quantidadeRetornada"] == 1
     item = out["itens"][0]
-    assert item["cadastravel"] is False
-    assert item["cadastroBloqueado"] is True
+    assert item["cadastravel"] is True
+    assert item["cadastroBloqueado"] is False
     specs = item["payload"]["especificacaoProcessador"]
-    assert "tiposMemoriaSuportados" not in specs
+    assert specs["tiposMemoriaSuportados"] == []
 
 
 def test_processor_valid_memory_is_registerable_and_normalized():

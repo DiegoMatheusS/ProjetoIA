@@ -40,7 +40,7 @@ def test_required_processor_memory_variants_are_normalized_to_non_empty_enum_arr
 
 
 @pytest.mark.parametrize("raw", [None, "", [], ["LPDDR5"], ["DDR6"], [None]])
-def test_required_processor_memory_missing_or_invalid_is_not_registration_safe(raw):
+def test_required_processor_memory_missing_or_invalid_becomes_empty_array(raw):
     payload = normalize_hardware_payload_for_backend(
         "PROCESSADOR",
         {
@@ -52,7 +52,8 @@ def test_required_processor_memory_missing_or_invalid_is_not_registration_safe(r
             },
         },
     )
-    assert registration_payload_issues("PROCESSADOR", payload)
+    assert payload["especificacaoProcessador"]["tiposMemoriaSuportados"] == []
+    assert registration_payload_issues("PROCESSADOR", payload) == []
 
 
 def test_http_guard_keeps_processor_visible_without_sending_null_memory_types():
@@ -86,10 +87,10 @@ def test_http_guard_keeps_processor_visible_without_sending_null_memory_types():
     assert len(out["itens"]) == 2
     incomplete = out["itens"][0]
     incomplete_spec = incomplete["payload"]["especificacaoProcessador"]
-    assert "tiposMemoriaSuportados" not in incomplete_spec
-    assert incomplete["cadastravel"] is False
-    assert incomplete["cadastroBloqueado"] is True
-    assert incomplete["motivosNaoCadastravel"]
+    assert incomplete_spec["tiposMemoriaSuportados"] == []
+    assert incomplete["cadastravel"] is True
+    assert incomplete["cadastroBloqueado"] is False
+    assert incomplete["motivosNaoCadastravel"] == []
     valid = out["itens"][1]
     assert valid["payload"]["especificacaoProcessador"]["tiposMemoriaSuportados"] == ["DDR5"]
     assert valid["cadastravel"] is True
@@ -123,15 +124,14 @@ def test_http_discovery_keeps_uncadastrable_processor_visible_without_null_memor
     )
     # O núcleo pode manter a ficha para diagnóstico/revisão interna.
     assert len(internal["itens"]) == 1
-    # A resposta HTTP mantém a CPU visível, mas não serializa o campo obrigatório
-    # como null e marca claramente que o cadastro está bloqueado.
+    # A resposta HTTP mantém a CPU visível e envia [] como "não informado".
     out = _sanitize_discovery_result("PROCESSADOR", internal)
     assert len(out["itens"]) == 1
     assert out["quantidadeRetornada"] == 1
     item = out["itens"][0]
-    assert item["cadastravel"] is False
-    assert item["cadastroBloqueado"] is True
-    assert "tiposMemoriaSuportados" not in item["payload"]["especificacaoProcessador"]
+    assert item["cadastravel"] is True
+    assert item["cadastroBloqueado"] is False
+    assert item["payload"]["especificacaoProcessador"]["tiposMemoriaSuportados"] == []
     assert out["descartadosPayloadObrigatorio"] == 0
 
 
