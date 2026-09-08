@@ -1,0 +1,56 @@
+PROJETO IA v14.20.11 SAFE — FALLBACK META AI / WHATSAPP
+
+Objetivo
+- Usar a resposta do Meta AI no WhatsApp somente quando o buscador normal de hardware retornar poucos dados técnicos.
+- Não substituir PC-Kombo, Geizhals, TechPowerUp, fabricante ou demais fontes.
+- A resposta do Meta AI nunca vai direto ao backend: sempre passa pelos normalizadores do Projeto IA.
+
+Regra de acionamento
+- Cobertura padrão mínima: 60%.
+- Se cobertura < 60%: metaAiWhatsappFallback.recomendado = true.
+- Se cobertura >= 60%: o fallback não é recomendado e o endpoint não usa a resposta, salvo forcar=true.
+- Variável opcional: META_AI_WHATSAPP_FALLBACK_COVERAGE (0.20 a 0.95).
+
+Fluxo v1
+1. O buscador normal encontra e enriquece o hardware.
+2. A API calcula a cobertura técnica.
+3. Se a cobertura estiver baixa, o item recebe metaAiWhatsappFallback com promptSugerido e camposAusentes.
+4. O admin abre o WhatsApp Web e pergunta manualmente ao Meta AI.
+5. capturar_meta_ai_whatsapp.bat captura somente a última resposta visível do chat e salva meta_ai_whatsapp_capture.json.
+6. A resposta pode ser enviada para POST /meta-ai-whatsapp/enriquecer junto do payload atual.
+7. O Projeto IA interpreta o texto e preenche SOMENTE campos que estavam vazios.
+8. O payload final passa novamente pelo normalizador do backend.
+
+Endpoint
+POST /meta-ai-whatsapp/enriquecer
+Header: X-API-Key (quando PRODUTO_IA_API_KEY estiver configurada)
+
+Body exemplo:
+{
+  "categoria": "PROCESSADOR",
+  "nome": "AMD Ryzen 5 8400F",
+  "payload": { ...payload atual do item... },
+  "captura": {
+    "response_text": "Socket: AM5\nSupported Memory Types: DDR5-5200\nTDP: 65 W"
+  }
+}
+
+Regras de segurança de dados
+- A fonte Meta AI preenche apenas lacunas; não sobrescreve dados já confirmados pela busca normal.
+- DDR5-5200 é normalizado para tiposMemoriaSuportados: ["DDR5"] e frequenciaMemoriaMaximaMhz: 5200.
+- Booleanos nulos continuam removidos do payload de PROCESSADOR.
+- tiposMemoriaSuportados continua sempre como array; quando não informado, [].
+- A resposta é marcada como fonte META_AI_WHATSAPP.
+
+Captura local
+- Executar capturar_meta_ai_whatsapp.bat no computador do admin.
+- O Chrome abre o WhatsApp Web usando perfil local próprio .meta_ai_whatsapp_profile.
+- Fazer login se necessário, abrir o Meta AI, fazer a pergunta e aguardar a resposta.
+- Voltar ao terminal e pressionar ENTER.
+- O JSON salvo contém somente texto capturado e metadados básicos; cookies não são gravados no JSON.
+
+Validação
+- pytest raiz: 256 passed
+- pytest produto_IA: 256 passed
+- compileall raiz: OK
+- compileall produto_IA: OK

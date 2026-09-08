@@ -14,6 +14,14 @@ from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
+from .extractors.backend_schemas import SCHEMAS
+from .enrichment.core import technical_coverage, technical_missing_fields
+from .extractors.meta_ai_whatsapp import (
+    build_meta_ai_prompt,
+    fallback_coverage_threshold,
+    merge_meta_ai_response_into_payload,
+    should_use_meta_ai_fallback,
+)
 
 
 app = FastAPI(
@@ -72,6 +80,15 @@ class HardwareDiscoveryDetailRequest(BaseModel):
     marca: str | None = Field(default=None, max_length=120)
     enriquecer: bool = True
     noBrowser: bool = False
+
+
+class MetaAiWhatsappEnrichmentRequest(BaseModel):
+    categoria: str = Field(min_length=3, max_length=80)
+    nome: str | None = Field(default=None, max_length=500)
+    payload: dict[str, Any]
+    resposta: str | None = Field(default=None, max_length=30000)
+    captura: dict[str, Any] | None = None
+    forcar: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -140,6 +157,26 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
         }.get(category)
         if spec_field and isinstance(safe.get(spec_field), dict):
             item["especificacoesEncontradas"] = safe[spec_field]
+            coverage_input = {
+                "categoriaDetectada": category,
+                "especificacoesEncontradas": safe[spec_field],
+            }
+            current_coverage = technical_coverage(coverage_input)
+            missing_fields = technical_missing_fields(coverage_input)
+            fallback_recommended = should_use_meta_ai_fallback(current_coverage)
+            item["metaAiWhatsappFallback"] = {
+                "recomendado": bool(fallback_recommended),
+                "fonte": "META_AI_WHATSAPP",
+                "somenteQuandoPoucosDados": True,
+                "coberturaAtual": round(current_coverage, 4),
+                "limiarCobertura": round(fallback_coverage_threshold(), 4),
+                "camposAusentes": missing_fields,
+                "promptSugerido": build_meta_ai_prompt(
+                    category,
+                    str(safe.get("nome") or item.get("nome") or "hardware"),
+                    missing_fields,
+                ) if fallback_recommended else None,
+            }
         safe_items.append(item)
 
     result["itens"] = safe_items
@@ -150,6 +187,66 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     # v14.20.9: [] representa tipo de memória não informado; não há bloqueio por ausência.
     result["descartadosPayloadObrigatorio"] = 0
     return result
+
+
+def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> dict[str, Any]:
+    category = payload.categoria.strip().upper()
+    schema = SCHEMAS.get(category)
+    if not schema or not schema[1]:
+        raise HTTPException(status_code=400, detail="Categoria sem ficha técnica estruturada para enriquecimento")
+
+    safe_before = normalize_hardware_payload_for_backend(category, payload.payload)
+    spec_field = schema[1]
+    specs_before = safe_before.get(spec_field) if isinstance(safe_before.get(spec_field), dict) else {}
+    coverage_input_before = {"categoriaDetectada": category, "especificacoesEncontradas": specs_before}
+    coverage_before = technical_coverage(coverage_input_before)
+    threshold = fallback_coverage_threshold()
+
+    response_text = str(payload.resposta or "").strip()
+    if not response_text and isinstance(payload.captura, dict):
+        response_text = str(
+            payload.captura.get("response_text")
+            or payload.captura.get("responseText")
+            or payload.captura.get("text")
+            or ""
+        ).strip()
+    if not response_text:
+        raise HTTPException(status_code=400, detail="Resposta do Meta AI vazia")
+
+    if not payload.forcar and not should_use_meta_ai_fallback(coverage_before, threshold=threshold):
+        return {
+            "utilizado": False,
+            "motivo": "COBERTURA_NORMAL_SUFICIENTE",
+            "fonte": "META_AI_WHATSAPP",
+            "categoria": category,
+            "coberturaAntes": round(coverage_before, 4),
+            "coberturaDepois": round(coverage_before, 4),
+            "limiarCobertura": round(threshold, 4),
+            "camposPreenchidos": [],
+            "payload": safe_before,
+        }
+
+    safe_after, filled, parsed_specs = merge_meta_ai_response_into_payload(
+        category, safe_before, response_text
+    )
+    specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}
+    coverage_after = technical_coverage({
+        "categoriaDetectada": category,
+        "especificacoesEncontradas": specs_after,
+    })
+    return {
+        "utilizado": True,
+        "fonte": "META_AI_WHATSAPP",
+        "somentePreencheLacunas": True,
+        "categoria": category,
+        "nome": payload.nome or safe_after.get("nome"),
+        "coberturaAntes": round(coverage_before, 4),
+        "coberturaDepois": round(coverage_after, 4),
+        "limiarCobertura": round(threshold, 4),
+        "camposPreenchidos": filled,
+        "especificacoesInterpretadas": parsed_specs,
+        "payload": safe_after,
+    }
 
 
 def _validate_url(url: str) -> str:
@@ -471,6 +568,21 @@ async def detalhar_hardware_descoberto(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Falha ao detalhar Hardware: {exc}") from exc
+
+
+@app.post("/meta-ai-whatsapp/enriquecer")
+async def enriquecer_com_meta_ai_whatsapp(
+    payload: MetaAiWhatsappEnrichmentRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    async with _analyze_semaphore:
+        try:
+            return await asyncio.to_thread(_meta_ai_whatsapp_enrich_sync, payload)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Falha ao enriquecer com Meta AI WhatsApp: {exc}") from exc
 
 
 @app.post("/analisar")

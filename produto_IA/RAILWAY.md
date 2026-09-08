@@ -6,6 +6,14 @@
 - Mantém a regra da v14.20.9: `tiposMemoriaSuportados` sempre existe como array; quando não informado, envia `[]`.
 - Objetivo: evitar `PrismaClientValidationError: Argument coolerIncluso must not be null` e equivalentes, sem inventar dados técnicos.
 
+# v14.20.9 — tiposMemoriaSuportados vazio como []
+
+- PROCESSADOR e PLACA_MAE sempre serializam `tiposMemoriaSuportados` como array.
+- Quando a IA não confirmar DDR3/DDR4/DDR5, envia `[]` ("não informado").
+- Nunca envia `null`, string simples, array composto ou frequência sem normalizar.
+- Exemplos: `"DDR5" -> ["DDR5"]`, `["DDR4/DDR5"] -> ["DDR4", "DDR5"]`, `["DDR5-5600"] -> ["DDR5"]`.
+- Hardware não é bloqueado apenas porque o tipo de memória ficou `[]`, conforme o backend atualizado.
+
 # v14.20.7 — campo obrigatório tiposMemoriaSuportados
 
 - PROCESSADOR e PLACA_MAE: `tiposMemoriaSuportados` só sai no payload HTTP como array não vazio de `DDR3`, `DDR4` e/ou `DDR5`.
@@ -220,3 +228,12 @@ DISCOVERY_ENRICHMENT_MAX_SOURCES=6
 ```
 
 Esses valores são limites de proteção, não metas de velocidade. A prioridade é preencher a ficha com dados confirmados sem inventar campos.
+
+## v14.20.11 — Meta AI / WhatsApp como fallback opcional
+
+O serviço não abre WhatsApp Web na Railway. A captura é LOCAL no computador do admin. A Railway apenas recebe o texto capturado em `POST /meta-ai-whatsapp/enriquecer`, interpreta e normaliza a ficha.
+
+Variável opcional:
+- `META_AI_WHATSAPP_FALLBACK_COVERAGE=0.60` — usar/recomendar o fallback somente abaixo desse nível de cobertura.
+
+Nenhuma credencial ou cookie do WhatsApp deve ser configurado na Railway.

@@ -228,3 +228,12 @@ DISCOVERY_ENRICHMENT_MAX_SOURCES=6
 ```
 
 Esses valores são limites de proteção, não metas de velocidade. A prioridade é preencher a ficha com dados confirmados sem inventar campos.
+
+## v14.20.11 — Meta AI / WhatsApp como fallback opcional
+
+O serviço não abre WhatsApp Web na Railway. A captura é LOCAL no computador do admin. A Railway apenas recebe o texto capturado em `POST /meta-ai-whatsapp/enriquecer`, interpreta e normaliza a ficha.
+
+Variável opcional:
+- `META_AI_WHATSAPP_FALLBACK_COVERAGE=0.60` — usar/recomendar o fallback somente abaixo desse nível de cobertura.
+
+Nenhuma credencial ou cookie do WhatsApp deve ser configurado na Railway.

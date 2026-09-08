@@ -615,3 +615,9 @@ processadores encontrava apenas poucos links inválidos.
 A descoberta agora trata PC-Kombo, CPU-Monkey e TechPowerUp com fluxo de catálogo dedicado. Se o HTTP do catálogo vier parcial, a mesma página pode ser renderizada uma vez via Surfsky e os candidatos são mesclados, em vez de aceitar uma lista artificialmente pequena.
 
 Open Icecat é opcional e entra como fonte estruturada de enriquecimento quando já existe GTIN ou marca+MPN. Configure `ICECAT_USERNAME` e, quando disponíveis na conta, `ICECAT_API_TOKEN`/`ICECAT_CONTENT_TOKEN`. Sem Icecat configurado, as demais fontes continuam funcionando normalmente.
+
+## v14.20.11 — fallback Meta AI no WhatsApp quando a ficha vier pobre
+
+A descoberta normal continua sendo a fonte principal. Quando a cobertura técnica do item fica abaixo do limiar configurado (60% por padrão), a resposta de descoberta inclui `metaAiWhatsappFallback.recomendado=true`, `camposAusentes` e um `promptSugerido` para consulta manual ao Meta AI no WhatsApp Web.
+
+A captura local pode ser feita por `capturar_meta_ai_whatsapp.bat`. O texto capturado é processado por `POST /meta-ai-whatsapp/enriquecer`. O fallback só preenche lacunas e nunca sobrescreve um valor já confirmado pelas fontes normais. Use `META_AI_WHATSAPP_FALLBACK_COVERAGE` para ajustar o limiar.

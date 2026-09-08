@@ -6,6 +6,14 @@
 - Mantém a regra da v14.20.9: `tiposMemoriaSuportados` sempre existe como array; quando não informado, envia `[]`.
 - Objetivo: evitar `PrismaClientValidationError: Argument coolerIncluso must not be null` e equivalentes, sem inventar dados técnicos.
 
+# v14.20.9 — tiposMemoriaSuportados vazio como []
+
+- PROCESSADOR e PLACA_MAE sempre serializam `tiposMemoriaSuportados` como array.
+- Quando a IA não confirmar DDR3/DDR4/DDR5, envia `[]` ("não informado").
+- Nunca envia `null`, string simples, array composto ou frequência sem normalizar.
+- Exemplos: `"DDR5" -> ["DDR5"]`, `["DDR4/DDR5"] -> ["DDR4", "DDR5"]`, `["DDR5-5600"] -> ["DDR5"]`.
+- Hardware não é bloqueado apenas porque o tipo de memória ficou `[]`, conforme o backend atualizado.
+
 # v14.20.7 — campo obrigatório tiposMemoriaSuportados
 
 - PROCESSADOR e PLACA_MAE: `tiposMemoriaSuportados` só sai no payload HTTP como array não vazio de `DDR3`, `DDR4` e/ou `DDR5`.
@@ -607,3 +615,9 @@ processadores encontrava apenas poucos links inválidos.
 A descoberta agora trata PC-Kombo, CPU-Monkey e TechPowerUp com fluxo de catálogo dedicado. Se o HTTP do catálogo vier parcial, a mesma página pode ser renderizada uma vez via Surfsky e os candidatos são mesclados, em vez de aceitar uma lista artificialmente pequena.
 
 Open Icecat é opcional e entra como fonte estruturada de enriquecimento quando já existe GTIN ou marca+MPN. Configure `ICECAT_USERNAME` e, quando disponíveis na conta, `ICECAT_API_TOKEN`/`ICECAT_CONTENT_TOKEN`. Sem Icecat configurado, as demais fontes continuam funcionando normalmente.
+
+## v14.20.11 — fallback Meta AI no WhatsApp quando a ficha vier pobre
+
+A descoberta normal continua sendo a fonte principal. Quando a cobertura técnica do item fica abaixo do limiar configurado (60% por padrão), a resposta de descoberta inclui `metaAiWhatsappFallback.recomendado=true`, `camposAusentes` e um `promptSugerido` para consulta manual ao Meta AI no WhatsApp Web.
+
+A captura local pode ser feita por `capturar_meta_ai_whatsapp.bat`. O texto capturado é processado por `POST /meta-ai-whatsapp/enriquecer`. O fallback só preenche lacunas e nunca sobrescreve um valor já confirmado pelas fontes normais. Use `META_AI_WHATSAPP_FALLBACK_COVERAGE` para ajustar o limiar.
