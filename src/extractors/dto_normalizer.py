@@ -751,6 +751,16 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
         ]
         specs["tiposMemoriaSuportados"] = memory
 
+    # PROCESSADOR: alguns booleanos são obrigatórios no Prisma e possuem
+    # default false. ``null`` passa por DTOs com @IsOptional(), mas falha no
+    # create do Prisma. Quando a fonte não confirmou o valor, NÃO inventamos
+    # false: simplesmente omitimos a propriedade para o backend/banco aplicar
+    # o default. Valores confirmados false/true são preservados.
+    if category == "PROCESSADOR":
+        for field in BOOL_FIELDS.get("PROCESSADOR", set()):
+            if specs.get(field) is None:
+                specs.pop(field, None)
+
     output["categoria"] = category
     output[spec_field] = specs
     return output

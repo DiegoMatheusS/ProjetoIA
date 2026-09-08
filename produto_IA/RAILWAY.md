@@ -1,3 +1,11 @@
+# v14.20.10 — booleanos desconhecidos não saem como null
+
+- PROCESSADOR: booleanos sem informação confirmada são omitidos do payload final em vez de enviados como `null`.
+- Campos protegidos: `possuiVideoIntegrado`, `suportaEcc`, `coolerIncluso`, `multiplicadorDesbloqueado` e `suporteOverclock`.
+- Valores confirmados `true` e `false` continuam sendo enviados normalmente.
+- Mantém a regra da v14.20.9: `tiposMemoriaSuportados` sempre existe como array; quando não informado, envia `[]`.
+- Objetivo: evitar `PrismaClientValidationError: Argument coolerIncluso must not be null` e equivalentes, sem inventar dados técnicos.
+
 # v14.20.7 — campo obrigatório tiposMemoriaSuportados
 
 - PROCESSADOR e PLACA_MAE: `tiposMemoriaSuportados` só sai no payload HTTP como array não vazio de `DDR3`, `DDR4` e/ou `DDR5`.
