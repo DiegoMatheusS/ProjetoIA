@@ -15,11 +15,12 @@ from .scrapers.generic_scraper import GenericScraper
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
 from .extractors.backend_schemas import SCHEMAS
-from .enrichment.core import technical_coverage, technical_missing_fields
+from .enrichment.core import technical_coverage, technical_missing_fields, technical_status
 from .extractors.meta_ai_whatsapp import (
     build_meta_ai_prompt,
     fallback_coverage_threshold,
     merge_meta_ai_response_into_payload,
+    merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
 
@@ -200,6 +201,8 @@ def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> d
     specs_before = safe_before.get(spec_field) if isinstance(safe_before.get(spec_field), dict) else {}
     coverage_input_before = {"categoriaDetectada": category, "especificacoesEncontradas": specs_before}
     coverage_before = technical_coverage(coverage_input_before)
+    missing_before = technical_missing_fields(coverage_input_before)
+    status_before = technical_status(coverage_input_before)
     threshold = fallback_coverage_threshold()
 
     response_text = str(payload.resposta or "").strip()
@@ -214,27 +217,58 @@ def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> d
         raise HTTPException(status_code=400, detail="Resposta do Meta AI vazia")
 
     if not payload.forcar and not should_use_meta_ai_fallback(coverage_before, threshold=threshold):
+        fallback = {
+            "recomendado": False,
+            "fonte": "META_AI_WHATSAPP",
+            "somenteQuandoPoucosDados": True,
+            "coberturaAtual": round(coverage_before, 4),
+            "limiarCobertura": round(threshold, 4),
+            "camposAusentes": missing_before,
+            "promptSugerido": None,
+        }
         return {
             "utilizado": False,
             "motivo": "COBERTURA_NORMAL_SUFICIENTE",
             "fonte": "META_AI_WHATSAPP",
+            "somentePreencheLacunas": True,
             "categoria": category,
+            "nome": payload.nome or safe_before.get("nome"),
             "coberturaAntes": round(coverage_before, 4),
             "coberturaDepois": round(coverage_before, 4),
             "limiarCobertura": round(threshold, 4),
             "camposPreenchidos": [],
+            "camposAusentes": missing_before,
+            "statusFicha": status_before,
+            "especificacoesInterpretadas": {},
             "payload": safe_before,
+            "metaAiWhatsappFallback": fallback,
         }
 
-    safe_after, filled, parsed_specs = merge_meta_ai_response_into_payload(
+    safe_after, filled, parsed_specs, conflicts = merge_meta_ai_response_into_payload_detailed(
         category, safe_before, response_text
     )
+    # Última barreira DTO-safe antes de responder ao CriaByte.
+    safe_after = normalize_hardware_payload_for_backend(category, safe_after)
     specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}
-    coverage_after = technical_coverage({
-        "categoriaDetectada": category,
-        "especificacoesEncontradas": specs_after,
-    })
-    return {
+    coverage_input_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
+    coverage_after = technical_coverage(coverage_input_after)
+    missing_after = technical_missing_fields(coverage_input_after)
+    status_after = technical_status(coverage_input_after, conflicts=conflicts)
+    fallback_recommended = should_use_meta_ai_fallback(coverage_after, threshold=threshold)
+    fallback = {
+        "recomendado": bool(fallback_recommended),
+        "fonte": "META_AI_WHATSAPP",
+        "somenteQuandoPoucosDados": True,
+        "coberturaAtual": round(coverage_after, 4),
+        "limiarCobertura": round(threshold, 4),
+        "camposAusentes": missing_after,
+        "promptSugerido": build_meta_ai_prompt(
+            category,
+            str(payload.nome or safe_after.get("nome") or "hardware"),
+            missing_after,
+        ) if fallback_recommended and missing_after else None,
+    }
+    response = {
         "utilizado": True,
         "fonte": "META_AI_WHATSAPP",
         "somentePreencheLacunas": True,
@@ -244,9 +278,15 @@ def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> d
         "coberturaDepois": round(coverage_after, 4),
         "limiarCobertura": round(threshold, 4),
         "camposPreenchidos": filled,
+        "camposAusentes": missing_after,
+        "statusFicha": status_after,
         "especificacoesInterpretadas": parsed_specs,
         "payload": safe_after,
+        "metaAiWhatsappFallback": fallback,
     }
+    if conflicts:
+        response["conflitosMetaAi"] = conflicts
+    return response
 
 
 def _validate_url(url: str) -> str:

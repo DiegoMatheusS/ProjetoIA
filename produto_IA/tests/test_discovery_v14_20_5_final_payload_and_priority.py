@@ -78,11 +78,15 @@ def test_v14_20_5_discovery_payload_itself_is_dto_safe_before_frontend():
     assert payload["especificacaoProcessador"]["tiposMemoriaSuportados"] == ["DDR5", "DDR4"]
 
 
-def test_v14_20_5_specialized_sources_come_before_manufacturer_for_weak_categories():
+def test_v14_20_5_specialized_sources_follow_current_category_priority():
+    # Atualizado após v14.20.8: fonte usa fabricante oficial primeiro; as
+    # demais categorias abaixo continuam priorizando Geizhals. Este teste
+    # protege a prioridade vigente sem reverter uma decisão posterior.
     geizhals = GeizhalsProvider()
     manufacturer = ManufacturerProvider()
     techpowerup = TechPowerUpProvider()
-    for category in ["PLACA_MAE", "MEMORIA_RAM", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER", "VENTOINHA"]:
+    for category in ["PLACA_MAE", "MEMORIA_RAM", "ARMAZENAMENTO", "GABINETE", "COOLER", "VENTOINHA"]:
         assert _provider_rank(category, geizhals) < _provider_rank(category, manufacturer)
+    assert _provider_rank("FONTE", manufacturer) < _provider_rank("FONTE", geizhals)
     assert _provider_rank("PLACA_VIDEO", techpowerup) < _provider_rank("PLACA_VIDEO", manufacturer)
     assert _provider_rank("PLACA_VIDEO", geizhals) < _provider_rank("PLACA_VIDEO", manufacturer)

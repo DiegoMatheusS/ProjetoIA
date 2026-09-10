@@ -237,3 +237,8 @@ Variável opcional:
 - `META_AI_WHATSAPP_FALLBACK_COVERAGE=0.60` — usar/recomendar o fallback somente abaixo desse nível de cobertura.
 
 Nenhuma credencial ou cookie do WhatsApp deve ser configurado na Railway.
+
+
+## v14.20.12 SAFE — Meta AI / WhatsApp completa
+
+O fallback Meta AI agora usa parser por schema/aliases, prompt dinâmico somente com campos ausentes, normalização DTO-safe e recálculo de cobertura/status após o enriquecimento. A resposta real do Ryzen 9 7900 passou a reconhecer todos os campos compatíveis, incluindo DDR5-SDRAM -> ["DDR5"]. A mesma arquitetura cobre PROCESSADOR, PLACA_MAE, MEMORIA_RAM, PLACA_VIDEO, ARMAZENAMENTO, FONTE, GABINETE, COOLER e VENTOINHA.

@@ -621,3 +621,8 @@ Open Icecat é opcional e entra como fonte estruturada de enriquecimento quando 
 A descoberta normal continua sendo a fonte principal. Quando a cobertura técnica do item fica abaixo do limiar configurado (60% por padrão), a resposta de descoberta inclui `metaAiWhatsappFallback.recomendado=true`, `camposAusentes` e um `promptSugerido` para consulta manual ao Meta AI no WhatsApp Web.
 
 A captura local pode ser feita por `capturar_meta_ai_whatsapp.bat`. O texto capturado é processado por `POST /meta-ai-whatsapp/enriquecer`. O fallback só preenche lacunas e nunca sobrescreve um valor já confirmado pelas fontes normais. Use `META_AI_WHATSAPP_FALLBACK_COVERAGE` para ajustar o limiar.
+
+
+## v14.20.12 SAFE — Meta AI / WhatsApp completa
+
+O fallback Meta AI agora usa parser por schema/aliases, prompt dinâmico somente com campos ausentes, normalização DTO-safe e recálculo de cobertura/status após o enriquecimento. A resposta real do Ryzen 9 7900 passou a reconhecer todos os campos compatíveis, incluindo DDR5-SDRAM -> ["DDR5"]. A mesma arquitetura cobre PROCESSADOR, PLACA_MAE, MEMORIA_RAM, PLACA_VIDEO, ARMAZENAMENTO, FONTE, GABINETE, COOLER e VENTOINHA.
