@@ -1,0 +1,54 @@
+CRIABYTE — PRODUTO IA v14.20.13 SAFE
+IA TÉCNICA EXTERNA / GEMINI
+
+ESCOPO
+- Mantém a Produto IA como camada de confiança e normalização.
+- Adiciona provider Gemini somente para pesquisa/complemento técnico.
+- Não altera frontend nem backend do CriaByte neste pacote.
+- Não salva Hardware automaticamente.
+
+NOVOS ENDPOINTS
+POST /ia-tecnica/enriquecer
+POST /ia-tecnica/gerar-prompt
+
+FLUXO
+1. Backend envia categoria, nome e payload atual.
+2. Produto IA calcula campos ausentes.
+3. Produto IA monta prompt específico da categoria.
+4. Gemini pesquisa e devolve texto bruto.
+5. Produto IA interpreta com o parser v14.20.12.
+6. Produto IA normaliza enums, números, arrays, booleanos e datas.
+7. Somente lacunas são preenchidas; valores atuais não são sobrescritos.
+8. Cobertura, campos ausentes, status e fallback Meta AI são recalculados.
+9. O backend recebe uma prévia; gravação continua dependendo da confirmação do admin.
+
+CONFIGURAÇÃO RAILWAY
+GEMINI_API_KEY=<chave do Google AI Studio>
+IA_TECNICA_PROVIDER=GEMINI
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_GOOGLE_SEARCH=true
+
+OPCIONAIS
+GEMINI_ENABLED=true
+GEMINI_TIMEOUT_SECONDS=25
+GEMINI_MAX_RETRIES=1
+GEMINI_TEMPERATURE=0.1
+GEMINI_MAX_OUTPUT_TOKENS=4096
+
+SEGURANÇA
+- GEMINI_API_KEY nunca vai ao frontend.
+- A chave é enviada ao Google apenas no header x-goog-api-key.
+- Não é registrada em logs nem devolvida na API.
+- Cookies, tokens de usuário, DATABASE_URL e segredos do Railway não são enviados ao Gemini.
+
+PESQUISA WEB
+Com GEMINI_GOOGLE_SEARCH=true, o request usa a ferramenta google_search da API Gemini.
+As fontes web devolvidas pelo grounding são expostas apenas como fontesDeclaradas no resultado técnico.
+
+FALLBACK
+O Meta AI/WhatsApp existente continua disponível. Após Gemini, se a cobertura ainda estiver abaixo do limiar, metaAiWhatsappFallback pode continuar recomendado com prompt recalculado somente para o que ainda falta.
+
+COMPATIBILIDADE
+- tiposMemoriaSuportados continua normalizado para DDR3/DDR4/DDR5.
+- [] continua representando não informado quando o backend aceitar esse contrato.
+- booleanos nulos de PROCESSADOR continuam removidos antes do payload final.

@@ -23,6 +23,8 @@ from .extractors.meta_ai_whatsapp import (
     merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
+from .technical_ai.providers import TechnicalAIProviderError, get_technical_ai_provider
+from .technical_ai.service import build_technical_ai_prompt, enrich_hardware_with_external_ai
 
 
 app = FastAPI(
@@ -92,6 +94,23 @@ class MetaAiWhatsappEnrichmentRequest(BaseModel):
     forcar: bool = False
 
 
+class TechnicalAiEnrichmentRequest(BaseModel):
+    provedor: str = Field(default="GEMINI", min_length=2, max_length=40)
+    categoria: str = Field(min_length=3, max_length=80)
+    nome: str | None = Field(default=None, max_length=500)
+    marca: str | None = Field(default=None, max_length=120)
+    modelo: str | None = Field(default=None, max_length=240)
+    hardwareId: int | str | None = None
+    payload: dict[str, Any]
+    somentePreencheLacunas: bool = True
+
+
+class TechnicalAiPromptRequest(BaseModel):
+    categoria: str = Field(min_length=3, max_length=80)
+    nome: str | None = Field(default=None, max_length=500)
+    payload: dict[str, Any]
+
+
 class HealthResponse(BaseModel):
     ok: bool
     service: str
@@ -119,6 +138,15 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     safe_items = []
     registerable = 0
     incomplete = 0
+    try:
+        technical_provider = get_technical_ai_provider(os.getenv("IA_TECNICA_PROVIDER", "GEMINI"))
+        technical_provider_name = technical_provider.name
+        technical_provider_configured = bool(technical_provider.configured)
+    except TechnicalAIProviderError:
+        technical_provider = None
+        technical_provider_name = (os.getenv("IA_TECNICA_PROVIDER", "GEMINI") or "GEMINI").strip().upper()
+        technical_provider_configured = False
+
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -165,6 +193,17 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
             current_coverage = technical_coverage(coverage_input)
             missing_fields = technical_missing_fields(coverage_input)
             fallback_recommended = should_use_meta_ai_fallback(current_coverage)
+            item["iaTecnicaFallback"] = {
+                "recomendado": bool(fallback_recommended),
+                "provedor": technical_provider_name,
+                "provedorConfigurado": technical_provider_configured,
+                "somentePreencheLacunas": True,
+                "coberturaAtual": round(current_coverage, 4),
+                "limiarCobertura": round(fallback_coverage_threshold(), 4),
+                "camposAusentes": missing_fields,
+                "endpoint": "/ia-tecnica/enriquecer",
+                "promptGeradoAutomaticamente": True,
+            }
             item["metaAiWhatsappFallback"] = {
                 "recomendado": bool(fallback_recommended),
                 "fonte": "META_AI_WHATSAPP",
@@ -287,6 +326,40 @@ def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> d
     if conflicts:
         response["conflitosMetaAi"] = conflicts
     return response
+
+
+def _technical_ai_enrich_sync(payload: TechnicalAiEnrichmentRequest) -> dict[str, Any]:
+    category = payload.categoria.strip().upper()
+    base_payload = dict(payload.payload or {})
+    if payload.marca and not base_payload.get("marca"):
+        base_payload["marca"] = payload.marca
+    if payload.modelo and not base_payload.get("modelo"):
+        base_payload["modelo"] = payload.modelo
+    if payload.nome and not base_payload.get("nome"):
+        base_payload["nome"] = payload.nome
+    return enrich_hardware_with_external_ai(
+        provider_name=payload.provedor,
+        category=category,
+        name=payload.nome,
+        payload=base_payload,
+        hardware_id=payload.hardwareId,
+        only_fill_gaps=payload.somentePreencheLacunas,
+    )
+
+
+def _technical_ai_prompt_sync(payload: TechnicalAiPromptRequest) -> dict[str, Any]:
+    category = payload.categoria.strip().upper()
+    safe = normalize_hardware_payload_for_backend(category, payload.payload or {})
+    prompt, missing = build_technical_ai_prompt(category, payload.nome, safe)
+    provider = get_technical_ai_provider(os.getenv("IA_TECNICA_PROVIDER", "GEMINI"))
+    return {
+        "categoria": category,
+        "nome": payload.nome or safe.get("nome"),
+        "provedor": provider.name,
+        "provedorConfigurado": provider.configured,
+        "camposAusentes": missing,
+        "prompt": prompt,
+    }
 
 
 def _validate_url(url: str) -> str:
@@ -608,6 +681,37 @@ async def detalhar_hardware_descoberto(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Falha ao detalhar Hardware: {exc}") from exc
+
+
+@app.post("/ia-tecnica/gerar-prompt")
+async def gerar_prompt_ia_tecnica(
+    payload: TechnicalAiPromptRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    try:
+        return await asyncio.to_thread(_technical_ai_prompt_sync, payload)
+    except TechnicalAIProviderError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"codigo": exc.code, "mensagem": exc.message}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"codigo": "ERRO_INTERNO", "mensagem": f"Falha ao gerar prompt técnico: {exc}"}) from exc
+
+
+@app.post("/ia-tecnica/enriquecer")
+async def enriquecer_com_ia_tecnica(
+    payload: TechnicalAiEnrichmentRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _validate_api_key(x_api_key)
+    async with _analyze_semaphore:
+        try:
+            return await asyncio.to_thread(_technical_ai_enrich_sync, payload)
+        except TechnicalAIProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"codigo": exc.code, "mensagem": exc.message}) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail={"codigo": "ERRO_INTERNO", "mensagem": f"Falha ao enriquecer com IA técnica: {exc}"}) from exc
 
 
 @app.post("/meta-ai-whatsapp/enriquecer")

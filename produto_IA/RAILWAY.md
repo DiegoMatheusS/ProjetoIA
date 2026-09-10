@@ -242,3 +242,21 @@ Nenhuma credencial ou cookie do WhatsApp deve ser configurado na Railway.
 ## v14.20.12 SAFE — Meta AI / WhatsApp completa
 
 O fallback Meta AI agora usa parser por schema/aliases, prompt dinâmico somente com campos ausentes, normalização DTO-safe e recálculo de cobertura/status após o enriquecimento. A resposta real do Ryzen 9 7900 passou a reconhecer todos os campos compatíveis, incluindo DDR5-SDRAM -> ["DDR5"]. A mesma arquitetura cobre PROCESSADOR, PLACA_MAE, MEMORIA_RAM, PLACA_VIDEO, ARMAZENAMENTO, FONTE, GABINETE, COOLER e VENTOINHA.
+
+## v14.20.13 — Gemini para enriquecimento técnico
+
+Adicionar no serviço da Produto IA no Railway:
+
+```text
+GEMINI_API_KEY=<sua chave>
+IA_TECNICA_PROVIDER=GEMINI
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_GOOGLE_SEARCH=true
+GEMINI_TIMEOUT_SECONDS=25
+GEMINI_MAX_RETRIES=1
+```
+
+A chave fica somente no serviço da Produto IA. Não colocar em VITE_*, frontend, localStorage ou respostas HTTP.
+
+`POST /ia-tecnica/enriquecer` gera o prompt automaticamente com base apenas nas lacunas do Hardware e, quando `GEMINI_GOOGLE_SEARCH=true`, permite que o Gemini use pesquisa web.
+

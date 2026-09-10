@@ -626,3 +626,14 @@ A captura local pode ser feita por `capturar_meta_ai_whatsapp.bat`. O texto capt
 ## v14.20.12 SAFE — Meta AI / WhatsApp completa
 
 O fallback Meta AI agora usa parser por schema/aliases, prompt dinâmico somente com campos ausentes, normalização DTO-safe e recálculo de cobertura/status após o enriquecimento. A resposta real do Ryzen 9 7900 passou a reconhecer todos os campos compatíveis, incluindo DDR5-SDRAM -> ["DDR5"]. A mesma arquitetura cobre PROCESSADOR, PLACA_MAE, MEMORIA_RAM, PLACA_VIDEO, ARMAZENAMENTO, FONTE, GABINETE, COOLER e VENTOINHA.
+
+## v14.20.13 — IA técnica externa / Gemini
+
+A Produto IA agora possui uma camada genérica de IA técnica. O provider inicial é o Gemini. O provider apenas pesquisa e devolve texto bruto; o parser/normalizador da Produto IA continua responsável por validar e preencher somente lacunas.
+
+Endpoints:
+- `POST /ia-tecnica/enriquecer` — gera a pergunta automaticamente, consulta o provider e devolve uma prévia enriquecida.
+- `POST /ia-tecnica/gerar-prompt` — gera somente o prompt técnico para diagnóstico/fluxo manual.
+
+Variáveis principais: `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_GOOGLE_SEARCH` e `IA_TECNICA_PROVIDER`. Nunca exponha `GEMINI_API_KEY` no frontend.
+

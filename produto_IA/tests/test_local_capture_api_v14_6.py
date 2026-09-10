@@ -1,3 +1,4 @@
+from src.version import SERVICE_VERSION
 from src.api import CaptureAnalyzeRequest, _analyze_capture_sync, _structured_capture_to_raw
 
 
@@ -62,7 +63,7 @@ def test_analyze_capture_returns_local_mode_and_normalized_result():
     assert result["payloadParcialBackend"]["mpn"] == "RX-97TSWF3W9"
     assert result["ofertaColetada"]["preco"] == 5694.10
     assert result["origemColeta"]["capturaLocal"] is True
-    assert result["servicoProdutoIa"]["versao"] == "14.20.12-railway"
+    assert result["servicoProdutoIa"]["versao"] == SERVICE_VERSION
     assert result["servicoProdutoIa"]["modo"] == "CAPTURA_LOCAL_HTTP_API"
 
 
