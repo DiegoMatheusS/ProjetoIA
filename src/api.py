@@ -623,6 +623,7 @@ def health() -> HealthResponse:
     return HealthResponse(ok=True, service="criabyte-produto-ia", version=SERVICE_VERSION)
 
 
+@app.get("/api/admin/hardwares/descobrir/fontes", include_in_schema=False)
 @app.get("/descobrir-hardwares/fontes")
 def descobrir_hardwares_fontes(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
@@ -638,6 +639,7 @@ def descobrir_hardwares_fontes(
     }
 
 
+@app.post("/api/admin/hardwares/descobrir", include_in_schema=False)
 @app.post("/descobrir-hardwares")
 async def descobrir_hardwares(
     payload: HardwareDiscoveryRequest,
@@ -685,6 +687,7 @@ async def descobrir_hardwares(
             raise HTTPException(status_code=500, detail=f"Falha ao descobrir Hardwares: {exc}") from exc
 
 
+@app.post("/api/admin/hardwares/descobrir/detalhar", include_in_schema=False)
 @app.post("/descobrir-hardwares/detalhar")
 async def detalhar_hardware_descoberto(
     payload: HardwareDiscoveryDetailRequest,
@@ -731,6 +734,7 @@ async def detalhar_hardware_descoberto(
             raise HTTPException(status_code=500, detail=f"Falha ao detalhar Hardware: {exc}") from exc
 
 
+@app.post("/api/admin/hardwares/descobrir/ia-tecnica/gerar-prompt", include_in_schema=False)
 @app.post("/ia-tecnica/gerar-prompt")
 async def gerar_prompt_ia_tecnica(
     payload: TechnicalAiPromptRequest,
@@ -745,6 +749,7 @@ async def gerar_prompt_ia_tecnica(
         raise HTTPException(status_code=500, detail={"codigo": "ERRO_INTERNO", "mensagem": f"Falha ao gerar prompt técnico: {exc}"}) from exc
 
 
+@app.post("/api/admin/hardwares/descobrir/ia-tecnica/enriquecer", include_in_schema=False)
 @app.post("/ia-tecnica/enriquecer")
 async def enriquecer_com_ia_tecnica(
     payload: TechnicalAiEnrichmentRequest,
@@ -762,6 +767,7 @@ async def enriquecer_com_ia_tecnica(
             raise HTTPException(status_code=500, detail={"codigo": "ERRO_INTERNO", "mensagem": f"Falha ao enriquecer com IA técnica: {exc}"}) from exc
 
 
+@app.post("/api/admin/hardwares/descobrir/meta-ai-whatsapp/enriquecer", include_in_schema=False)
 @app.post("/meta-ai-whatsapp/enriquecer")
 async def enriquecer_com_meta_ai_whatsapp(
     payload: MetaAiWhatsappEnrichmentRequest,

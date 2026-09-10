@@ -1,0 +1,23 @@
+CRIABYTE — PRODUTO IA v14.20.17 SAFE
+
+ESCOPO ÚNICO DESTA ATUALIZAÇÃO
+- Adicionar aliases HTTP na Produto IA com os mesmos caminhos usados pelo backend CriaByte.
+- Nenhuma lógica de Gemini, Meta AI, preço, scraping, descoberta ou normalização foi alterada.
+
+ROTAS ANTIGAS PRESERVADAS
+- GET  /descobrir-hardwares/fontes
+- POST /descobrir-hardwares
+- POST /descobrir-hardwares/detalhar
+- POST /ia-tecnica/gerar-prompt
+- POST /ia-tecnica/enriquecer
+- POST /meta-ai-whatsapp/enriquecer
+
+ALIASES COMPATÍVEIS COM O BACKEND
+- GET  /api/admin/hardwares/descobrir/fontes
+- POST /api/admin/hardwares/descobrir
+- POST /api/admin/hardwares/descobrir/detalhar
+- POST /api/admin/hardwares/descobrir/ia-tecnica/gerar-prompt
+- POST /api/admin/hardwares/descobrir/ia-tecnica/enriquecer
+- POST /api/admin/hardwares/descobrir/meta-ai-whatsapp/enriquecer
+
+Os aliases chamam exatamente as mesmas funções internas das rotas anteriores.
