@@ -1,3 +1,7 @@
+## v14.20.15 — isolamento de preço e IA técnica
+
+`POST /analisar` com `categoria: null` e `enrich: false` permanece exclusivamente no fluxo comercial e não chama Gemini. Para enriquecimento técnico por link, informe categoria de Hardware ou `enrich: true`.
+
 # v14.20.10 — booleanos desconhecidos não saem como null
 
 - PROCESSADOR: booleanos sem informação confirmada são omitidos do payload final em vez de enviados como `null`.

@@ -1,3 +1,9 @@
+## Atualização v14.20.15 SAFE
+
+- Consulta comercial de preço (`/analisar` com `categoria=null` e `enrich=false`) não chama mais Gemini.
+- Gemini técnico continua automático na descoberta e em link de Hardware com categoria explícita, ou quando `enrich=true`.
+- Scrapers e lógica de preço não foram alterados.
+
 # v14.20.10 — booleanos desconhecidos não saem como null
 
 - PROCESSADOR: booleanos sem informação confirmada são omitidos do payload final em vez de enviados como `null`.

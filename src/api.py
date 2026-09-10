@@ -363,6 +363,20 @@ def _technical_ai_prompt_sync(payload: TechnicalAiPromptRequest) -> dict[str, An
     }
 
 
+def _should_auto_enrich_link_request(categoria: str | None, enrich: bool) -> bool:
+    """Evita que consultas comerciais de preço disparem Gemini.
+
+    O backend de verificação de preços usa /analisar com categoria ausente e
+    enrich=false. Enriquecimento técnico automático por link só entra quando o
+    caller pede enrich explicitamente ou informa uma categoria de HARDWARE.
+    """
+    if enrich:
+        return True
+    category = str(categoria or "").strip().upper()
+    schema = SCHEMAS.get(category)
+    return bool(schema and schema[0] == "HARDWARE" and schema[1])
+
+
 def _validate_url(url: str) -> str:
     value = (url or "").strip()
     parsed = urlparse(value)
@@ -397,10 +411,12 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
-    # v14.20.14: mantém o contrato histórico de /analisar. Se a ficha de
-    # Hardware ainda estiver abaixo do limiar, tenta a IA técnica externa;
-    # qualquer falha do provider preserva link, preço e payload já coletados.
-    result = auto_enrich_link_result(result)
+    # v14.20.15: não misturar consulta comercial de preço com IA técnica.
+    # /analisar com categoria ausente + enrich=false permanece rápido e não
+    # chama Gemini. Link de Hardware continua podendo enriquecer quando a
+    # categoria é explícita ou quando enrich=true.
+    if _should_auto_enrich_link_request(payload.categoria, payload.enrich):
+        result = auto_enrich_link_result(result)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient
@@ -566,10 +582,12 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
-    # v14.20.14: mantém o contrato histórico de /analisar. Se a ficha de
-    # Hardware ainda estiver abaixo do limiar, tenta a IA técnica externa;
-    # qualquer falha do provider preserva link, preço e payload já coletados.
-    result = auto_enrich_link_result(result)
+    # v14.20.15: não misturar consulta comercial de preço com IA técnica.
+    # /analisar com categoria ausente + enrich=false permanece rápido e não
+    # chama Gemini. Link de Hardware continua podendo enriquecer quando a
+    # categoria é explícita ou quando enrich=true.
+    if _should_auto_enrich_link_request(payload.categoria, payload.enrich):
+        result = auto_enrich_link_result(result)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient

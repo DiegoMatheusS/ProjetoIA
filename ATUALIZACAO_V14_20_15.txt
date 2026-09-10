@@ -1,0 +1,18 @@
+PROJETO IA v14.20.15 SAFE
+
+CORRECAO: ISOLAMENTO ENTRE CONSULTA COMERCIAL DE PRECO E GEMINI TECNICO
+
+Problema identificado na v14.20.14:
+- POST /analisar passou a chamar enriquecimento Gemini de forma incondicional.
+- O backend de verificacao de precos usa a mesma rota com categoria=null e enrich=false.
+- Isso podia adicionar latencia/timeout desnecessario ao fluxo de consulta de preco.
+
+Correcao:
+- categoria ausente + enrich=false: NAO chama Gemini;
+- categoria de HARDWARE explicita: pode chamar Gemini se a ficha estiver incompleta;
+- enrich=true: permite enriquecimento tecnico explicito;
+- descoberta de Hardware continua com Gemini automatico abaixo do limiar;
+- scrapers de preco, Magazine/Magalu, Mercado Livre, GenericScraper e BatchPriceUpdater nao foram alterados.
+
+Objetivo:
+Produto IA comercial (links/precos/ofertas) fica isolada da IA tecnica externa.
