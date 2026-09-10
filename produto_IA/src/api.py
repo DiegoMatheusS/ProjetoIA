@@ -25,6 +25,7 @@ from .extractors.meta_ai_whatsapp import (
 )
 from .technical_ai.providers import TechnicalAIProviderError, get_technical_ai_provider
 from .technical_ai.service import build_technical_ai_prompt, enrich_hardware_with_external_ai
+from .technical_ai.auto import auto_enrich_discovery_result, auto_enrich_link_result
 
 
 app = FastAPI(
@@ -396,6 +397,11 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
+    # v14.20.14: mantém o contrato histórico de /analisar. Se a ficha de
+    # Hardware ainda estiver abaixo do limiar, tenta a IA técnica externa;
+    # qualquer falha do provider preserva link, preço e payload já coletados.
+    result = auto_enrich_link_result(result)
+
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient
         from .criabyte.planner import plan_with_client
@@ -560,6 +566,11 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
+    # v14.20.14: mantém o contrato histórico de /analisar. Se a ficha de
+    # Hardware ainda estiver abaixo do limiar, tenta a IA técnica externa;
+    # qualquer falha do provider preserva link, preço e payload já coletados.
+    result = auto_enrich_link_result(result)
+
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient
         from .criabyte.planner import plan_with_client
@@ -628,6 +639,10 @@ async def descobrir_hardwares(
                 payload.enriquecer,
                 payload.noBrowser,
             )
+            # O frontend/backend continuam chamando a mesma rota. A Produto IA
+            # completa automaticamente cards com baixa cobertura antes de responder.
+            if payload.enriquecer:
+                result = await asyncio.to_thread(auto_enrich_discovery_result, category, result)
             result["servicoProdutoIa"] = {
                 "versao": SERVICE_VERSION,
                 "modo": "DESCOBERTA_HARDWARES",
@@ -660,6 +675,10 @@ async def detalhar_hardware_descoberto(
                 payload.enriquecer,
                 payload.noBrowser,
             )
+            if payload.enriquecer:
+                wrapped = await asyncio.to_thread(auto_enrich_discovery_result, category, {"itens": [item]})
+                if isinstance(wrapped.get("itens"), list) and wrapped["itens"]:
+                    item = wrapped["itens"][0]
             safe_payload = normalize_hardware_payload_for_backend(
                 category,
                 item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware"),

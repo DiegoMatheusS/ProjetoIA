@@ -637,3 +637,19 @@ Endpoints:
 
 Variáveis principais: `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_GOOGLE_SEARCH` e `IA_TECNICA_PROVIDER`. Nunca exponha `GEMINI_API_KEY` no frontend.
 
+## v14.20.14 SAFE — Gemini automático sem mudar frontend/backend
+
+A rota histórica de descoberta continua a mesma. Quando `POST /descobrir-hardwares` encontra um Hardware com cobertura técnica abaixo do limiar e `enriquecer=true`, a Produto IA tenta o provider técnico configurado antes de devolver o card. O frontend e o backend não precisam chamar `/ia-tecnica/enriquecer` para o fluxo normal.
+
+O mesmo comportamento foi ligado ao fluxo histórico `POST /analisar` e `POST /analisar-captura`: link, preço, disponibilidade e demais dados comerciais são preservados; o Gemini apenas completa a ficha técnica quando necessário. Se o Gemini estiver sem chave, indisponível, em timeout ou não retornar campos úteis, a análise do link continua funcionando com o payload original normalizado.
+
+Variáveis opcionais:
+
+```text
+IA_TECNICA_AUTO=true
+IA_TECNICA_AUTO_COVERAGE=0.60
+IA_TECNICA_AUTO_MAX_ITEMS=20
+IA_TECNICA_AUTO_WORKERS=4
+```
+
+`IA_TECNICA_AUTO_COVERAGE` define quando a IA externa entra. A normalização final continua sendo da Produto IA, e o provider preenche somente lacunas.

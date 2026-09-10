@@ -260,3 +260,24 @@ A chave fica somente no serviço da Produto IA. Não colocar em VITE_*, frontend
 
 `POST /ia-tecnica/enriquecer` gera o prompt automaticamente com base apenas nas lacunas do Hardware e, quando `GEMINI_GOOGLE_SEARCH=true`, permite que o Gemini use pesquisa web.
 
+## v14.20.14 SAFE — Gemini automático nas rotas existentes
+
+Não é necessário alterar frontend ou backend para o fluxo normal. A Produto IA agora chama a IA técnica internamente quando a ficha continua abaixo do limiar:
+
+- `POST /descobrir-hardwares` — cards de baixa cobertura são enriquecidos antes da resposta;
+- `POST /descobrir-hardwares/detalhar` — detalhamento individual também tenta o provider;
+- `POST /analisar` — análise por link preserva preço/oferta e completa apenas a ficha técnica;
+- `POST /analisar-captura` — mesma regra para captura local.
+
+Falha do Gemini nunca transforma uma análise de link ou uma descoberta válida em erro do fluxo principal. O payload original é preservado e normalizado.
+
+Ajustes opcionais no Railway:
+
+```text
+IA_TECNICA_AUTO=true
+IA_TECNICA_AUTO_COVERAGE=0.60
+IA_TECNICA_AUTO_MAX_ITEMS=20
+IA_TECNICA_AUTO_WORKERS=4
+```
+
+Os valores acima já possuem defaults; só precisam ser criados se você quiser alterar o comportamento.
