@@ -1,0 +1,23 @@
+PROJETO IA v14.20.16 SAFE
+
+ESCOPO ÚNICO DESTA ATUALIZAÇÃO
+- Isolar a fila do endpoint Meta AI/WhatsApp da fila de análise comercial/navegador.
+- Isolar também a chamada direta de IA técnica (Gemini) em fila própria.
+- Não alterar parser Meta AI, scraping de preço, descoberta, normalização técnica ou contratos de payload.
+
+CORREÇÃO
+Antes:
+- /meta-ai-whatsapp/enriquecer usava _analyze_semaphore.
+- /ia-tecnica/enriquecer usava _analyze_semaphore.
+- Com PRODUTO_IA_CONCURRENCY=1, uma análise/Gemini demorada podia deixar o Meta AI aguardando indefinidamente no frontend.
+
+Agora:
+- /analisar e /analisar-captura continuam em _analyze_semaphore.
+- /ia-tecnica/enriquecer usa _technical_ai_semaphore.
+- /meta-ai-whatsapp/enriquecer usa _meta_ai_semaphore.
+
+Variáveis opcionais (não precisam ser adicionadas):
+- PRODUTO_IA_TECHNICAL_AI_CONCURRENCY=2
+- PRODUTO_IA_META_AI_CONCURRENCY=4
+
+Os valores padrão já funcionam sem configuração adicional.

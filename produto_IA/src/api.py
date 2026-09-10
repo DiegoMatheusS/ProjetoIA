@@ -38,6 +38,17 @@ app = FastAPI(
 # Navegador/Playwright consome muita memória; por padrão processamos uma URL por vez.
 _ANALYZE_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_CONCURRENCY", "1")))
 _analyze_semaphore = asyncio.Semaphore(_ANALYZE_CONCURRENCY)
+
+# IA técnica externa (ex.: Gemini) não deve bloquear análise comercial/preço nem
+# o parser local do Meta AI/WhatsApp. Mantém fila própria.
+_TECHNICAL_AI_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_TECHNICAL_AI_CONCURRENCY", "2")))
+_technical_ai_semaphore = asyncio.Semaphore(_TECHNICAL_AI_CONCURRENCY)
+
+# O endpoint do Meta AI/WhatsApp apenas interpreta uma resposta já recebida.
+# Ele precisa responder mesmo quando navegador/análise/Gemini estiverem ocupados.
+_META_AI_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_META_AI_CONCURRENCY", "4")))
+_meta_ai_semaphore = asyncio.Semaphore(_META_AI_CONCURRENCY)
+
 # Descoberta em lote também pode usar navegador/fontes externas. Mantemos fila
 # separada, mas igualmente conservadora para não derrubar a Railway.
 _DISCOVERY_CONCURRENCY = max(1, int(os.getenv("PRODUTO_IA_DISCOVERY_CONCURRENCY", "1")))
@@ -740,7 +751,7 @@ async def enriquecer_com_ia_tecnica(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     _validate_api_key(x_api_key)
-    async with _analyze_semaphore:
+    async with _technical_ai_semaphore:
         try:
             return await asyncio.to_thread(_technical_ai_enrich_sync, payload)
         except TechnicalAIProviderError as exc:
@@ -757,7 +768,7 @@ async def enriquecer_com_meta_ai_whatsapp(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     _validate_api_key(x_api_key)
-    async with _analyze_semaphore:
+    async with _meta_ai_semaphore:
         try:
             return await asyncio.to_thread(_meta_ai_whatsapp_enrich_sync, payload)
         except HTTPException:
