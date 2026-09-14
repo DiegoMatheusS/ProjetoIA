@@ -33,42 +33,39 @@ class GenericScraper:
 
     @staticmethod
     def _product_json_ld(soup):
-        def find_product(value):
+        products = []
+        def find_products(value, depth=0):
+            if depth > 10:
+                return
             if isinstance(value, list):
                 for item in value:
-                    found = find_product(item)
-                    if found:
-                        return found
-                return None
-            if not isinstance(value, dict):
-                return None
-            kind = value.get("@type")
-            if kind == "Product" or (isinstance(kind, list) and "Product" in kind):
-                return value
-            graph = value.get("@graph")
-            if graph:
-                found = find_product(graph)
-                if found:
-                    return found
-            for child in value.values():
-                if isinstance(child, (dict, list)):
-                    found = find_product(child)
-                    if found:
-                        return found
-            return None
+                    find_products(item, depth + 1)
+            elif isinstance(value, dict):
+                kind = value.get("@type")
+                if kind == "Product" or (isinstance(kind, list) and "Product" in kind):
+                    products.append(value)
+                    return
+                for key in ("@graph", "mainEntity"):
+                    find_products(value.get(key), depth + 1)
 
         for script in soup.select('script[type="application/ld+json"]'):
-            raw = script.string or script.get_text()
-            if not raw:
-                continue
             try:
-                data = json.loads(raw)
-            except Exception:
+                find_products(json.loads(script.string or script.get_text()))
+            except (ValueError, TypeError):
                 continue
-            product = find_product(data)
-            if product:
-                return product
-        return {}
+        canonical = soup.select_one('link[rel="canonical"]')
+        if len(products) > 1 and canonical and canonical.get("href"):
+            target = urlparse(canonical["href"])
+            matches = []
+            for product in products:
+                address = product.get("url") or product.get("@id")
+                if not isinstance(address, str):
+                    continue
+                parsed = urlparse(urljoin(canonical["href"], address))
+                if (parsed.netloc, parsed.path.rstrip("/")) == (target.netloc, target.path.rstrip("/")):
+                    matches.append(product)
+            products = matches
+        return products[0] if len(products) == 1 else {}
 
     @staticmethod
     def _meta(soup, *selectors):
@@ -173,7 +170,9 @@ class GenericScraper:
         product = self._product_json_ld(soup)
         offers = product.get("offers") if isinstance(product, dict) else None
         if isinstance(offers, list):
-            offers = offers[0] if offers else {}
+            valid = [offer for offer in offers if isinstance(offer, dict)]
+            prices = {to_float(offer.get("price")) for offer in valid}
+            offers = valid[0] if valid and len(prices) == 1 else {}
         if not isinstance(offers, dict):
             offers = {}
 
@@ -200,9 +199,9 @@ class GenericScraper:
             image = urljoin(final_url, image)
 
         price = to_float(offers.get("price")) or to_float(self._meta(
-            soup, 'meta[property="product:price:amount"]', 'meta[itemprop="price"]'
+            soup, 'meta[property="product:price:amount"]', 'meta[property="og:price:amount"]'
         ))
-        previous = to_float(offers.get("highPrice"))
+        previous = None  # highPrice is an offer range, not a historical price.
 
         availability = clean_text(offers.get("availability"))
         available = None

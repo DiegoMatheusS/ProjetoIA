@@ -7,6 +7,7 @@ normaliza tipos/unidades e preenche apenas lacunas do payload CriaByte.
 from __future__ import annotations
 
 import os
+import json
 import re
 import unicodedata
 from typing import Any
@@ -383,6 +384,21 @@ def parse_meta_ai_response(category: str, response_text: str) -> dict[str, Any]:
 
     alias_index = _build_alias_index(category)
     raw_specs: dict[str, Any] = {}
+    # Gemini may return JSON despite the requested line format. Preserve native
+    # booleans/lists, then use the same category whitelist and DTO normalization.
+    json_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I).strip()
+    try:
+        structured = json.loads(json_text)
+    except (ValueError, TypeError):
+        structured = None
+    if isinstance(structured, dict):
+        for key in ("payload", schema[1], "especificacoes", "especificacoesEncontradas"):
+            if isinstance(structured.get(key), dict):
+                structured = structured[key]
+        for label, value in structured.items():
+            field = alias_index.get(_key(label))
+            if field and value is not None and (not isinstance(value, str) or not _nullish_text(value)):
+                raw_specs.setdefault(field, value)
     memory_frequency: int | None = None
     for label, value in _line_attributes(text):
         field = alias_index.get(_key(label))

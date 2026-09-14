@@ -60,9 +60,9 @@ class GeminiProvider(TechnicalAIProvider):
         self.enabled = os.getenv("GEMINI_ENABLED", "true").strip().casefold() in {"1", "true", "sim", "yes", "on"}
         self.google_search = os.getenv("GEMINI_GOOGLE_SEARCH", "true").strip().casefold() in {"1", "true", "sim", "yes", "on"}
         try:
-            self.timeout = max(5.0, float(os.getenv("GEMINI_TIMEOUT_SECONDS", "25")))
+            self.timeout = max(5.0, float(os.getenv("GEMINI_TIMEOUT_SECONDS", "45")))
         except ValueError:
-            self.timeout = 25.0
+            self.timeout = 45.0
         try:
             self.max_retries = min(3, max(0, int(os.getenv("GEMINI_MAX_RETRIES", "1"))))
         except ValueError:
@@ -104,7 +104,7 @@ class GeminiProvider(TechnicalAIProvider):
             parts = content.get("parts") or []
             chunks: list[str] = []
             for part in parts:
-                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                if isinstance(part, dict) and not part.get("thought") and isinstance(part.get("text"), str):
                     text = part["text"].strip()
                     if text:
                         chunks.append(text)
@@ -145,6 +145,8 @@ class GeminiProvider(TechnicalAIProvider):
             return TechnicalAIProviderError("LIMITE_PROVEDOR", detail or "Limite do Gemini atingido", status_code=503, transient=True)
         if status in {408, 504}:
             return TechnicalAIProviderError("TIMEOUT_PROVEDOR", detail or "Timeout no Gemini", status_code=504, transient=True)
+        if status == 404:
+            return TechnicalAIProviderError("MODELO_INDISPONIVEL", "Modelo Gemini não disponível. Confira GEMINI_MODEL e o acesso da chave a esse modelo.", status_code=502)
         if status == 400:
             return TechnicalAIProviderError("RESPOSTA_INVALIDA", detail or "Requisição rejeitada pelo Gemini", status_code=502)
         if status >= 500:
@@ -195,6 +197,11 @@ class GeminiProvider(TechnicalAIProvider):
             except ValueError as exc:
                 raise TechnicalAIProviderError("RESPOSTA_INVALIDA", "Gemini retornou JSON inválido", status_code=502) from exc
 
+            if not isinstance(data, dict):
+                raise TechnicalAIProviderError("RESPOSTA_INVALIDA", "Gemini retornou formato inesperado", status_code=502)
+            candidates = data.get("candidates") or []
+            if candidates and candidates[0].get("finishReason") == "MAX_TOKENS":
+                raise TechnicalAIProviderError("RESPOSTA_TRUNCADA", "Resposta técnica interrompida pelo limite de tokens. A ficha foi preservada; ajuste GEMINI_MAX_OUTPUT_TOKENS.", status_code=502)
             text = self._response_text(data)
             if not text:
                 raise TechnicalAIProviderError("RESPOSTA_VAZIA", "Gemini não retornou conteúdo técnico", status_code=502)
