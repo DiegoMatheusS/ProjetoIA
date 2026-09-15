@@ -4,7 +4,8 @@ Fluxo atual:
 1. o agente de pesquisa tecnica consulta fontes especializadas para o hardware selecionado;
 2. a OpenAI recebe a mesma pergunta do Meta AI somente para as lacunas restantes;
 3. se a primeira resposta avancar e ainda houver lacunas, uma segunda rodada focada pode ocorrer;
-4. falha posterior preserva todo avanco obtido nas rodadas anteriores.
+4. falha posterior preserva todo avanco obtido nas rodadas anteriores;
+5. a ficha final passa por uma auditoria de qualidade antes de poder ser marcada como PRONTO.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from ..extractors.meta_ai_whatsapp import (
 )
 from ..research_agent.agent import research_hardware_locally
 from ..research_agent.confidence import annotate_field_confidence
+from ..research_agent.quality_gate import evaluate_research_quality
 from .iterative_research import run_iterative_external_research
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
@@ -68,7 +70,7 @@ def _local_enrich(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any
             "origemPorCampo": {},
             "conflitos": [],
             "agentePesquisa": {
-                "versao": 4,
+                "versao": 5,
                 "ativo": True,
                 "resultado": "ERRO_COM_FALLBACK_OPENAI",
             },
@@ -86,6 +88,14 @@ def _local_sources(info: dict[str, Any]) -> list[str]:
     return out
 
 
+def _status_with_quality_gate(status: str, audit: dict[str, Any]) -> str:
+    # A auditoria nunca promove uma ficha. Ela apenas impede PRONTO silencioso
+    # quando um campo essencial veio de fonte fraca, sem proveniencia ou em conflito.
+    if status == "PRONTO" and not audit.get("podeMarcarPronto"):
+        return "PRECISA_REVISAO"
+    return status
+
+
 def _local_only_result(
     *,
     category: str,
@@ -99,6 +109,22 @@ def _local_only_result(
 ) -> dict[str, Any]:
     safe_after, _spec_field, state_after, coverage_after, missing_after = _coverage_state(category, safe_local)
     filled = list(dict.fromkeys(local_info.get("camposPreenchidos") or []))
+    conflicts = list(local_info.get("conflitos") or [])
+    payload_issues = list(registration_payload_issues(category, safe_after))
+    confidence_by_field = local_info.get("confiancaPorCampo") or {}
+    audit = evaluate_research_quality(
+        category,
+        original_payload=safe_initial,
+        final_payload=safe_after,
+        confidence_by_field=confidence_by_field,
+        conflicts=conflicts,
+        registration_issues=payload_issues,
+    )
+    status_after = _status_with_quality_gate(
+        technical_status(state_after, conflicts=conflicts),
+        audit,
+    )
+
     result: dict[str, Any] = {
         "utilizado": bool(filled),
         "provedor": "PROJETO_IA",
@@ -111,19 +137,22 @@ def _local_only_result(
         "camposPreenchidos": filled,
         "camposAusentes": missing_after,
         "camposObrigatoriosAusentes": required_missing_fields(state_after),
-        "conflitos": list(local_info.get("conflitos") or []),
+        "conflitos": conflicts,
         "especificacoesInterpretadas": {},
-        "statusFicha": technical_status(state_after, conflicts=local_info.get("conflitos") or []),
+        "statusFicha": status_after,
         "payload": safe_after,
-        "payloadValidoParaCadastro": not bool(registration_payload_issues(category, safe_after)),
-        "problemasPayload": list(registration_payload_issues(category, safe_after)),
+        "payloadValidoParaCadastro": not bool(payload_issues),
+        "problemasPayload": payload_issues,
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
         "origemPorCampo": local_info.get("origemPorCampo") or {},
-        "confiancaPorCampo": local_info.get("confiancaPorCampo") or {},
+        "confiancaPorCampo": confidence_by_field,
         "confiancaMediaPesquisa": local_info.get("confiancaMediaPesquisa"),
         "camposIaNaoConfirmados": local_info.get("camposIaNaoConfirmados") or [],
         "rodadasOpenAI": [],
+        "auditoriaPesquisa": audit,
+        "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+        "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
     }
     if provider_error is not None:
         result["fallbackExternoFalhou"] = True
@@ -173,6 +202,15 @@ def enrich_hardware_with_external_ai(
     status_before = technical_status(state_initial)
 
     if not missing_before:
+        payload_issues = list(registration_payload_issues(category, safe_initial))
+        audit = evaluate_research_quality(
+            category,
+            original_payload=safe_initial,
+            final_payload=safe_initial,
+            confidence_by_field={},
+            conflicts=[],
+            registration_issues=payload_issues,
+        )
         result = {
             "utilizado": False,
             "motivo": "FICHA_SEM_LACUNAS",
@@ -188,9 +226,14 @@ def enrich_hardware_with_external_ai(
             "camposObrigatoriosAusentes": required_missing_fields(state_initial),
             "conflitos": [],
             "especificacoesInterpretadas": {},
-            "statusFicha": status_before,
+            "statusFicha": _status_with_quality_gate(status_before, audit),
             "payload": safe_initial,
+            "payloadValidoParaCadastro": not bool(payload_issues),
+            "problemasPayload": payload_issues,
             "rodadasOpenAI": [],
+            "auditoriaPesquisa": audit,
+            "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+            "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
         }
         if hardware_id is not None:
             result["hardwareId"] = hardware_id
@@ -250,7 +293,6 @@ def enrich_hardware_with_external_ai(
     missing_after = technical_missing_fields(state_after)
     local_conflicts = list(local_info.get("conflitos") or [])
     conflicts = local_conflicts + list(external_result.conflicts or [])
-    status_after = technical_status(state_after, conflicts=conflicts)
 
     local_filled = list(local_info.get("camposPreenchidos") or [])
     filled = list(dict.fromkeys(local_filled + external_filled))
@@ -282,7 +324,20 @@ def enrich_hardware_with_external_ai(
         }
     )
 
-    payload_issues = registration_payload_issues(category, safe_after)
+    payload_issues = list(registration_payload_issues(category, safe_after))
+    audit = evaluate_research_quality(
+        category,
+        original_payload=safe_initial,
+        final_payload=safe_after,
+        confidence_by_field=confidence.get("confiancaPorCampo") or {},
+        conflicts=conflicts,
+        registration_issues=payload_issues,
+    )
+    status_after = _status_with_quality_gate(
+        technical_status(state_after, conflicts=conflicts),
+        audit,
+    )
+
     threshold = fallback_coverage_threshold()
     meta_recommended = should_use_meta_ai_fallback(coverage_after, threshold=threshold)
     meta_fallback = {
@@ -317,7 +372,7 @@ def enrich_hardware_with_external_ai(
         "statusFicha": status_after,
         "payload": safe_after,
         "payloadValidoParaCadastro": not bool(payload_issues),
-        "problemasPayload": list(payload_issues),
+        "problemasPayload": payload_issues,
         # Mantidos por compatibilidade com o frontend/diagnostico existente.
         "promptUtilizado": external_result.first_prompt,
         "camposSolicitados": external_result.first_requested_fields,
@@ -330,6 +385,9 @@ def enrich_hardware_with_external_ai(
         "enriquecimentoProprio": local_info,
         "rodadasOpenAI": external_result.rounds,
         "metaAiWhatsappFallback": meta_fallback,
+        "auditoriaPesquisa": audit,
+        "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+        "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
     }
 
     # Se a primeira rodada funcionou e a segunda falhou, o avanco nao e descartado.
