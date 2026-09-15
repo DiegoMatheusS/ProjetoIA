@@ -28,7 +28,7 @@ from ..extractors.meta_ai_whatsapp import (
     merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
-from .evidence import grounded_prompt, filter_grounded_response, collect_cited_sources
+from .evidence import collect_cited_sources
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
 
@@ -210,9 +210,9 @@ def enrich_hardware_with_external_ai(
             hardware_id=hardware_id,
         )
 
-    # 2) OpenAI somente para lacunas que permaneceram.
+    # 2) OpenAI somente para lacunas que permaneceram. O prompt enviado é
+    # exatamente o mesmo formato Campo: valor usado pelo Completar por Meta AI.
     prompt, missing_from_prompt = build_technical_ai_prompt(category, name, safe_local)
-    prompt = grounded_prompt(prompt, safe_local, local_info)
     provider = get_technical_ai_provider(provider_name or "OPENAI")
     try:
         external = provider.enrich(prompt)
@@ -229,21 +229,24 @@ def enrich_hardware_with_external_ai(
             hardware_id=hardware_id,
         )
 
+    # As citações da busca web continuam sendo coletadas como proveniência, mas
+    # não bloqueiam o uso de um campo apenas porque o coletor local ainda não
+    # possui o mesmo trecho. A resposta continua passando pelo parser, schema,
+    # normalização e validação técnica antes de entrar no payload.
     try:
         collect_cited_sources(category, safe_local, external.sources, local_info)
     except Exception as exc:
         local_info["erroVerificacaoCitacoes"] = type(exc).__name__
-    grounded_text, ai_provenance, rejected = filter_grounded_response(category, external.text, local_info)
-    local_info["camposIaNaoConfirmados"] = rejected
+
     safe_after, external_filled, parsed_specs, external_conflicts = merge_meta_ai_response_into_payload_detailed(
         category,
         safe_local,
-        grounded_text,
+        external.text,
     )
     safe_after = normalize_hardware_payload_for_backend(category, safe_after)
     specs_after, consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
     safe_after[spec_field] = specs_after
-    rejected.extend(consistency_issues)
+    rejected = list(consistency_issues)
     external_filled = [field for field in external_filled if specs_after.get(field) not in (None, "", [])]
     state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
     coverage_after = technical_coverage(state_after)
@@ -264,12 +267,27 @@ def enrich_hardware_with_external_ai(
             local_info=local_info,
             coverage_before=coverage_before,
             provider_error=TechnicalAIProviderError(
-                "EVIDENCIA_NAO_CONFIRMADA" if rejected else "PARSER_SEM_DADOS",
-                "A resposta não trouxe campos técnicos com evidência verificável; os dados coletados foram preservados",
+                "PARSER_SEM_DADOS",
+                "A resposta da OpenAI não trouxe campos técnicos reconhecíveis; os dados coletados foram preservados",
                 status_code=422,
             ),
             hardware_id=hardware_id,
         )
+
+    source_urls = [
+        str(item.get("url") or "").strip()
+        for item in (external.sources or [])
+        if isinstance(item, dict) and str(item.get("url") or "").strip()
+    ][:20]
+    ai_provenance = {
+        field: {
+            "fonte": "OPENAI_WEB_SEARCH" if source_urls else "OPENAI",
+            "modelo": external.model,
+            "urls": source_urls,
+            "metodo": "IA_PARSER_SCHEMA_VALIDADO",
+        }
+        for field in external_filled
+    }
 
     payload_issues = registration_payload_issues(category, safe_after)
     threshold = fallback_coverage_threshold()
