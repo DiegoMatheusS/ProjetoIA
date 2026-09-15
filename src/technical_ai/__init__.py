@@ -1,5 +1,5 @@
 from .providers import (
-    GeminiProvider,
+    OpenAIProvider,
     TechnicalAIProvider,
     TechnicalAIProviderError,
     TechnicalAIResponse,
@@ -8,7 +8,7 @@ from .providers import (
 from .service import build_technical_ai_prompt, enrich_hardware_with_external_ai
 
 __all__ = [
-    "GeminiProvider",
+    "OpenAIProvider",
     "TechnicalAIProvider",
     "TechnicalAIProviderError",
     "TechnicalAIResponse",
