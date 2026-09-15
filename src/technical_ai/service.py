@@ -1,9 +1,9 @@
 """Orquestração de enriquecimento técnico.
 
 Fluxo atual:
-1. tenta primeiro a IA própria/fontes técnicas da Produto IA;
-2. usa OpenAI apenas para preencher lacunas restantes;
-3. se a OpenAI falhar, preserva e devolve o resultado da IA própria sem 503.
+1. o agente de pesquisa técnica planeja e consulta fontes especializadas para o hardware selecionado;
+2. usa OpenAI com a mesma pergunta do Meta AI para preencher as lacunas restantes;
+3. se a pesquisa local ou a OpenAI falhar, preserva o payload atual sem derrubar o botão.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typing import Any
 
 from ..enrichment.quality import validate_specs
 from ..enrichment.core import (
-    apply_enrichment,
     required_missing_fields,
     technical_coverage,
     technical_missing_fields,
@@ -28,6 +27,7 @@ from ..extractors.meta_ai_whatsapp import (
     merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
+from ..research_agent.agent import research_hardware_locally
 from .evidence import collect_cited_sources
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
@@ -48,34 +48,31 @@ def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, A
 
 
 def _local_enrich(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    safe, spec_field, state, _coverage, _missing = _coverage_state(category, payload)
-    result = {
-        "categoriaDetectada": category,
-        "nome": safe.get("nome"),
-        "especificacoesEncontradas": state["especificacoesEncontradas"],
-        "payloadParcialBackend": safe,
-    }
+    safe, _spec_field, _state, _coverage, _missing = _coverage_state(category, payload)
     try:
-        enriched = apply_enrichment(result, auto_mode=True)
+        return research_hardware_locally(
+            category,
+            safe,
+            name=safe.get("nome"),
+        )
     except Exception as exc:
+        # O agente local é uma etapa de pesquisa, não um ponto único de falha.
+        # Em erro inesperado, a OpenAI ainda recebe a mesma pergunta do Meta AI
+        # para tentar completar as lacunas do payload original.
         return safe, {
             "executado": False,
-            "motivoIgnorado": "ERRO_ENRIQUECIMENTO_PROPRIO",
-            "erro": str(exc),
+            "motivoIgnorado": "ERRO_AGENTE_PESQUISA_TECNICA",
+            "erro": f"{type(exc).__name__}: {exc}",
             "camposPreenchidos": [],
             "fontesConsultadas": [],
+            "origemPorCampo": {},
+            "conflitos": [],
+            "agentePesquisa": {
+                "versao": 1,
+                "ativo": True,
+                "resultado": "ERRO_COM_FALLBACK_OPENAI",
+            },
         }
-
-    local_payload = enriched.get("payloadParcialBackend")
-    if not isinstance(local_payload, dict):
-        local_payload = dict(safe)
-        local_specs = enriched.get("especificacoesEncontradas")
-        if isinstance(local_specs, dict):
-            local_payload[spec_field] = local_specs
-
-    local_safe = normalize_hardware_payload_for_backend(category, local_payload)
-    info = enriched.get("enriquecimentoTecnico")
-    return local_safe, info if isinstance(info, dict) else {}
 
 
 def _local_sources(info: dict[str, Any]) -> list[str]:
@@ -134,7 +131,7 @@ def _local_only_result(
             "statusProvedor": provider_error.provider_status_code,
         }
         result["mensagem"] = (
-            "A OpenAI não pôde completar a ficha. Foram preservados os dados obtidos pela IA própria."
+            "A OpenAI não pôde completar a ficha. Foram preservados os dados obtidos pela pesquisa técnica."
         )
     elif not missing_after:
         result["motivo"] = "FICHA_COMPLETADA_PELA_IA_PROPRIA"
@@ -195,7 +192,7 @@ def enrich_hardware_with_external_ai(
             result["hardwareId"] = hardware_id
         return result
 
-    # 1) IA própria / fontes técnicas primeiro.
+    # 1) Agente de pesquisa técnica / fontes especializadas primeiro.
     safe_local, local_info = _local_enrich(category, safe_initial)
     safe_local, _local_spec_field, state_local, _coverage_local, missing_local = _coverage_state(category, safe_local)
 
