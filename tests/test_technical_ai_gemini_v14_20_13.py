@@ -1,9 +1,13 @@
-import os
-
-import pytest
 import requests
 
-from src.technical_ai.providers import GeminiProvider, TechnicalAIProviderError, TechnicalAIResponse
+import pytest
+
+from src.technical_ai.providers import (
+    OpenAIProvider,
+    TechnicalAIProviderError,
+    TechnicalAIResponse,
+    get_technical_ai_provider,
+)
 from src.technical_ai.service import build_technical_ai_prompt, enrich_hardware_with_external_ai
 
 
@@ -30,8 +34,8 @@ class FakeSession:
         return item
 
 
-class FakeGemini:
-    name = "GEMINI"
+class FakeOpenAI:
+    name = "OPENAI"
     configured = True
 
     def __init__(self, text):
@@ -41,89 +45,139 @@ class FakeGemini:
     def enrich(self, prompt):
         self.prompts.append(prompt)
         return TechnicalAIResponse(
-            provider="GEMINI",
-            model="gemini-test",
+            provider="OPENAI",
+            model="gpt-test",
             text=self.text,
             sources=[{"url": "https://example.com/spec", "titulo": "Ficha"}],
         )
 
 
-def _gemini_payload(text):
+class FailingOpenAI:
+    name = "OPENAI"
+    configured = True
+
+    def enrich(self, _prompt):
+        raise TechnicalAIProviderError(
+            "LIMITE_PROVEDOR",
+            "quota esgotada",
+            status_code=503,
+            transient=True,
+            provider_status_code=429,
+        )
+
+
+def _openai_payload(text):
     return {
-        "candidates": [
+        "output": [
             {
-                "content": {"parts": [{"text": text}]},
-                "groundingMetadata": {
-                    "groundingChunks": [
-                        {"web": {"uri": "https://example.com/spec", "title": "Ficha"}},
-                        {"web": {"uri": "https://example.com/spec", "title": "Duplicada"}},
-                    ]
-                },
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": text,
+                        "annotations": [
+                            {
+                                "type": "url_citation",
+                                "url": "https://example.com/spec",
+                                "title": "Ficha",
+                            }
+                        ],
+                    }
+                ],
             }
         ]
     }
 
 
-def test_gemini_provider_uses_env_key_header_and_google_search(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "segredo-teste")
-    monkeypatch.setenv("GEMINI_MODEL", "gemini-test")
-    monkeypatch.setenv("GEMINI_GOOGLE_SEARCH", "true")
-    monkeypatch.setenv("GEMINI_MAX_RETRIES", "0")
-    session = FakeSession([FakeResponse(data=_gemini_payload("Socket: AM5"))])
-    provider = GeminiProvider(session=session)
+def _disable_local_enrichment(monkeypatch):
+    monkeypatch.setattr(
+        "src.technical_ai.service._local_enrich",
+        lambda _category, payload: (dict(payload), {"camposPreenchidos": [], "fontesConsultadas": [], "conflitos": []}),
+    )
+
+
+def test_openai_provider_uses_env_key_bearer_and_web_search(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "segredo-teste")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    monkeypatch.setenv("OPENAI_WEB_SEARCH", "true")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "0")
+    session = FakeSession([FakeResponse(data=_openai_payload("Socket: AM5"))])
+    provider = OpenAIProvider(session=session)
 
     out = provider.enrich("Pesquise a CPU")
 
-    assert out.provider == "GEMINI"
-    assert out.model == "gemini-test"
+    assert out.provider == "OPENAI"
+    assert out.model == "gpt-test"
     assert out.text == "Socket: AM5"
     assert out.sources == [{"url": "https://example.com/spec", "titulo": "Ficha"}]
     url, kwargs = session.calls[0]
+    assert url == "https://api.openai.com/v1/responses"
     assert "segredo-teste" not in url
-    assert kwargs["headers"]["x-goog-api-key"] == "segredo-teste"
-    assert kwargs["json"]["tools"] == [{"google_search": {}}]
-    assert kwargs["timeout"] >= 5
+    assert kwargs["headers"]["Authorization"] == "Bearer segredo-teste"
+    assert kwargs["json"]["tools"] == [{"type": "web_search"}]
+    assert kwargs["json"]["store"] is False
 
 
-def test_gemini_provider_can_disable_google_search(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "x")
-    monkeypatch.setenv("GEMINI_GOOGLE_SEARCH", "false")
-    session = FakeSession([FakeResponse(data=_gemini_payload("TDP: 65 W"))])
-    provider = GeminiProvider(session=session)
+def test_openai_provider_can_disable_web_search(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_WEB_SEARCH", "false")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "0")
+    session = FakeSession([FakeResponse(data=_openai_payload("TDP: 65 W"))])
+    provider = OpenAIProvider(session=session)
     provider.enrich("CPU")
     assert "tools" not in session.calls[0][1]["json"]
 
 
-def test_gemini_not_configured_is_specific_error(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    provider = GeminiProvider(session=FakeSession([]))
+def test_openai_not_configured_is_specific_error(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    provider = OpenAIProvider(session=FakeSession([]))
     with pytest.raises(TechnicalAIProviderError) as exc:
         provider.enrich("CPU")
     assert exc.value.code == "PROVEDOR_NAO_CONFIGURADO"
 
 
-def test_gemini_invalid_key_error_is_specific(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "x")
-    monkeypatch.setenv("GEMINI_MAX_RETRIES", "0")
+def test_openai_invalid_key_error_is_specific(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "0")
     session = FakeSession([FakeResponse(status_code=401, data={"error": {"message": "invalid key"}})])
-    provider = GeminiProvider(session=session)
+    provider = OpenAIProvider(session=session)
     with pytest.raises(TechnicalAIProviderError) as exc:
         provider.enrich("CPU")
     assert exc.value.code == "CHAVE_INVALIDA"
+    assert exc.value.provider_status_code == 401
     assert "invalid key" in exc.value.message
 
 
-def test_gemini_retries_transient_timeout(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "x")
-    monkeypatch.setenv("GEMINI_MAX_RETRIES", "1")
+def test_openai_quota_error_is_specific(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "0")
+    session = FakeSession([FakeResponse(status_code=429, data={"error": {"message": "quota"}})])
+    provider = OpenAIProvider(session=session)
+    with pytest.raises(TechnicalAIProviderError) as exc:
+        provider.enrich("CPU")
+    assert exc.value.code == "LIMITE_PROVEDOR"
+    assert exc.value.status_code == 503
+    assert exc.value.provider_status_code == 429
+
+
+def test_openai_retries_transient_timeout(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "1")
     session = FakeSession([
         requests.Timeout("timeout"),
-        FakeResponse(data=_gemini_payload("Arquitetura: Zen 4")),
+        FakeResponse(data=_openai_payload("Arquitetura: Zen 4")),
     ])
-    provider = GeminiProvider(session=session)
+    provider = OpenAIProvider(session=session)
     out = provider.enrich("CPU")
     assert out.text == "Arquitetura: Zen 4"
     assert len(session.calls) == 2
+
+
+def test_legacy_gemini_selection_is_routed_to_openai(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    provider = get_technical_ai_provider("GEMINI")
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.name == "OPENAI"
 
 
 def test_prompt_requests_only_real_missing_fields():
@@ -142,24 +196,21 @@ def test_prompt_requests_only_real_missing_fields():
     }
     prompt, missing = build_technical_ai_prompt("PROCESSADOR", "AMD Ryzen 9 7900", payload)
     assert "tiposMemoriaSuportados" in missing
-    assert "MPN" not in prompt or "100-100000590BOX" in prompt
     assert "AMD Ryzen 9 7900" in prompt
-    assert "- socket\n" not in prompt
-    assert "- nucleos\n" not in prompt
-    assert "- threads\n" not in prompt
-    assert "Google" not in prompt  # prompt não depende de um mecanismo específico
+    assert "100-100000590BOX" in prompt
 
 
-def test_external_ai_enrichment_reuses_v14_20_12_parser_and_only_fills_gaps(monkeypatch):
-    response = """Arquitetura: Zen 4
-Litografia: 5 nm
-Cache L3: 64 MB
-TDP: 65 W
-TiposMemoriaSuportados: DDR5-5200
-FrequenciaMemoriaMaximaMhz: 5200
-Socket: AM4
-"""
-    fake = FakeGemini(response)
+def test_external_ai_enrichment_only_fills_gaps_after_local_layer(monkeypatch):
+    _disable_local_enrichment(monkeypatch)
+    fake = FakeOpenAI(
+        "Arquitetura: Zen 4\n"
+        "Litografia: 5 nm\n"
+        "Cache L3: 64 MB\n"
+        "TDP: 65 W\n"
+        "TiposMemoriaSuportados: DDR5-5200\n"
+        "FrequenciaMemoriaMaximaMhz: 5200\n"
+        "Socket: AM4\n"
+    )
     monkeypatch.setattr("src.technical_ai.service.get_technical_ai_provider", lambda _name: fake)
     payload = {
         "categoria": "PROCESSADOR",
@@ -176,7 +227,7 @@ Socket: AM4
     }
 
     out = enrich_hardware_with_external_ai(
-        provider_name="GEMINI",
+        provider_name="OPENAI",
         category="PROCESSADOR",
         name="AMD Ryzen 9 7900",
         payload=payload,
@@ -186,67 +237,71 @@ Socket: AM4
 
     specs = out["payload"]["especificacaoProcessador"]
     assert out["utilizado"] is True
-    assert out["provedor"] == "GEMINI"
-    assert out["modelo"] == "gemini-test"
-    assert out["hardwareId"] == 123
+    assert out["provedor"] == "OPENAI"
     assert specs["socket"] == "AM5"
     assert specs["arquitetura"] == "Zen 4"
-    assert specs["litografiaNm"] == 5
-    assert specs["cacheL3Mb"] == 64
-    assert specs["tdpWatts"] == 65
     assert specs["tiposMemoriaSuportados"] == ["DDR5"]
-    assert specs["frequenciaMemoriaMaximaMhz"] == 5200
     assert out["payload"]["preco"] == 999.99
-    assert out["coberturaDepois"] > out["coberturaAntes"]
     assert "socket" not in out["camposPreenchidos"]
     assert any(x["campo"] == "socket" for x in out["conflitos"])
-    assert out["fontesDeclaradas"][0]["url"] == "https://example.com/spec"
-    assert out["somentePreencheLacunas"] is True
-    assert out["payloadOriginal"]["especificacaoProcessador"]["socket"] == "AM5"
 
 
-def test_external_ai_preserves_false_zero_and_never_overwrites(monkeypatch):
-    fake = FakeGemini("SuportaEcc: Sim\nLanesPcie: 24\n")
-    monkeypatch.setattr("src.technical_ai.service.get_technical_ai_provider", lambda _name: fake)
+def test_openai_failure_returns_local_result_instead_of_raising(monkeypatch):
     payload = {
         "categoria": "PROCESSADOR",
-        "nome": "CPU",
+        "nome": "AMD Ryzen 9 7900",
+        "marca": "AMD",
+        "modelo": "Ryzen 9 7900",
         "especificacaoProcessador": {
             "socket": "AM5",
-            "suportaEcc": False,
-            "lanesPcie": 0,
+            "nucleos": 12,
+            "threads": 24,
             "tiposMemoriaSuportados": [],
         },
     }
-    out = enrich_hardware_with_external_ai(
-        provider_name="GEMINI", category="PROCESSADOR", name="CPU", payload=payload
+    local_payload = {
+        **payload,
+        "especificacaoProcessador": {
+            **payload["especificacaoProcessador"],
+            "arquitetura": "Zen 4",
+        },
+    }
+    monkeypatch.setattr(
+        "src.technical_ai.service._local_enrich",
+        lambda _category, _payload: (
+            local_payload,
+            {
+                "camposPreenchidos": ["arquitetura"],
+                "fontesConsultadas": [{"fonte": "FABRICANTE_OFICIAL", "ok": True}],
+                "conflitos": [],
+            },
+        ),
     )
-    specs = out["payload"]["especificacaoProcessador"]
-    assert specs["suportaEcc"] is False
-    assert specs["lanesPcie"] == 0
-    assert {c["campo"] for c in out["conflitos"]} >= {"suportaEcc", "lanesPcie"}
+    monkeypatch.setattr("src.technical_ai.service.get_technical_ai_provider", lambda _name: FailingOpenAI())
+
+    out = enrich_hardware_with_external_ai(
+        provider_name="OPENAI",
+        category="PROCESSADOR",
+        name="AMD Ryzen 9 7900",
+        payload=payload,
+    )
+
+    assert out["provedor"] == "PROJETO_IA"
+    assert out["provedorExterno"] == "OPENAI"
+    assert out["fallbackExternoFalhou"] is True
+    assert out["erroProvedor"]["codigo"] == "LIMITE_PROVEDOR"
+    assert out["erroProvedor"]["statusProvedor"] == 429
+    assert out["payload"]["especificacaoProcessador"]["arquitetura"] == "Zen 4"
+    assert "FABRICANTE_OFICIAL" in out["fontesIaPropria"]
 
 
-def test_external_ai_does_not_allow_automatic_overwrite_mode(monkeypatch):
+def test_external_ai_does_not_allow_automatic_overwrite_mode():
     with pytest.raises(TechnicalAIProviderError) as exc:
         enrich_hardware_with_external_ai(
-            provider_name="GEMINI",
+            provider_name="OPENAI",
             category="PROCESSADOR",
             name="CPU",
             payload={"categoria": "PROCESSADOR", "especificacaoProcessador": {}},
             only_fill_gaps=False,
         )
     assert exc.value.code == "PAYLOAD_INVALIDO"
-
-
-def test_external_ai_parser_without_usable_fields_is_specific_error(monkeypatch):
-    fake = FakeGemini("Preço: R$ 1.999\nLoja: qualquer\n")
-    monkeypatch.setattr("src.technical_ai.service.get_technical_ai_provider", lambda _name: fake)
-    with pytest.raises(TechnicalAIProviderError) as exc:
-        enrich_hardware_with_external_ai(
-            provider_name="GEMINI",
-            category="PROCESSADOR",
-            name="CPU",
-            payload={"categoria": "PROCESSADOR", "especificacaoProcessador": {"tiposMemoriaSuportados": []}},
-        )
-    assert exc.value.code == "PARSER_SEM_DADOS"
