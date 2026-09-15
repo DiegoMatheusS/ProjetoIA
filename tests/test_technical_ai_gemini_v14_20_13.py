@@ -2,6 +2,7 @@ import requests
 
 import pytest
 
+from src.extractors.meta_ai_whatsapp import build_meta_ai_prompt
 from src.technical_ai.providers import (
     OpenAIProvider,
     TechnicalAIProviderError,
@@ -197,7 +198,9 @@ def test_prompt_requests_only_real_missing_fields():
     prompt, missing = build_technical_ai_prompt("PROCESSADOR", "AMD Ryzen 9 7900", payload)
     assert "tiposMemoriaSuportados" in missing
     assert "AMD Ryzen 9 7900" in prompt
-    assert "100-100000590BOX" in prompt
+    assert prompt == build_meta_ai_prompt("PROCESSADOR", "AMD Ryzen 9 7900", missing)
+    assert "Responda exatamente no formato Campo: valor" in prompt
+    assert "100-100000590BOX" not in prompt
 
 
 def test_external_ai_enrichment_only_fills_gaps_after_local_layer(monkeypatch):
