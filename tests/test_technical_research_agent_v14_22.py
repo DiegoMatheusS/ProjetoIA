@@ -25,15 +25,17 @@ def test_iterative_openai_reasks_only_remaining_gaps(monkeypatch):
         def enrich(self, prompt):
             self.calls += 1
             if self.calls == 1:
-                assert "chipset" in prompt
+                assert "- chipset" in prompt
                 return TechnicalAIResponse(
                     provider="OPENAI",
                     model="gpt-test",
                     text="chipset: B550",
                     sources=[{"url": "https://example.com/one", "titulo": "Fonte 1"}],
                 )
-            assert "chipset" not in prompt
-            assert "formato" in prompt
+            # "chipset" pode aparecer nas regras gerais do prompt, mas nao deve
+            # voltar para a lista de Campos necessarios depois de preenchido.
+            assert "- chipset" not in prompt
+            assert "- formato" in prompt
             return TechnicalAIResponse(
                 provider="OPENAI",
                 model="gpt-test",
