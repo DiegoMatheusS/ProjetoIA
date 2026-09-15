@@ -8,11 +8,8 @@ Fluxo atual:
 from __future__ import annotations
 
 from typing import Any
-import json
-from pathlib import Path
 
 from ..enrichment.core import (
-    PROVIDER_PRIORITY,
     apply_enrichment,
     required_missing_fields,
     technical_coverage,
@@ -31,24 +28,6 @@ from ..extractors.meta_ai_whatsapp import (
     should_use_meta_ai_fallback,
 )
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
-
-
-def _identity_name(name: str | None, payload: dict[str, Any]) -> str:
-    values = [
-        name,
-        payload.get("nome"),
-        payload.get("marca"),
-        payload.get("modelo"),
-        payload.get("mpn"),
-        payload.get("gtin"),
-        payload.get("ean"),
-    ]
-    out: list[str] = []
-    for value in values:
-        text = str(value or "").strip()
-        if text and text.casefold() not in {item.casefold() for item in out}:
-            out.append(text)
-    return " | ".join(out) or "hardware"
 
 
 def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any], float, list[str]]:
