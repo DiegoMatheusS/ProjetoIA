@@ -1,9 +1,10 @@
-"""Orquestração de enriquecimento técnico.
+"""Orquestracao de enriquecimento tecnico.
 
 Fluxo atual:
-1. o agente de pesquisa técnica planeja e consulta fontes especializadas para o hardware selecionado;
-2. usa OpenAI com a mesma pergunta do Meta AI para preencher as lacunas restantes;
-3. se a pesquisa local ou a OpenAI falhar, preserva o payload atual sem derrubar o botão.
+1. o agente de pesquisa tecnica consulta fontes especializadas para o hardware selecionado;
+2. a OpenAI recebe a mesma pergunta do Meta AI somente para as lacunas restantes;
+3. se a primeira resposta avancar e ainda houver lacunas, uma segunda rodada focada pode ocorrer;
+4. falha posterior preserva todo avanco obtido nas rodadas anteriores.
 """
 from __future__ import annotations
 
@@ -24,11 +25,11 @@ from ..extractors.dto_normalizer import (
 from ..extractors.meta_ai_whatsapp import (
     build_meta_ai_prompt,
     fallback_coverage_threshold,
-    merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
 from ..research_agent.agent import research_hardware_locally
-from .evidence import collect_cited_sources
+from ..research_agent.confidence import annotate_field_confidence
+from .iterative_research import run_iterative_external_research
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
 
@@ -38,7 +39,7 @@ def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, A
     if not schema or not schema[1]:
         raise TechnicalAIProviderError(
             "PAYLOAD_INVALIDO",
-            "Categoria sem ficha técnica estruturada",
+            "Categoria sem ficha tecnica estruturada",
             status_code=400,
         )
     spec_field = schema[1]
@@ -56,9 +57,8 @@ def _local_enrich(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any
             name=safe.get("nome"),
         )
     except Exception as exc:
-        # O agente local é uma etapa de pesquisa, não um ponto único de falha.
-        # Em erro inesperado, a OpenAI ainda recebe a mesma pergunta do Meta AI
-        # para tentar completar as lacunas do payload original.
+        # O agente local e uma etapa de pesquisa, nao um ponto unico de falha.
+        # Em erro inesperado, a OpenAI ainda recebe a mesma pergunta do Meta AI.
         return safe, {
             "executado": False,
             "motivoIgnorado": "ERRO_AGENTE_PESQUISA_TECNICA",
@@ -68,7 +68,7 @@ def _local_enrich(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any
             "origemPorCampo": {},
             "conflitos": [],
             "agentePesquisa": {
-                "versao": 1,
+                "versao": 4,
                 "ativo": True,
                 "resultado": "ERRO_COM_FALLBACK_OPENAI",
             },
@@ -120,7 +120,10 @@ def _local_only_result(
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
         "origemPorCampo": local_info.get("origemPorCampo") or {},
+        "confiancaPorCampo": local_info.get("confiancaPorCampo") or {},
+        "confiancaMediaPesquisa": local_info.get("confiancaMediaPesquisa"),
         "camposIaNaoConfirmados": local_info.get("camposIaNaoConfirmados") or [],
+        "rodadasOpenAI": [],
     }
     if provider_error is not None:
         result["fallbackExternoFalhou"] = True
@@ -131,7 +134,7 @@ def _local_only_result(
             "statusProvedor": provider_error.provider_status_code,
         }
         result["mensagem"] = (
-            "A OpenAI não pôde completar a ficha. Foram preservados os dados obtidos pela pesquisa técnica."
+            "A OpenAI nao pode completar a ficha. Foram preservados os dados obtidos pela pesquisa tecnica."
         )
     elif not missing_after:
         result["motivo"] = "FICHA_COMPLETADA_PELA_IA_PROPRIA"
@@ -162,7 +165,7 @@ def enrich_hardware_with_external_ai(
     if only_fill_gaps is not True:
         raise TechnicalAIProviderError(
             "PAYLOAD_INVALIDO",
-            "somentePreencheLacunas deve permanecer true para enriquecimento automático",
+            "somentePreencheLacunas deve permanecer true para enriquecimento automatico",
             status_code=400,
         )
 
@@ -187,12 +190,13 @@ def enrich_hardware_with_external_ai(
             "especificacoesInterpretadas": {},
             "statusFicha": status_before,
             "payload": safe_initial,
+            "rodadasOpenAI": [],
         }
         if hardware_id is not None:
             result["hardwareId"] = hardware_id
         return result
 
-    # 1) Agente de pesquisa técnica / fontes especializadas primeiro.
+    # 1) Agente local: cache seguro, fontes especializadas, busca focada e validacao.
     safe_local, local_info = _local_enrich(category, safe_initial)
     safe_local, _local_spec_field, state_local, _coverage_local, missing_local = _coverage_state(category, safe_local)
 
@@ -207,14 +211,20 @@ def enrich_hardware_with_external_ai(
             hardware_id=hardware_id,
         )
 
-    # 2) OpenAI somente para lacunas que permaneceram. O prompt enviado é
-    # exatamente o mesmo formato Campo: valor usado pelo Completar por Meta AI.
-    prompt, missing_from_prompt = build_technical_ai_prompt(category, name, safe_local)
+    # 2) OpenAI: mesma pergunta Campo: valor do Meta AI. Pode fazer uma segunda
+    # rodada somente quando a primeira realmente preencheu campos e ainda ha lacunas.
     provider = get_technical_ai_provider(provider_name or "OPENAI")
-    try:
-        external = provider.enrich(prompt)
-    except TechnicalAIProviderError as exc:
-        # 3) Falha externa nunca derruba o botão Completar com IA.
+    external_result = run_iterative_external_research(
+        provider=provider,
+        category=category,
+        name=name,
+        payload=safe_local,
+        local_info=local_info,
+    )
+
+    # Falha antes de qualquer avanco externo preserva exatamente o comportamento
+    # tolerante anterior: devolve a pesquisa local em vez de gerar 503.
+    if external_result.provider_error is not None and not external_result.filled_fields:
         return _local_only_result(
             category=category,
             name=name,
@@ -222,40 +232,30 @@ def enrich_hardware_with_external_ai(
             safe_local=safe_local,
             local_info=local_info,
             coverage_before=coverage_before,
-            provider_error=exc,
+            provider_error=external_result.provider_error,
             hardware_id=hardware_id,
         )
 
-    # As citações da busca web continuam sendo coletadas como proveniência, mas
-    # não bloqueiam o uso de um campo apenas porque o coletor local ainda não
-    # possui o mesmo trecho. A resposta continua passando pelo parser, schema,
-    # normalização e validação técnica antes de entrar no payload.
-    try:
-        collect_cited_sources(category, safe_local, external.sources, local_info)
-    except Exception as exc:
-        local_info["erroVerificacaoCitacoes"] = type(exc).__name__
-
-    safe_after, external_filled, parsed_specs, external_conflicts = merge_meta_ai_response_into_payload_detailed(
-        category,
-        safe_local,
-        external.text,
-    )
-    safe_after = normalize_hardware_payload_for_backend(category, safe_after)
-    specs_after, consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
+    safe_after = normalize_hardware_payload_for_backend(category, external_result.payload)
+    specs_after, final_consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
     safe_after[spec_field] = specs_after
-    rejected = list(consistency_issues)
-    external_filled = [field for field in external_filled if specs_after.get(field) not in (None, "", [])]
+    external_filled = [
+        field
+        for field in external_result.filled_fields
+        if specs_after.get(field) not in (None, "", [])
+    ]
+    rejected = list(external_result.rejected or []) + list(final_consistency_issues or [])
     state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
     coverage_after = technical_coverage(state_after)
     missing_after = technical_missing_fields(state_after)
     local_conflicts = list(local_info.get("conflitos") or [])
-    conflicts = local_conflicts + list(external_conflicts or [])
+    conflicts = local_conflicts + list(external_result.conflicts or [])
     status_after = technical_status(state_after, conflicts=conflicts)
 
     local_filled = list(local_info.get("camposPreenchidos") or [])
-    filled = list(dict.fromkeys(local_filled + list(external_filled or [])))
+    filled = list(dict.fromkeys(local_filled + external_filled))
 
-    if not parsed_specs and not local_filled:
+    if not external_result.parsed_specs and not local_filled and not external_filled:
         return _local_only_result(
             category=category,
             name=name,
@@ -265,26 +265,22 @@ def enrich_hardware_with_external_ai(
             coverage_before=coverage_before,
             provider_error=TechnicalAIProviderError(
                 "PARSER_SEM_DADOS",
-                "A resposta da OpenAI não trouxe campos técnicos reconhecíveis; os dados coletados foram preservados",
+                "A resposta da OpenAI nao trouxe campos tecnicos reconheciveis; os dados coletados foram preservados",
                 status_code=422,
             ),
             hardware_id=hardware_id,
         )
 
-    source_urls = [
-        str(item.get("url") or "").strip()
-        for item in (external.sources or [])
-        if isinstance(item, dict) and str(item.get("url") or "").strip()
-    ][:20]
-    ai_provenance = {
-        field: {
-            "fonte": "OPENAI_WEB_SEARCH" if source_urls else "OPENAI",
-            "modelo": external.model,
-            "urls": source_urls,
-            "metodo": "IA_PARSER_SCHEMA_VALIDADO",
-        }
-        for field in external_filled
+    origins = {
+        **(local_info.get("origemPorCampo") or {}),
+        **(external_result.provenance or {}),
     }
+    confidence = annotate_field_confidence(
+        {
+            "origemPorCampo": origins,
+            "conflitos": conflicts,
+        }
+    )
 
     payload_issues = registration_payload_issues(category, safe_after)
     threshold = fallback_coverage_threshold()
@@ -306,8 +302,8 @@ def enrich_hardware_with_external_ai(
 
     result: dict[str, Any] = {
         "utilizado": bool(filled),
-        "provedor": external.provider,
-        "modelo": external.model,
+        "provedor": external_result.provider or "OPENAI",
+        "modelo": external_result.model,
         "categoria": category,
         "nome": name or safe_after.get("nome"),
         "somentePreencheLacunas": True,
@@ -317,20 +313,34 @@ def enrich_hardware_with_external_ai(
         "camposAusentes": missing_after,
         "camposObrigatoriosAusentes": required_missing_fields(state_after),
         "conflitos": conflicts,
-        "especificacoesInterpretadas": parsed_specs,
+        "especificacoesInterpretadas": external_result.parsed_specs,
         "statusFicha": status_after,
         "payload": safe_after,
         "payloadValidoParaCadastro": not bool(payload_issues),
         "problemasPayload": list(payload_issues),
-        "promptUtilizado": prompt,
-        "camposSolicitados": missing_from_prompt,
-        "fontesDeclaradas": external.sources,
-        "origemPorCampo": {**(local_info.get("origemPorCampo") or {}), **ai_provenance},
+        # Mantidos por compatibilidade com o frontend/diagnostico existente.
+        "promptUtilizado": external_result.first_prompt,
+        "camposSolicitados": external_result.first_requested_fields,
+        "fontesDeclaradas": external_result.sources,
+        "origemPorCampo": origins,
+        "confiancaPorCampo": confidence.get("confiancaPorCampo") or {},
+        "confiancaMediaPesquisa": confidence.get("confiancaMediaPesquisa"),
         "camposIaNaoConfirmados": rejected,
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
+        "rodadasOpenAI": external_result.rounds,
         "metaAiWhatsappFallback": meta_fallback,
     }
+
+    # Se a primeira rodada funcionou e a segunda falhou, o avanco nao e descartado.
+    if external_result.provider_error is not None and external_filled:
+        result["openAiInterrompidaAposAvanco"] = True
+        result["erroProvedorParcial"] = {
+            "codigo": external_result.provider_error.code,
+            "mensagem": external_result.provider_error.message,
+            "statusProvedor": external_result.provider_error.provider_status_code,
+        }
+
     if hardware_id is not None:
         result["hardwareId"] = hardware_id
         result["payloadOriginal"] = safe_initial

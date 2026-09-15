@@ -14,6 +14,7 @@ from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from .cache import ResearchCache, merge_cached_gaps
 from .confidence import annotate_field_confidence
+from .evidence_resolver import resolve_cache_conflicts
 from .planner import ResearchPlan, build_research_plan
 from .source_router import build_providers
 
@@ -70,13 +71,12 @@ def _merge_round_info(first: dict[str, Any], second: dict[str, Any]) -> dict[str
 
 
 class TechnicalResearchAgent:
-    """Agente de pesquisa técnica para um único hardware selecionado.
+    """Agente de pesquisa tecnica para um unico hardware selecionado.
 
-    A V3 mantém cache, confiança e rodadas da V2 e passa a transformar as lacunas
-    atuais em consultas de busca específicas. Ex.: se faltam BIOS Flashback,
-    ethernet e slots M.2, as fontes recebem uma consulta direcionada a esses dados
-    antes da busca genérica pelo modelo. A identidade do hardware continua sendo
-    validada pelo coletor e a OpenAI continua depois apenas para o que restar.
+    A V4 preserva as buscas focadas da V3, mas trata o cache como dado provisório:
+    valor confirmado no payload original nunca e substituido; valor que entrou apenas
+    pelo cache pode ser corrigido quando uma fonte atual comprovadamente mais forte
+    encontra um valor diferente. A OpenAI continua depois somente para as lacunas.
     """
 
     def __init__(self, *, enabled: bool | None = None, cache: ResearchCache | None = None):
@@ -88,7 +88,7 @@ class TechnicalResearchAgent:
         safe = normalize_hardware_payload_for_backend(category, payload or {})
         schema = SCHEMAS.get(category)
         if not schema or not schema[1]:
-            raise ValueError(f"Categoria sem ficha técnica estruturada: {category}")
+            raise ValueError(f"Categoria sem ficha tecnica estruturada: {category}")
         spec_field = schema[1]
         specs = safe.get(spec_field) if isinstance(safe.get(spec_field), dict) else {}
         return {
@@ -114,7 +114,7 @@ class TechnicalResearchAgent:
             "coberturaTecnicaAntes": round(technical_coverage(result), 4),
             "coberturaTecnicaDepois": round(technical_coverage(result), 4),
             "agentePesquisa": {
-                "versao": 3,
+                "versao": 4,
                 "ativo": False,
             },
         }
@@ -258,7 +258,7 @@ class TechnicalResearchAgent:
                     "camposPreenchidos": cached_filled,
                     "origemPorCampo": cached_origins,
                     "agentePesquisa": {
-                        "versao": 3,
+                        "versao": 4,
                         "ativo": True,
                         "cacheHit": cache_hit,
                         "camposDoCache": cached_filled,
@@ -339,6 +339,15 @@ class TechnicalResearchAgent:
         origins.update(info.get("origemPorCampo") or {})
         info["origemPorCampo"] = origins
 
+        if cached_filled:
+            safe_after, info = resolve_cache_conflicts(
+                category,
+                original_payload=safe_original,
+                researched_payload=safe_after,
+                info=info,
+                cached_fields=cached_filled,
+            )
+
         result_state, _ = self._base_result(category, safe_after)
         focused_queries = sum(
             len(item.get("consultasExecutadas") or [])
@@ -346,10 +355,14 @@ class TechnicalResearchAgent:
             if isinstance(item, dict)
         )
         info["agentePesquisa"] = {
-            "versao": 3,
+            "versao": 4,
             "ativo": True,
             "cacheHit": cache_hit,
             "camposDoCache": cached_filled,
+            "camposCacheSubstituidosPorEvidenciaAtual": list(
+                info.get("camposCacheSubstituidosPorEvidenciaAtual") or []
+            ),
+            "conflitosResolvidos": len(info.get("conflitosResolvidos") or []),
             "plano": plan.as_dict(),
             "rodadas": rounds,
             "consultasEspecificasExecutadas": focused_queries,
