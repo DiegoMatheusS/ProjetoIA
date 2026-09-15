@@ -8,11 +8,8 @@ Fluxo atual:
 from __future__ import annotations
 
 from typing import Any
-import json
-from pathlib import Path
 
 from ..enrichment.core import (
-    PROVIDER_PRIORITY,
     apply_enrichment,
     required_missing_fields,
     technical_coverage,
@@ -31,24 +28,6 @@ from ..extractors.meta_ai_whatsapp import (
     should_use_meta_ai_fallback,
 )
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
-
-
-def _identity_name(name: str | None, payload: dict[str, Any]) -> str:
-    values = [
-        name,
-        payload.get("nome"),
-        payload.get("marca"),
-        payload.get("modelo"),
-        payload.get("mpn"),
-        payload.get("gtin"),
-        payload.get("ean"),
-    ]
-    out: list[str] = []
-    for value in values:
-        text = str(value or "").strip()
-        if text and text.casefold() not in {item.casefold() for item in out}:
-            out.append(text)
-    return " | ".join(out) or "hardware"
 
 
 def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any], float, list[str]]:
@@ -164,32 +143,9 @@ def _local_only_result(
 
 def build_technical_ai_prompt(category: str, name: str | None, payload: dict[str, Any]) -> tuple[str, list[str]]:
     category = str(category or "").strip().upper()
-    safe, _spec_field, state, _coverage, missing = _coverage_state(category, payload)
-    identity = _identity_name(name, safe)
-    base = build_meta_ai_prompt(category, identity, missing)
-    try:
-        domains = json.loads(
-            (Path(__file__).resolve().parents[2] / "config" / "manufacturer_domains.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        official = domains.get(str(safe.get("marca") or "").strip().casefold(), [])
-    except (OSError, ValueError):
-        official = []
-    sources = ", ".join(official + PROVIDER_PRIORITY.get(category, []))
-    context = json.dumps(safe, ensure_ascii=False)
-    prompt = (
-        "Pesquise na Web quando necessário e confirme que os dados pertencem EXATAMENTE ao modelo/variante informado. "
-        "Dê preferência ao fabricante oficial e a fontes técnicas confiáveis. Não misture variantes com MPN/GTIN diferentes.\n\n"
-        + base
-        + "\n\nFontes técnicas já utilizadas pela IA própria: " + sources
-        + "\nA ficha abaixo já passou pelo enriquecimento próprio da Produto IA. "
-          "Preserve todos os campos preenchidos e complete apenas as lacunas. "
-          "Compare MPN, capacidade, revisão e variante antes de preencher qualquer campo. "
-          "Use null quando uma fonte confiável não confirmar o valor.\n"
-        + context
-    )
-    return prompt, missing
+    safe, _spec_field, _state, _coverage, missing = _coverage_state(category, payload)
+    identity = str(name or safe.get("nome") or safe.get("modelo") or "hardware").strip()
+    return build_meta_ai_prompt(category, identity, missing), missing
 
 
 def enrich_hardware_with_external_ai(
