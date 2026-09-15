@@ -53,6 +53,7 @@ def _merge_round_info(first: dict[str, Any], second: dict[str, Any]) -> dict[str
         "evidenciasColetadas",
         "problemasConsistencia",
         "conflitos",
+        "pesquisasFocadas",
     ):
         out[key] = _dedupe(list(out.get(key) or []) + list(other.get(key) or []))
     origins = dict(out.get("origemPorCampo") or {})
@@ -71,11 +72,11 @@ def _merge_round_info(first: dict[str, Any], second: dict[str, Any]) -> dict[str
 class TechnicalResearchAgent:
     """Agente de pesquisa técnica para um único hardware selecionado.
 
-    A V2 mantém o contrato atual do CriaByte, mas passa a trabalhar em rodadas:
-    usa cache seguro apenas para lacunas, consulta primeiro fontes prioritárias,
-    reavalia a cobertura e só então parte para fontes de fallback. A OpenAI segue
-    sendo chamada depois pelo service.py para as lacunas restantes, com a mesma
-    pergunta Campo: valor usada pelo Completar com Meta AI.
+    A V3 mantém cache, confiança e rodadas da V2 e passa a transformar as lacunas
+    atuais em consultas de busca específicas. Ex.: se faltam BIOS Flashback,
+    ethernet e slots M.2, as fontes recebem uma consulta direcionada a esses dados
+    antes da busca genérica pelo modelo. A identidade do hardware continua sendo
+    validada pelo coletor e a OpenAI continua depois apenas para o que restar.
     """
 
     def __init__(self, *, enabled: bool | None = None, cache: ResearchCache | None = None):
@@ -107,12 +108,13 @@ class TechnicalResearchAgent:
             "fontesConsultadas": [],
             "origemPorCampo": {},
             "conflitos": [],
+            "pesquisasFocadas": [],
             "camposAusentesAntes": technical_missing_fields(result),
             "camposAusentesDepois": technical_missing_fields(result),
             "coberturaTecnicaAntes": round(technical_coverage(result), 4),
             "coberturaTecnicaDepois": round(technical_coverage(result), 4),
             "agentePesquisa": {
-                "versao": 2,
+                "versao": 3,
                 "ativo": False,
             },
         }
@@ -142,6 +144,25 @@ class TechnicalResearchAgent:
             if _missing(before_specs.get(field)) and not _missing(value)
         ]
 
+    @staticmethod
+    def _focused_search_diagnostics(providers, missing_fields: list[str]) -> list[dict[str, Any]]:
+        diagnostics = []
+        for provider in providers:
+            resolver = getattr(provider, "resolver", None)
+            focus_terms = list(getattr(resolver, "focus_terms", ()) or ())
+            queries = list(getattr(resolver, "queries_executed", ()) or ())
+            if not focus_terms and not queries:
+                continue
+            diagnostics.append(
+                {
+                    "fonte": getattr(provider, "name", provider.__class__.__name__),
+                    "camposFoco": list(missing_fields),
+                    "termosBusca": focus_terms,
+                    "consultasExecutadas": queries,
+                }
+            )
+        return diagnostics
+
     def _run_round(
         self,
         *,
@@ -154,7 +175,12 @@ class TechnicalResearchAgent:
         target_coverage: float,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         base, _ = self._base_result(category, payload)
-        providers = build_providers(source_names)
+        missing_for_round = technical_missing_fields(base)
+        providers = build_providers(
+            source_names,
+            category=category,
+            missing_fields=missing_for_round,
+        )
         if not providers:
             return payload, {
                 "executado": False,
@@ -162,6 +188,7 @@ class TechnicalResearchAgent:
                 "fontesConsultadas": [],
                 "origemPorCampo": {},
                 "conflitos": [],
+                "pesquisasFocadas": [],
             }
         enricher = TechnicalEnricher(
             providers=providers,
@@ -174,7 +201,12 @@ class TechnicalResearchAgent:
         enriched = enricher.enrich(base)
         safe_after = self._payload_from_enriched(category, spec_field, payload, enriched)
         info = enriched.get("enriquecimentoTecnico")
-        return safe_after, deepcopy(info) if isinstance(info, dict) else {}
+        info = deepcopy(info) if isinstance(info, dict) else {}
+        info["pesquisasFocadas"] = self._focused_search_diagnostics(
+            providers,
+            missing_for_round,
+        )
+        return safe_after, info
 
     def research(
         self,
@@ -226,7 +258,7 @@ class TechnicalResearchAgent:
                     "camposPreenchidos": cached_filled,
                     "origemPorCampo": cached_origins,
                     "agentePesquisa": {
-                        "versao": 2,
+                        "versao": 3,
                         "ativo": True,
                         "cacheHit": cache_hit,
                         "camposDoCache": cached_filled,
@@ -259,8 +291,9 @@ class TechnicalResearchAgent:
         rounds = [
             {
                 "numero": 1,
-                "tipo": "PRIORITARIA",
+                "tipo": "PRIORITARIA_FOCADA",
                 "fontesPlanejadas": primary_sources,
+                "camposFoco": list(plan.missing_fields),
                 "coberturaDepois": round(technical_coverage(first_state), 4),
                 "camposAusentesDepois": technical_missing_fields(first_state),
             }
@@ -292,8 +325,9 @@ class TechnicalResearchAgent:
             rounds.append(
                 {
                     "numero": 2,
-                    "tipo": "FALLBACK",
+                    "tipo": "FALLBACK_FOCADO",
                     "fontesPlanejadas": fallback_sources,
+                    "camposFoco": missing_after_first,
                     "coberturaDepois": round(technical_coverage(second_state), 4),
                     "camposAusentesDepois": technical_missing_fields(second_state),
                 }
@@ -306,13 +340,19 @@ class TechnicalResearchAgent:
         info["origemPorCampo"] = origins
 
         result_state, _ = self._base_result(category, safe_after)
+        focused_queries = sum(
+            len(item.get("consultasExecutadas") or [])
+            for item in info.get("pesquisasFocadas") or []
+            if isinstance(item, dict)
+        )
         info["agentePesquisa"] = {
-            "versao": 2,
+            "versao": 3,
             "ativo": True,
             "cacheHit": cache_hit,
             "camposDoCache": cached_filled,
             "plano": plan.as_dict(),
             "rodadas": rounds,
+            "consultasEspecificasExecutadas": focused_queries,
             "coberturaDepois": round(technical_coverage(result_state), 4),
             "camposAusentesDepois": technical_missing_fields(result_state),
             "fontesExecutadas": [
