@@ -518,7 +518,7 @@ BOOL_FIELDS = {
 
 INT_FIELDS = {
     "PROCESSADOR": {"litografiaNm", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "lanesPcie"},
-    "PLACA_MAE": {"slotsMemoria", "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb", "portasSata", "slotsM2"},
+    "PLACA_MAE": {"slotsMemoria", "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb", "portasSata"},
     "MEMORIA_RAM": {"capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz", "frequenciaJedecMhz", "latenciaCl"},
     "PLACA_VIDEO": {"memoriaVideoGb", "barramentoBits", "clockBaseMhz", "clockBoostMhz", "geracaoPcie", "larguraPcie", "consumoWatts", "potenciaFonteRecomendadaWatts", "conectoresPcie6Pinos", "conectoresPcie8Pinos", "conectores12vhpwr", "conectores12v2x6", "hdmi", "displayPort"},
     "ARMAZENAMENTO": {"capacidadeGb", "tamanhoM2Mm", "geracaoPcie", "pistasPcie", "leituraSequencialMbps", "escritaSequencialMbps"},
@@ -581,6 +581,30 @@ WATT_FIELDS = {
     "COOLER": {"capacidadeTermicaWatts", "consumoBombaWatts", "consumoWatts"},
 }
 
+def _m2_slots(value: Any):
+    """O contrato aceita uma lista de slots, não uma contagem escalar.
+
+    Contagens confirmadas geram identificadores locais, sem inventar capacidades.
+    Formatos como 2280 e listas excessivas viram lacunas, nunca são truncados.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        if len(value) > 16 or any(not isinstance(slot, dict) for slot in value):
+            return None
+        return [dict(slot) for slot in value]
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and not re.fullmatch(r"\s*\d{1,2}\s*", value):
+        return None
+    count = _to_int(value)
+    if count is None or not 0 <= count <= 16:
+        return None
+    return [{"codigo": f"M2_{index + 1}", "interfacesSuportadas": [],
+             "chavesSuportadas": [], "tamanhosSuportadosMm": []}
+            for index in range(count)]
+
+
 def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dict:
     """Última barreira antes do payload do CriaByte.
 
@@ -636,6 +660,8 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
             normalized["dataLancamento"] = _iso_date(normalized.get("dataLancamento"))
 
     elif category == "PLACA_MAE":
+        if "slotsM2" in normalized:
+            normalized["slotsM2"] = _m2_slots(normalized["slotsM2"])
         if "formato" in normalized:
             normalized["formato"] = _motherboard_form(normalized.get("formato"))
         if "tiposMemoriaSuportados" in normalized:
