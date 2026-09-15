@@ -108,12 +108,13 @@ class TechnicalResearchAgent:
             )
             return safe_initial, info
 
-        providers = build_providers(plan.sources)
+        planned_sources = plan.sources[: plan.max_sources]
+        providers = build_providers(planned_sources)
         enricher = TechnicalEnricher(
             providers=providers,
             auto_mode=True,
             total_timeout_override=plan.total_timeout_seconds,
-            max_sources_override=plan.max_sources,
+            max_sources_override=max(1, len(providers)),
             source_timeout_override=plan.source_timeout_seconds,
             target_coverage_override=plan.target_coverage,
         )
