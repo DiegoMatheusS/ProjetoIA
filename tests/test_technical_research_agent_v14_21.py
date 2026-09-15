@@ -1,5 +1,7 @@
 from src.extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from src.research_agent.agent import TechnicalResearchAgent
+from src.research_agent.cache import merge_cached_gaps
+from src.research_agent.confidence import annotate_field_confidence
 from src.research_agent.planner import build_research_plan
 from src.technical_ai.providers import TechnicalAIResponse
 from src.technical_ai.service import enrich_hardware_with_external_ai
@@ -36,12 +38,54 @@ def test_planner_prioritizes_authoritative_sources_and_leaves_pc_kombo_as_fallba
     assert plan.max_sources <= len(plan.sources)
 
 
-def test_agent_builds_plan_and_returns_same_enrichment_contract(monkeypatch):
-    captured = {}
+def test_cache_fills_only_gaps_and_never_overwrites_confirmed_value():
+    current = _motherboard_payload()
+    cached = _motherboard_payload()
+    cached["especificacaoPlacaMae"] = {
+        **cached["especificacaoPlacaMae"],
+        "socket": "AM5",
+        "chipset": "B550",
+        "formato": "ATX",
+    }
+
+    merged = merge_cached_gaps("PLACA_MAE", current, cached)
+    specs = merged["especificacaoPlacaMae"]
+
+    assert specs["socket"] == "AM4"
+    assert specs["chipset"] == "B550"
+    assert specs["formato"] == "ATX"
+
+
+def test_confidence_marks_authoritative_source_and_reduces_conflicted_field():
+    info = annotate_field_confidence({
+        "origemPorCampo": {
+            "chipset": {"fonte": "FABRICANTE_OFICIAL", "url": "https://example.com/msi"},
+            "ethernet": {"fonte": "GEIZHALS", "url": "https://example.com/geizhals"},
+        },
+        "conflitos": [
+            {"campo": "ethernet", "valorPrincipal": "1 GbE", "valorExterno": "2.5 GbE"}
+        ],
+    })
+
+    assert info["confiancaPorCampo"]["chipset"]["nivel"] == "MUITO_ALTA"
+    assert info["confiancaPorCampo"]["chipset"]["score"] == 0.98
+    assert info["confiancaPorCampo"]["ethernet"]["comConflito"] is True
+    assert info["confiancaPorCampo"]["ethernet"]["score"] < 0.86
+
+
+def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monkeypatch):
+    captured = {"calls": []}
+
+    class NoCache:
+        def get(self, *_args, **_kwargs):
+            return None
+
+        def set(self, *_args, **_kwargs):
+            return None
 
     class FakeEnricher:
         def __init__(self, **kwargs):
-            captured.update(kwargs)
+            captured["calls"].append(kwargs)
 
         def enrich(self, result):
             output = dict(result)
@@ -77,7 +121,7 @@ def test_agent_builds_plan_and_returns_same_enrichment_contract(monkeypatch):
         lambda names: [f"fake:{name}" for name in names],
     )
 
-    payload, info = TechnicalResearchAgent(enabled=True).research(
+    payload, info = TechnicalResearchAgent(enabled=True, cache=NoCache()).research(
         category="PLACA_MAE",
         payload=_motherboard_payload(),
         name="MSI B550-A Pro",
@@ -86,10 +130,13 @@ def test_agent_builds_plan_and_returns_same_enrichment_contract(monkeypatch):
     assert payload["especificacaoPlacaMae"]["chipset"] == "B550"
     assert info["camposPreenchidos"] == ["chipset"]
     assert info["agentePesquisa"]["ativo"] is True
-    assert info["agentePesquisa"]["versao"] == 1
+    assert info["agentePesquisa"]["versao"] == 2
     assert info["agentePesquisa"]["plano"]["fontesPlanejadas"][0] == "FABRICANTE_OFICIAL"
-    assert captured["auto_mode"] is True
-    assert captured["max_sources_override"] >= 1
+    assert len(info["agentePesquisa"]["rodadas"]) >= 1
+    assert info["confiancaPorCampo"]["chipset"]["score"] == 0.98
+    assert captured["calls"]
+    assert all(call["auto_mode"] is True for call in captured["calls"])
+    assert all(call["max_sources_override"] >= 1 for call in captured["calls"])
 
 
 def test_agent_failure_does_not_block_openai_meta_prompt_flow(monkeypatch):
