@@ -5,6 +5,7 @@ Toda interpretação, normalização e validação continuam dentro da Produto I
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass
@@ -24,12 +28,21 @@ class TechnicalAIResponse:
 
 
 class TechnicalAIProviderError(RuntimeError):
-    def __init__(self, code: str, message: str, *, status_code: int = 502, transient: bool = False):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 502,
+        transient: bool = False,
+        provider_status_code: int | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
         self.transient = transient
+        self.provider_status_code = provider_status_code
 
 
 class TechnicalAIProvider:
@@ -140,20 +153,84 @@ class GeminiProvider(TechnicalAIProvider):
             detail = (response.text or "").strip()[:500]
 
         if status in {401, 403}:
-            return TechnicalAIProviderError("CHAVE_INVALIDA", detail or "Chave Gemini inválida ou sem permissão", status_code=502)
+            return TechnicalAIProviderError(
+                "CHAVE_INVALIDA",
+                detail or "Chave Gemini inválida ou sem permissão",
+                status_code=502,
+                provider_status_code=status,
+            )
         if status == 429:
-            return TechnicalAIProviderError("LIMITE_PROVEDOR", detail or "Limite do Gemini atingido", status_code=503, transient=True)
+            return TechnicalAIProviderError(
+                "LIMITE_PROVEDOR",
+                detail or "Limite do Gemini atingido",
+                status_code=503,
+                transient=True,
+                provider_status_code=status,
+            )
         if status in {408, 504}:
-            return TechnicalAIProviderError("TIMEOUT_PROVEDOR", detail or "Timeout no Gemini", status_code=504, transient=True)
+            return TechnicalAIProviderError(
+                "TIMEOUT_PROVEDOR",
+                detail or "Timeout no Gemini",
+                status_code=504,
+                transient=True,
+                provider_status_code=status,
+            )
         if status == 404:
-            return TechnicalAIProviderError("MODELO_INDISPONIVEL", "Modelo Gemini não disponível. Confira GEMINI_MODEL e o acesso da chave a esse modelo.", status_code=502)
+            return TechnicalAIProviderError(
+                "MODELO_INDISPONIVEL",
+                "Modelo Gemini não disponível. Confira GEMINI_MODEL e o acesso da chave a esse modelo.",
+                status_code=502,
+                provider_status_code=status,
+            )
         if status == 400:
-            return TechnicalAIProviderError("RESPOSTA_INVALIDA", detail or "Requisição rejeitada pelo Gemini", status_code=502)
+            return TechnicalAIProviderError(
+                "RESPOSTA_INVALIDA",
+                detail or "Requisição rejeitada pelo Gemini",
+                status_code=502,
+                provider_status_code=status,
+            )
         if status >= 500:
-            return TechnicalAIProviderError("PROVEDOR_INDISPONIVEL", detail or "Gemini indisponível", status_code=503, transient=True)
-        return TechnicalAIProviderError("RESPOSTA_INVALIDA", detail or f"Gemini retornou HTTP {status}", status_code=502)
+            return TechnicalAIProviderError(
+                "PROVEDOR_INDISPONIVEL",
+                detail or "Gemini indisponível",
+                status_code=503,
+                transient=True,
+                provider_status_code=status,
+            )
+        return TechnicalAIProviderError(
+            "RESPOSTA_INVALIDA",
+            detail or f"Gemini retornou HTTP {status}",
+            status_code=502,
+            provider_status_code=status,
+        )
+
+    def _log_failure(self, error: TechnicalAIProviderError) -> None:
+        # Nunca registrar chave ou prompt. Apenas estado seguro de configuração
+        # e a mensagem devolvida pelo provedor, limitada a uma linha curta.
+        safe_message = " ".join(str(error.message or "").split())[:1200]
+        logger.error(
+            "IA técnica Gemini falhou: codigo=%s status_http=%s status_provedor=%s "
+            "transitorio=%s modelo=%s habilitado=%s api_key_configurada=%s "
+            "google_search=%s mensagem=%s",
+            error.code,
+            error.status_code,
+            error.provider_status_code,
+            error.transient,
+            self.model,
+            self.enabled,
+            bool(self.api_key),
+            self.google_search,
+            safe_message,
+        )
 
     def enrich(self, prompt: str) -> TechnicalAIResponse:
+        try:
+            return self._enrich(prompt)
+        except TechnicalAIProviderError as exc:
+            self._log_failure(exc)
+            raise
+
+    def _enrich(self, prompt: str) -> TechnicalAIResponse:
         if not self.enabled:
             raise TechnicalAIProviderError("PROVEDOR_NAO_CONFIGURADO", "Provider Gemini está desabilitado", status_code=503)
         if not self.api_key:
