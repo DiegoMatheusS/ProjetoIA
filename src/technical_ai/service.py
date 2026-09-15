@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..enrichment.quality import validate_specs
 from ..enrichment.core import (
     apply_enrichment,
     required_missing_fields,
@@ -27,6 +28,7 @@ from ..extractors.meta_ai_whatsapp import (
     merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
+from .evidence import grounded_prompt, filter_grounded_response, collect_cited_sources
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
 
@@ -120,6 +122,8 @@ def _local_only_result(
         "problemasPayload": list(registration_payload_issues(category, safe_after)),
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
+        "origemPorCampo": local_info.get("origemPorCampo") or {},
+        "camposIaNaoConfirmados": local_info.get("camposIaNaoConfirmados") or [],
     }
     if provider_error is not None:
         result["fallbackExternoFalhou"] = True
@@ -208,6 +212,7 @@ def enrich_hardware_with_external_ai(
 
     # 2) OpenAI somente para lacunas que permaneceram.
     prompt, missing_from_prompt = build_technical_ai_prompt(category, name, safe_local)
+    prompt = grounded_prompt(prompt, safe_local, local_info)
     provider = get_technical_ai_provider(provider_name or "OPENAI")
     try:
         external = provider.enrich(prompt)
@@ -224,13 +229,22 @@ def enrich_hardware_with_external_ai(
             hardware_id=hardware_id,
         )
 
+    try:
+        collect_cited_sources(category, safe_local, external.sources, local_info)
+    except Exception as exc:
+        local_info["erroVerificacaoCitacoes"] = type(exc).__name__
+    grounded_text, ai_provenance, rejected = filter_grounded_response(category, external.text, local_info)
+    local_info["camposIaNaoConfirmados"] = rejected
     safe_after, external_filled, parsed_specs, external_conflicts = merge_meta_ai_response_into_payload_detailed(
         category,
         safe_local,
-        external.text,
+        grounded_text,
     )
     safe_after = normalize_hardware_payload_for_backend(category, safe_after)
-    specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}
+    specs_after, consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
+    safe_after[spec_field] = specs_after
+    rejected.extend(consistency_issues)
+    external_filled = [field for field in external_filled if specs_after.get(field) not in (None, "", [])]
     state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
     coverage_after = technical_coverage(state_after)
     missing_after = technical_missing_fields(state_after)
@@ -250,8 +264,8 @@ def enrich_hardware_with_external_ai(
             local_info=local_info,
             coverage_before=coverage_before,
             provider_error=TechnicalAIProviderError(
-                "PARSER_SEM_DADOS",
-                "A OpenAI respondeu, mas nenhum campo técnico compatível foi interpretado",
+                "EVIDENCIA_NAO_CONFIRMADA" if rejected else "PARSER_SEM_DADOS",
+                "A resposta não trouxe campos técnicos com evidência verificável; os dados coletados foram preservados",
                 status_code=422,
             ),
             hardware_id=hardware_id,
@@ -296,6 +310,8 @@ def enrich_hardware_with_external_ai(
         "promptUtilizado": prompt,
         "camposSolicitados": missing_from_prompt,
         "fontesDeclaradas": external.sources,
+        "origemPorCampo": {**(local_info.get("origemPorCampo") or {}), **ai_provenance},
+        "camposIaNaoConfirmados": rejected,
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
         "metaAiWhatsappFallback": meta_fallback,

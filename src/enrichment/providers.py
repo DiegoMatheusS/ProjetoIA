@@ -1,17 +1,21 @@
 import json
 import os
+import time
+from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-from .identity import identity_query, text_matches_identity
+from .identity import identity_query, text_matches_identity, candidate_matches_identity, _norm
 from .search import WebSearchResolver
+from .manufacturer_specs import manufacturer_attributes
+from .quality import source_diagnostic
 from ..scrapers.generic_scraper import GenericScraper
 from ..scrapers.browser_scraper import BrowserScraper
 from ..utils.normalizers import clean_text
-from ..utils.rate_limiter import PoliteRateLimiter
+from ..utils.rate_limiter import PoliteRateLimiter, JsonDiskCache
 
 
 class ExternalTechnicalProvider:
@@ -32,6 +36,7 @@ class ExternalTechnicalProvider:
             jitter=float(os.getenv("ENRICHMENT_SOURCE_JITTER_SECONDS", "0.8")),
         )
         self.generic = GenericScraper()
+        self.cache = JsonDiskCache()
         self.allow_browser_fallback = True
 
     def supports(self, category, identity):
@@ -54,10 +59,20 @@ class ExternalTechnicalProvider:
         return "\n".join(filter(None, [parsed.get("title"), parsed.get("brand"), parsed.get("model"), parsed.get("mpn"), parsed.get("gtin"), attr_text, visible[:40000]]))
 
     def _parse_candidate_html(self, requested_url, final_url, html, identity):
-        parsed = self.generic._parse_html(requested_url, final_url, html, source=self.name)
         soup = BeautifulSoup(html, "html.parser")
+        for node in soup.select("nav, footer, aside, [class*='related'], [class*='recommend']"):
+            node.decompose()
+        parsed = self.generic._parse_html(requested_url, final_url, str(soup), source=self.name)
+        if self.name == "FABRICANTE_OFICIAL":
+            parsed["attributes"] = (parsed.get("attributes") or []) + manufacturer_attributes(soup, final_url)
+        for node in soup.select("nav, footer, aside, script, style, [class*='related'], [class*='recommend']"):
+            node.decompose()
         page_text = self._page_text(soup, parsed)
-        if not text_matches_identity(identity, page_text):
+        validation_product = dict(parsed)
+        host = (urlparse(final_url).hostname or "").lower()
+        if self.name == "FABRICANTE_OFICIAL" and any(host == d or host.endswith("." + d) for d in self.search_domains(identity)):
+            validation_product["brand"] = parsed.get("brand") or identity.get("marca")
+        if not candidate_matches_identity(identity, validation_product, page_text):
             return {"ok": False, "url": final_url, "erro": "IDENTIDADE_NAO_CONFIRMADA"}
         return {
             "ok": True,
@@ -95,10 +110,72 @@ class ExternalTechnicalProvider:
         return parsed
 
     def fetch_candidate(self, url, identity):
+        params = {"identity": identity, "browser": self.allow_browser_fallback, "version": 2}
+        cached = self.cache.get(url, params=params, namespace="technical-pages-v2", ttl_seconds=86400)
+        if cached and time.time() < cached.get("expires", 0):
+            result = dict(cached["result"])
+            result["cacheHit"] = True
+            return result
+        result = self._fetch_candidate_uncached(url, identity)
+        result["diagnostico"] = source_diagnostic(result)
+        result["cacheHit"] = False
+        ttl = 3600 if result.get("ok") and result.get("attributes") else 120
+        if result["diagnostico"] == "FALHA_TEMPORARIA":
+            ttl = 15
+        self.cache.set(url, {"expires": time.time() + ttl, "result": result}, params=params, namespace="technical-pages-v2")
+        return result
+
+    def _parse_pdf(self, url, response, identity):
+        if self.name != "FABRICANTE_OFICIAL":
+            return {"ok": False, "url": url, "erro": "PDF_FORA_DO_FABRICANTE"}
+        try:
+            from pypdf import PdfReader
+            chunks, size = [], 0
+            try:
+                for chunk in response.iter_content(65536):
+                    size += len(chunk)
+                    if size > 8 * 1024 * 1024:
+                        return {"ok": False, "url": url, "erro": "PDF_MUITO_GRANDE"}
+                    chunks.append(chunk)
+            finally:
+                response.close()
+            content = b"".join(chunks)
+            reader = PdfReader(BytesIO(content))
+            if len(reader.pages) > 40 or reader.is_encrypted:
+                return {"ok": False, "url": url, "erro": "PDF_FORA_DO_LIMITE"}
+            text = "\n".join((page.extract_text() or "")[:10000] for page in reader.pages)[:80000]
+            if not text.strip():
+                return {"ok": False, "url": url, "erro": "PDF_SEM_DADOS_TEXTUAIS"}
+            if not text_matches_identity(identity, text[:4000]):
+                return {"ok": False, "url": url, "erro": "IDENTIDADE_NAO_CONFIRMADA"}
+            return {"ok": bool(text.strip()), "fonte": self.name, "url": url,
+                    "context_text": text, "attributes": [], "modoColeta": "PDF_TEXTO"}
+        except Exception as exc:
+            return {"ok": False, "url": url, "erro": "PDF_SEM_DADOS: " + type(exc).__name__}
+
+    def _get_source_response(self, url, identity):
+        domains = self.search_domains(identity)
+        for _ in range(4):
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower().removeprefix("www.")
+            if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or parsed.port not in (None, 80, 443) or not any(host == d or host.endswith("." + d) for d in domains):
+                raise ValueError("REDIRECIONAMENTO_FORA_DA_FONTE")
+            response = self.session.get(url, timeout=self.timeout, allow_redirects=False, stream=True)
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response
+            target = response.headers.get("Location")
+            response.close()
+            if not target:
+                raise ValueError("REDIRECIONAMENTO_SEM_DESTINO")
+            url = urljoin(url, target)
+        raise ValueError("LIMITE_REDIRECIONAMENTOS")
+
+    def _fetch_candidate_uncached(self, url, identity):
         http_error = None
+        response = None
         try:
             self.rate_limiter.wait(url)
-            response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+            response = self._get_source_response(url, identity)
             if response.status_code in {401, 403, 429}:
                 http_error = f"HTTP_{response.status_code}"
             else:
@@ -108,13 +185,20 @@ class ExternalTechnicalProvider:
                 domains = [d.casefold().removeprefix("www.") for d in self.search_domains(identity)]
                 if domains and not any(host == d or host.endswith("." + d) for d in domains):
                     return {"ok": False, "url": final, "erro": "REDIRECIONAMENTO_FORA_DA_FONTE"}
+                if "application/pdf" in str(getattr(response, "headers", {}).get("Content-Type", "")) or urlparse(final).path.lower().endswith(".pdf"):
+                    return self._parse_pdf(final, response, identity)
                 parsed = self._parse_candidate_html(url, final, response.text, identity)
                 if parsed.get("ok"):
                     parsed["modoColeta"] = "HTTP"
                     return parsed
                 http_error = parsed.get("erro")
+        except ValueError as exc:
+            return {"ok": False, "url": url, "erro": str(exc)}
         except requests.RequestException as exc:
-            http_error = f"ERRO_HTTP: {exc}"
+            http_error = f"ERRO_HTTP: {type(exc).__name__}: {exc}"
+        finally:
+            if response is not None and hasattr(response, "close"):
+                response.close()
 
         # Algumas páginas técnicas também usam JS/WAF. Como o CriaByte já tem
         # Surfsky configurado para coleta cloud, reaproveitamos o mesmo browser
@@ -130,11 +214,25 @@ class ExternalTechnicalProvider:
     def collect(self, identity, category):
         if not self.supports(category, identity):
             return {"ok": False, "fonte": self.name, "erro": "CATEGORIA_NAO_SUPORTADA"}
+        started = time.monotonic()
         url = self.discover(identity, category)
         if not url:
-            return {"ok": False, "fonte": self.name, "erro": "NAO_ENCONTRADO"}
+            return {"ok": False, "fonte": self.name, "erro": "NAO_ENCONTRADO", "diagnostico": getattr(self.resolver, "last_status", "NAO_ENCONTRADO")}
         result = self.fetch_candidate(url, identity)
+        attempts = [{"url": url, "erro": result.get("erro")}]
+        # Reuse cached search results; only move on for wrong/missing documents.
+        if not result.get("ok") and source_diagnostic(result) in {"MODELO_DIVERGENTE", "NAO_ENCONTRADO", "SEM_DADOS"}:
+            if hasattr(self.resolver, "results") and time.monotonic() - started < self.timeout:
+                candidates = self.resolver.results(identity_query(identity), self.search_domains(identity), limit=3)
+                for candidate in candidates:
+                    if candidate["url"] == url or time.monotonic() - started >= self.timeout:
+                        continue
+                    result = self.fetch_candidate(candidate["url"], identity)
+                    attempts.append({"url": candidate["url"], "erro": result.get("erro")})
+                    if result.get("ok") or source_diagnostic(result) == "BLOQUEADO":
+                        break
         result.setdefault("fonte", self.name)
+        result["tentativas"] = attempts
         return result
 
 
@@ -291,13 +389,10 @@ class IcecatProvider(ExternalTechnicalProvider):
         returned_brand = clean_text(general.get("Brand")) or clean_text(brand_info.get("BrandName"))
         returned_mpn = clean_text(general.get("BrandPartCode"))
         gtins = general.get("GTIN") or general.get("GTINs") or []
-        if isinstance(gtins, str):
-            returned_gtin = clean_text(gtins)
-        elif isinstance(gtins, list):
-            first = gtins[0] if gtins else None
-            returned_gtin = clean_text(first.get("GTIN") if isinstance(first, dict) else first)
-        else:
-            returned_gtin = None
+        gtin_values = gtins if isinstance(gtins, list) else [gtins]
+        returned_gtins = [clean_text(item.get("GTIN") if isinstance(item, dict) else item) for item in gtin_values]
+        returned_gtins = [value for value in returned_gtins if value]
+        returned_gtin = next((value for value in returned_gtins if _norm(value) == _norm(gtin)), returned_gtins[0] if returned_gtins else None)
 
         # A requisição já é por identificador forte, mas validamos a resposta para
         # não misturar uma ficha de outro SKU por erro externo.
@@ -305,6 +400,9 @@ class IcecatProvider(ExternalTechnicalProvider):
             return {"ok": False, "fonte": self.name, "url": self.api_url, "erro": "ICECAT_IDENTIDADE_DIVERGENTE"}
         if not gtin and brand and returned_brand and returned_brand.casefold() != brand.casefold():
             return {"ok": False, "fonte": self.name, "url": self.api_url, "erro": "ICECAT_MARCA_DIVERGENTE"}
+
+        if mpn and returned_mpn and _norm(mpn) != _norm(returned_mpn):
+            return {"ok": False, "fonte": self.name, "url": self.api_url, "erro": "ICECAT_IDENTIDADE_DIVERGENTE"}
 
         title = clean_text(general.get("Title")) or clean_text(general.get("ProductName"))
         model = clean_text(general.get("ProductName")) or returned_mpn

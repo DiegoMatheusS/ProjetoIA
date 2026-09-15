@@ -79,14 +79,10 @@ def test_v14_20_5_discovery_payload_itself_is_dto_safe_before_frontend():
 
 
 def test_v14_20_5_specialized_sources_follow_current_category_priority():
-    # Atualizado após v14.20.8: fonte usa fabricante oficial primeiro; as
-    # demais categorias abaixo continuam priorizando Geizhals. Este teste
-    # protege a prioridade vigente sem reverter uma decisão posterior.
+    # Fabricantes são a primeira tentativa; especialistas complementam lacunas.
     geizhals = GeizhalsProvider()
     manufacturer = ManufacturerProvider()
     techpowerup = TechPowerUpProvider()
-    for category in ["PLACA_MAE", "MEMORIA_RAM", "ARMAZENAMENTO", "GABINETE", "COOLER", "VENTOINHA"]:
-        assert _provider_rank(category, geizhals) < _provider_rank(category, manufacturer)
-    assert _provider_rank("FONTE", manufacturer) < _provider_rank("FONTE", geizhals)
-    assert _provider_rank("PLACA_VIDEO", techpowerup) < _provider_rank("PLACA_VIDEO", manufacturer)
-    assert _provider_rank("PLACA_VIDEO", geizhals) < _provider_rank("PLACA_VIDEO", manufacturer)
+    for category in ["PLACA_MAE", "MEMORIA_RAM", "ARMAZENAMENTO", "GABINETE", "COOLER", "VENTOINHA", "FONTE", "PLACA_VIDEO"]:
+        assert _provider_rank(category, manufacturer) < _provider_rank(category, geizhals)
+    assert _provider_rank("PLACA_VIDEO", manufacturer) < _provider_rank("PLACA_VIDEO", techpowerup)

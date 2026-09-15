@@ -2,6 +2,7 @@ from copy import deepcopy
 import os
 import time
 
+from .quality import validate_specs, evidence_for_specs, source_diagnostic
 from .identity import build_identity, identity_is_strong
 from .providers import (
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
@@ -36,26 +37,16 @@ def complete_specs(category, specs):
     """
     schema = SCHEMAS.get(category) if category else None
     expected = (schema[2] if schema else None) or []
-    source = normalize_specs_for_backend(category, specs)
+    source, _issues = validate_specs(category, specs)
     if not expected:
         return source
     return {field: source.get(field) for field in expected}
 
 
+# Category-specific fallback order; _provider_rank always promotes the manufacturer.
 PROVIDER_PRIORITY = {
-    # Em lote, PC_KOMBO normalmente já é a fonte de catálogo e é excluída do
-    # enriquecimento. Colocamos primeiro as fontes técnicas especializadas que
-    # realmente costumam preencher lacunas, mantendo o MESMO número máximo de
-    # consultas para não voltar a aumentar a latência.
-    # CPU: prioriza fontes especializadas capazes de confirmar memória/sockets.
-    # Icecat fica como fallback; em lote ele consumia uma tentativa sem resolver
-    # tiposMemoriaSuportados em vários modelos.
     "PROCESSADOR": ["CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "FABRICANTE_OFICIAL", "GEIZHALS", "ICECAT", "PC_KOMBO"],
-    # GPU: TechPowerUp/Geizhals normalmente têm ficha técnica mais densa que o
-    # Icecat para clocks, VRAM, barramento, TGP, dimensões e conectores.
     "PLACA_VIDEO": ["TECHPOWERUP", "GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "WIKICHIP", "PC_KOMBO"],
-    # Demais categorias com baixa cobertura: prioriza catálogo técnico + ficha
-    # oficial antes do Icecat. RAM permanece com a ordem já aprovada.
     "PLACA_MAE": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
     "MEMORIA_RAM": ["ICECAT", "GEIZHALS", "FABRICANTE_OFICIAL", "PC_KOMBO"],
     "ARMAZENAMENTO": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
@@ -65,9 +56,9 @@ PROVIDER_PRIORITY = {
     "VENTOINHA": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
 }
 
-
 def _provider_rank(category, provider):
     order = PROVIDER_PRIORITY.get(category) or []
+    order = ["FABRICANTE_OFICIAL"] + [name for name in order if name != "FABRICANTE_OFICIAL"]
     name = getattr(provider, "name", provider.__class__.__name__)
     try:
         return order.index(name)
@@ -307,7 +298,9 @@ class TechnicalEnricher:
             "identidade": identity,
             "fontesConsultadas": [],
             "camposPreenchidos": [],
-            "origemPorCampo": {},
+            "origemPorCampo": deepcopy(output.get("origemPorCampo") or {}),
+            "evidenciasColetadas": [],
+            "problemasConsistencia": [],
             "conflitos": [],
             "motivoIgnorado": None,
             "interrompidoPorTimeout": False,
@@ -329,7 +322,8 @@ class TechnicalEnricher:
             output["enriquecimentoTecnico"] = info
             return output
 
-        specs = dict(output.get("especificacoesEncontradas") or {})
+        specs, initial_issues = validate_specs(category, output.get("especificacoesEncontradas") or {})
+        info["problemasConsistencia"].extend(initial_issues)
         info["executado"] = True
 
         relevant = [
@@ -361,6 +355,9 @@ class TechnicalEnricher:
                 "url": source.get("url"),
                 "erro": source.get("erro"),
                 "modoColeta": source.get("modoColeta"),
+                "diagnostico": source.get("diagnostico") or source_diagnostic(source),
+                "cacheHit": bool(source.get("cacheHit")),
+                "tentativas": source.get("tentativas") or [],
             }
             info["fontesConsultadas"].append(source_summary)
             if source.get("ok"):
@@ -369,6 +366,15 @@ class TechnicalEnricher:
                     source.get("attributes") or [],
                     context_text=source.get("context_text") or "",
                 )
+                external_specs, source_issues = validate_specs(category, external_specs, source.get("attributes"))
+                info["problemasConsistencia"].extend({**issue, "fonte": source_summary["fonte"], "url": source_summary["url"]} for issue in source_issues)
+                if not any(not _missing(value) for value in external_specs.values()):
+                    source_summary["diagnostico"] = "SEM_DADOS"
+                evidence = evidence_for_specs(category, source, external_specs)
+                if source_summary["url"]:
+                    info["evidenciasColetadas"].append({"url": source_summary["url"], "fonte": source_summary["fonte"],
+                        "trechos": [e["trecho"] for e in evidence.values()][:60],
+                        "atributos": (source.get("attributes") or [])[:150]})
                 for field, external_value in external_specs.items():
                     if _missing(external_value):
                         continue
@@ -379,6 +385,7 @@ class TechnicalEnricher:
                         info["origemPorCampo"][field] = {
                             "fonte": source_summary["fonte"],
                             "url": source_summary["url"],
+                            **evidence.get(field, {"metodo": "CONTEXTO_SEM_TRECHO_ISOLADO", "trecho": None}),
                         }
                     elif _normalized_for_compare(current) != _normalized_for_compare(external_value):
                         info["conflitos"].append({
@@ -387,6 +394,7 @@ class TechnicalEnricher:
                             "valorExterno": external_value,
                             "fonte": source_summary["fonte"],
                             "url": source_summary["url"],
+                            **evidence.get(field, {"metodo": "CONTEXTO_SEM_TRECHO_ISOLADO", "trecho": None}),
                         })
 
             # Atualiza uma visão temporária para decidir se já podemos parar.
@@ -406,7 +414,11 @@ class TechnicalEnricher:
                 break
 
         info["camposPreenchidos"] = list(dict.fromkeys(info["camposPreenchidos"]))
+        specs, final_issues = validate_specs(category, specs)
+        info["problemasConsistencia"].extend(final_issues)
         specs = complete_specs(category, specs)
+        info["camposPreenchidos"] = [field for field in info["camposPreenchidos"] if not _missing(specs.get(field))]
+        info["origemPorCampo"] = {field: value for field, value in info["origemPorCampo"].items() if not _missing(specs.get(field))}
         output["especificacoesEncontradas"] = specs
         payload = dict(output.get("payloadParcialBackend") or {})
         payload[spec_field] = specs

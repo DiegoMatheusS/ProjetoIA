@@ -288,6 +288,8 @@ def auto_enrich_discovery_result(category: str, result: dict[str, Any]) -> dict[
             for key, value in outcome.items()
             if key not in {"payload", "payloadOriginal", "especificacoesInterpretadas", "promptUtilizado"}
         }
+        item["origemPorCampo"] = {**(item.get("origemPorCampo") or {}), **(outcome.get("origemPorCampo") or {})}
+        item["camposIaNaoConfirmados"] = outcome.get("camposIaNaoConfirmados") or []
         if outcome.get("erro"):
             errors += 1
         if outcome.get("utilizado") and isinstance(outcome.get("payload"), dict):
@@ -363,6 +365,8 @@ def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
         if key not in {"payload", "payloadOriginal", "especificacoesInterpretadas", "promptUtilizado"}
     }
 
+    result["origemPorCampo"] = {**(result.get("origemPorCampo") or {}), **(outcome.get("origemPorCampo") or {})}
+    result["camposIaNaoConfirmados"] = outcome.get("camposIaNaoConfirmados") or []
     if outcome.get("utilizado") and isinstance(outcome.get("payload"), dict):
         safe_after = normalize_hardware_payload_for_backend(category, outcome["payload"])
         specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}

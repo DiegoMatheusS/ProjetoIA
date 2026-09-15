@@ -4,6 +4,7 @@ import os
 import random
 import threading
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -74,7 +75,7 @@ class JsonDiskCache:
 
     def set(self, url, payload, params=None, namespace="default"):
         path = self.base_dir / f"{self._key(url, params, namespace)}.json"
-        temp = path.with_suffix(".tmp")
+        temp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
         try:
             temp.write_text(
                 json.dumps({"created_at": time.time(), "payload": payload}, ensure_ascii=False),

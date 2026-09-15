@@ -98,7 +98,17 @@ class GenericScraper:
             extras = [extras]
         for item in extras if isinstance(extras, list) else []:
             if isinstance(item, dict):
-                add(item.get("name"), item.get("value") or item.get("valueReference"))
+                value = item.get("value")
+                if value is None:
+                    value = item.get("valueReference")
+                if isinstance(value, dict):
+                    unit = value.get("unitText") or value.get("unitCode") or ""
+                    value = f"{value.get('value', '')} {unit}".strip()
+                elif value is not None and (item.get("unitText") or item.get("unitCode")):
+                    value = f"{value} {item.get('unitText') or item.get('unitCode')}"
+                if isinstance(value, bool):
+                    value = "Yes" if value else "No"
+                add(item.get("name"), str(value) if value is not None else None)
 
         # Tabelas de ficha técnica.
         for row in soup.select("tr")[:400]:
