@@ -1,3 +1,4 @@
+import json
 import requests
 
 import pytest
@@ -205,15 +206,11 @@ def test_prompt_requests_only_real_missing_fields():
 
 def test_external_ai_enrichment_only_fills_gaps_after_local_layer(monkeypatch):
     _disable_local_enrichment(monkeypatch)
-    fake = FakeOpenAI(
-        "Arquitetura: Zen 4\n"
-        "Litografia: 5 nm\n"
-        "Cache L3: 64 MB\n"
-        "TDP: 65 W\n"
-        "TiposMemoriaSuportados: DDR5-5200\n"
-        "FrequenciaMemoriaMaximaMhz: 5200\n"
-        "Socket: AM4\n"
-    )
+    facts = {"arquitetura": ("Zen 4", "Arquitetura: Zen 4"), "tiposMemoriaSuportados": (["DDR5"], "TiposMemoriaSuportados: DDR5"), "socket": ("AM4", "Socket: AM4")}
+    fake = FakeOpenAI(json.dumps({"especificacoes": {k: v[0] for k, v in facts.items()}, "evidencias": {k: {"url": "https://example.com/spec", "trecho": v[1]} for k, v in facts.items()}}))
+    def local(category, payload):
+        return payload, {"evidenciasColetadas": [{"url": "https://example.com/spec", "trechos": [v[1] for v in facts.values()]}]}
+    monkeypatch.setattr("src.technical_ai.service._local_enrich", local)
     monkeypatch.setattr("src.technical_ai.service.get_technical_ai_provider", lambda _name: fake)
     payload = {
         "categoria": "PROCESSADOR",

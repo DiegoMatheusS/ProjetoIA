@@ -78,6 +78,8 @@ def test_hardware_link_with_explicit_category_still_calls_gemini(monkeypatch):
 
 
 def test_explicit_enrich_allows_detected_hardware_even_without_category(monkeypatch):
+    # This is a routing test: the explicit local enrichment must not access the network.
+    monkeypatch.setattr("src.enrichment.core.apply_enrichment", lambda result, **kwargs: result)
     monkeypatch.setenv("ENRICHMENT_DISABLE", "true")
     monkeypatch.setenv("ENRICHMENT_AUTO", "false")
     raw = _raw_offer()

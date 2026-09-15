@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from .sources import DiscoveryCandidate, DiscoverySourceCatalog, DEFAULT_SOURCES_BY_CATEGORY
 from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_missing_fields, required_missing_fields, essential_missing_fields, technical_status, complete_specs
+from ..enrichment.quality import evidence_for_specs, validate_specs
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
@@ -283,6 +284,12 @@ class HardwareDiscoveryService:
         for key, value in (extracted or {}).items():
             if value not in (None, "", []):
                 specs[key] = value
+        specs, consistency_issues = validate_specs(categoria, specs, attrs)
+        base_evidence = evidence_for_specs(categoria, {**detail, "context_text": context, "fonte": candidate.fonte, "url": detail.get("url") or candidate.url}, specs)
+        for field, value in specs.items():
+            if value not in (None, "", []):
+                base_evidence.setdefault(field, {"fonte": candidate.fonte, "url": detail.get("url") or candidate.url,
+                    "trecho": None, "metodo": "CATALOGO_SEM_TRECHO_ISOLADO"})
         schema = SCHEMAS[categoria]
         spec_field = schema[1]
         expected = schema[2] or []
@@ -303,6 +310,7 @@ class HardwareDiscoveryService:
         result = {
             "categoriaDetectada": categoria,
             "tipoCadastro": "HARDWARE",
+            "origemPorCampo": base_evidence,
             "payloadParcialBackend": payload,
             "especificacoesEncontradas": specs,
             "camposEspecificacaoEsperados": expected,
@@ -425,7 +433,8 @@ class HardwareDiscoveryService:
             "fonteCatalogo": candidate.fonte,
             "origem": candidate.fonte,
             "urlOrigem": candidate.url,
-            "origemPorCampo": info.get("origemPorCampo") or {},
+            "origemPorCampo": {**base_evidence, **(info.get("origemPorCampo") or {})},
+            "problemasConsistencia": consistency_issues + (info.get("problemasConsistencia") or []),
             "conflitos": info.get("conflitos") or [],
             "urlFontePrincipal": detail.get("url") or candidate.url,
             "fontePrincipal": candidate.fonte,

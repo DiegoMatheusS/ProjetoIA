@@ -74,7 +74,7 @@ def identity_query(identity):
         return None
     parts = [identity.get("marca")]
     if identity.get("mpn"):
-        parts.append(identity["mpn"])
+        parts.append(chr(34) + identity["mpn"].replace(chr(34), "") + chr(34))
     elif identity.get("gtin"):
         parts.append(identity["gtin"])
     else:
@@ -95,7 +95,7 @@ def text_matches_identity(identity, text):
 
     gtin = identity.get("gtin")
     if identity.get("metodo") == "GTIN":
-        return bool(gtin and gtin in re.sub(r"\D", "", raw))
+        return bool(gtin and re.search(r"(?<!\d)" + re.escape(gtin) + r"(?!\d)", raw))
 
     brand = _norm(identity.get("marca"))
     if brand and brand not in norm_text:
@@ -103,11 +103,11 @@ def text_matches_identity(identity, text):
 
     if identity.get("metodo") == "MARCA_MPN":
         mpn = _norm(identity.get("mpn"))
-        return bool(mpn and mpn in norm_text)
+        return bool(mpn and identifier_in_text(identity.get("mpn"), raw))
 
     model_value = clean_text(identity.get("modelo"))
     model = _norm(model_value)
-    if model and model in norm_text:
+    if model and identifier_in_text(model_value, raw):
         return True
 
     # Catálogos técnicos às vezes acrescentam capacidade/frequência/"Kit of 2"
@@ -142,4 +142,47 @@ def text_matches_identity(identity, text):
         if any(ch.isdigit() for ch in token) or len(token) >= 5
     ]
     strong_match = any(token in page_tokens for token in strong_tokens)
-    return bool(ratio >= 0.70 and strong_match)
+    return bool(ratio == 1.0 and strong_match)
+
+
+def identifier_in_text(identifier, text):
+    """Match the entire code, allowing punctuation but never another SKU suffix."""
+    parts = re.findall(r"[a-z0-9]+", str(identifier or "").casefold())
+    if not parts:
+        return False
+    pattern = r"(?<![a-z0-9])" + r"[\s_./-]*".join(map(re.escape, parts)) + r"(?![a-z0-9])"
+    return bool(re.search(pattern, str(text or "").casefold()))
+
+
+def candidate_matches_identity(identity, parsed, text):
+    """Use product identity, not unrelated recommendations elsewhere on the page."""
+    for key, external in (("mpn", parsed.get("mpn")), ("gtin", parsed.get("gtin"))):
+        expected = identity.get(key)
+        if expected and external and _norm(expected) != _norm(external):
+            return False
+    title = clean_text(parsed.get("title")) or clean_text(parsed.get("model"))
+    heading = " ".join(str(parsed.get(k) or "") for k in ("brand", "title", "model", "mpn", "gtin"))
+    if title:
+        # An exact returned identifier is stronger than a shortened commercial title.
+        if identity.get("mpn") and parsed.get("mpn"):
+            return _norm(identity["mpn"]) == _norm(parsed["mpn"])
+        if identity.get("gtin") and parsed.get("gtin"):
+            return _norm(identity["gtin"]) == _norm(parsed["gtin"])
+        model = identity.get("modelo")
+        if model:
+            tokens = set(re.findall(r"[a-z0-9]+", re.sub(r"wi[ -]?fi", "wifi", title.casefold())))
+            requested = set(re.findall(r"[a-z0-9]+", re.sub(r"wi[ -]?fi", "wifi", model.casefold())))
+            kit_pattern = r"(?:kit\s+(?:of\s+)?(\d+)|(\d+)\s*[x×]\s*\d+\s*gb)"
+            desired_kit = re.search(kit_pattern, model, re.I)
+            found_kit = re.search(kit_pattern, title, re.I)
+            if desired_kit:
+                desired = next(v for v in desired_kit.groups() if v)
+                found = next((v for v in found_kit.groups() if v), None) if found_kit else None
+                if desired != found:
+                    return False
+            for variant in ("wifi", "oc", "ti", "super", "xt", "xtx"):
+                if (variant in tokens) != (variant in requested):
+                    return False
+        if identity.get("metodo") == "MARCA_MODELO":
+            return text_matches_identity(identity, heading)
+    return text_matches_identity(identity, text)

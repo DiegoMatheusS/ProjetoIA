@@ -315,6 +315,10 @@ class OpenAIProvider(TechnicalAIProvider):
                     status_code=502,
                 )
 
+            if data.get("status") in {"incomplete", "failed", "cancelled", "in_progress", "queued"}:
+                raise TechnicalAIProviderError(
+                    "RESPOSTA_INCOMPLETA", "Resposta da OpenAI interrompida ou ainda não concluída", status_code=502,
+                )
             text = self._response_text(data)
             if not text:
                 raise TechnicalAIProviderError(

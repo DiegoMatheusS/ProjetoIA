@@ -659,3 +659,18 @@ IA_TECNICA_AUTO_WORKERS=4
 ```
 
 `IA_TECNICA_AUTO_COVERAGE` define quando a IA externa entra. A normalização final continua sendo da Produto IA, e o provider preenche somente lacunas.
+
+
+## Busca técnica 14.20.18
+
+- A ficha do fabricante é consultada primeiro. O MPN entra entre aspas na busca; códigos parciais, variantes OC/Ti/Super/Wi-Fi e kits diferentes não confirmam a mesma identidade. Identificadores explícitos divergentes são rejeitados, inclusive no Icecat.
+- Quando a primeira página não existe ou pertence a outro modelo, a coleta tenta até três candidatos dentro do orçamento da fonte. Não repete a tentativa em outra página quando encontra bloqueio.
+- JSON-LD preserva unidades, `false` e zero. Tabelas e listas continuam disponíveis, com adaptadores adicionais de pares de especificações para ASUS, MSI, Gigabyte, Corsair e Kingston e fallback genérico.
+- PDFs encontrados em domínios oficiais são lidos com [pypdf](https://pypdf.readthedocs.io/): até 8 MiB e 40 páginas, com identificação no início. PDFs digitalizados sem texto, criptografados ou fora desses limites não são interpretados; não há OCR.
+- `origemPorCampo` inclui URL, método e trecho quando a extração permite isolá-lo. `trecho: null` significa que não houve evidência individual isolada. `conflitos` preserva divergências sem sobrescrever o valor principal. `problemasConsistencia` aponta intervalos incoerentes, medidas inválidas e inconsistência entre capacidade do kit e módulos.
+- A OpenAI continua como complemento após as fontes próprias, usando o prompt existente acrescido de identidade e documentos. O preenchimento automático exige JSON com `especificacoes` e `evidencias` por campo (`url`, `trecho`). Valores sem passagem coletada e compatível com o campo ficam em `camposIaNaoConfirmados`, não no cadastro. Até duas citações oficiais novas podem ser conferidas por HTTP. Respostas interrompidas não são aplicadas. O fluxo manual de colar resposta Meta AI permanece independente.
+- O cache técnico usa `HTTP_CACHE_DIR`: buscas encontradas por 30 minutos, buscas vazias/erros por 30 segundos, páginas com atributos por uma hora e páginas vazias/bloqueios por dois minutos; falhas temporárias de página por 15 segundos. Chaves incluem identidade, URL e modo de coleta. `cacheHit`, `diagnostico` e `tentativas` explicam cada resultado. Escritas de cache usam temporários exclusivos para concorrência.
+
+Instale as dependências de `requirements.txt` ao publicar. Não há migração de banco nem chave nova obrigatória. Os contratos de payload existentes são preservados; os diagnósticos são campos adicionais. A cópia `produto_IA/` contém as mesmas alterações.
+
+Validação: `python -m pytest tests -q`. Os testes usam documentos/HTTP simulados e um PDF textual gerado para validar extração, variantes, evidências, conflitos, cache e limites; não comprovam disponibilidade de fabricantes ou aumento de cobertura em produção.

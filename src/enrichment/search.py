@@ -1,10 +1,11 @@
 import os
+import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-from ..utils.rate_limiter import PoliteRateLimiter
+from ..utils.rate_limiter import PoliteRateLimiter, JsonDiskCache
 from ..scrapers.browser_scraper import BrowserScraper
 
 
@@ -24,6 +25,8 @@ class WebSearchResolver:
         })
         self.timeout = int(os.getenv("ENRICHMENT_TIMEOUT", "15"))
         self.allow_browser_fallback = True
+        self.cache = JsonDiskCache()
+        self.last_status = None
         self.rate_limiter = PoliteRateLimiter(
             min_delay=float(os.getenv("ENRICHMENT_SEARCH_MIN_DELAY_SECONDS", "2.0")),
             jitter=float(os.getenv("ENRICHMENT_SEARCH_JITTER_SECONDS", "0.8")),
@@ -68,6 +71,21 @@ class WebSearchResolver:
         return candidates[0]["url"] if candidates else None
 
     def results(self, query, allowed_domains, limit=10):
+        params = {"domains": sorted(allowed_domains), "browser": self.allow_browser_fallback}
+        cached = self.cache.get(query, params=params, namespace="technical-search-v2", ttl_seconds=1800)
+        if cached and time.time() < cached.get("expires", 0):
+            self.last_status = cached["status"]
+            return cached["items"][:limit]
+        self.last_status = "NAO_ENCONTRADO"
+        items = self._results_uncached(query, allowed_domains, limit=max(3, limit))
+        if items:
+            self.last_status = "ENCONTRADO"
+        self.cache.set(query, {"items": items, "status": self.last_status,
+                              "expires": time.time() + (1800 if items else 30)},
+                       params=params, namespace="technical-search-v2")
+        return items[:limit]
+
+    def _results_uncached(self, query, allowed_domains, limit=10):
         if not query or not allowed_domains:
             return []
         domains = [d.casefold().removeprefix("www.") for d in allowed_domains]
@@ -95,11 +113,13 @@ class WebSearchResolver:
                 self.rate_limiter.wait(url)
                 response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
                 if response.status_code in {403, 429}:
+                    self.last_status = "BLOQUEADO"
                     continue
                 response.raise_for_status()
                 if add(self._candidates_from_html(response.text, domains, limit=limit)):
                     return merged[:limit]
             except requests.RequestException:
+                self.last_status = "FALHA_TEMPORARIA"
                 continue
 
         browser = BrowserScraper()
