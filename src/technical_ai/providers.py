@@ -104,6 +104,10 @@ class OpenAIProvider(TechnicalAIProvider):
         }
         if self.web_search:
             body["tools"] = [{"type": "web_search"}]
+            # A Responses API pode devolver as fontes da busca no próprio item
+            # web_search_call. Pedimos esse bloco explicitamente para que a
+            # proveniência não dependa apenas de anotações no texto final.
+            body["include"] = ["web_search_call.action.sources"]
         return body
 
     @staticmethod
@@ -129,20 +133,37 @@ class OpenAIProvider(TechnicalAIProvider):
     def _sources(data: dict[str, Any]) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
         seen: set[str] = set()
+
+        def add(url: Any, title: Any = "") -> None:
+            clean_url = str(url or "").strip()
+            clean_title = str(title or "").strip()
+            if not clean_url or clean_url in seen:
+                return
+            seen.add(clean_url)
+            out.append({"url": clean_url, "titulo": clean_title})
+
         for item in data.get("output") or []:
             if not isinstance(item, dict):
                 continue
+
+            # Formato atual quando include=web_search_call.action.sources.
+            if item.get("type") == "web_search_call":
+                action = item.get("action") if isinstance(item.get("action"), dict) else {}
+                for source in action.get("sources") or []:
+                    if not isinstance(source, dict):
+                        continue
+                    add(source.get("url"), source.get("title") or source.get("name"))
+
+            # Compatibilidade com respostas que trazem citações como annotations
+            # dentro do output_text da mensagem.
             for part in item.get("content") or []:
                 if not isinstance(part, dict):
                     continue
                 for annotation in part.get("annotations") or []:
                     if not isinstance(annotation, dict):
                         continue
-                    url = str(annotation.get("url") or "").strip()
-                    title = str(annotation.get("title") or "").strip()
-                    if url and url not in seen:
-                        seen.add(url)
-                        out.append({"url": url, "titulo": title})
+                    add(annotation.get("url"), annotation.get("title"))
+
         return out[:20]
 
     @staticmethod
