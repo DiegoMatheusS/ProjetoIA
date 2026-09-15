@@ -74,7 +74,7 @@ def test_confidence_marks_authoritative_source_and_reduces_conflicted_field():
 
 
 def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monkeypatch):
-    captured = {"calls": []}
+    captured = {"calls": [], "provider_kwargs": []}
 
     class NoCache:
         def get(self, *_args, **_kwargs):
@@ -82,6 +82,14 @@ def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monk
 
         def set(self, *_args, **_kwargs):
             return None
+
+    class FakeResolver:
+        focus_terms = ("chipset", "M.2 slots")
+        queries_executed = ["MSI B550-A Pro chipset M.2 slots"]
+
+    class FakeProvider:
+        name = "FABRICANTE_OFICIAL"
+        resolver = FakeResolver()
 
     class FakeEnricher:
         def __init__(self, **kwargs):
@@ -115,11 +123,12 @@ def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monk
             }
             return output
 
+    def fake_build_providers(names, **kwargs):
+        captured["provider_kwargs"].append(kwargs)
+        return [FakeProvider() for _name in names[:1]]
+
     monkeypatch.setattr("src.research_agent.agent.TechnicalEnricher", FakeEnricher)
-    monkeypatch.setattr(
-        "src.research_agent.agent.build_providers",
-        lambda names: [f"fake:{name}" for name in names],
-    )
+    monkeypatch.setattr("src.research_agent.agent.build_providers", fake_build_providers)
 
     payload, info = TechnicalResearchAgent(enabled=True, cache=NoCache()).research(
         category="PLACA_MAE",
@@ -130,13 +139,16 @@ def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monk
     assert payload["especificacaoPlacaMae"]["chipset"] == "B550"
     assert info["camposPreenchidos"] == ["chipset"]
     assert info["agentePesquisa"]["ativo"] is True
-    assert info["agentePesquisa"]["versao"] == 2
+    assert info["agentePesquisa"]["versao"] == 3
     assert info["agentePesquisa"]["plano"]["fontesPlanejadas"][0] == "FABRICANTE_OFICIAL"
     assert len(info["agentePesquisa"]["rodadas"]) >= 1
+    assert info["agentePesquisa"]["consultasEspecificasExecutadas"] >= 1
     assert info["confiancaPorCampo"]["chipset"]["score"] == 0.98
     assert captured["calls"]
     assert all(call["auto_mode"] is True for call in captured["calls"])
     assert all(call["max_sources_override"] >= 1 for call in captured["calls"])
+    assert captured["provider_kwargs"][0]["category"] == "PLACA_MAE"
+    assert "chipset" in captured["provider_kwargs"][0]["missing_fields"]
 
 
 def test_agent_failure_does_not_block_openai_meta_prompt_flow(monkeypatch):
