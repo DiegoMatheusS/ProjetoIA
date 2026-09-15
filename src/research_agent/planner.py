@@ -73,6 +73,86 @@ CATEGORY_SOURCE_ORDER: dict[str, tuple[str, ...]] = {
 }
 
 
+_FIELD_SOURCE_HINTS: dict[str, tuple[tuple[set[str], tuple[str, ...]], ...]] = {
+    "PROCESSADOR": (
+        (
+            {
+                "arquitetura", "litografiaNm", "nucleos", "threads",
+                "frequenciaBaseMhz", "frequenciaTurboMhz", "cacheL2Mb", "cacheL3Mb",
+            },
+            ("CPU_MONKEY", "CPU_WORLD", "WIKICHIP"),
+        ),
+        (
+            {
+                "tiposMemoriaSuportados", "frequenciaMemoriaMaximaMhz",
+                "capacidadeMemoriaMaximaGb", "canaisMemoria", "versaoPcie", "lanesPcie",
+            },
+            ("FABRICANTE_OFICIAL", "CPU_MONKEY", "CPU_WORLD"),
+        ),
+    ),
+    "PLACA_VIDEO": (
+        (
+            {
+                "gpu", "chipset", "arquitetura", "memoriaVideoGb", "tipoMemoriaVideo",
+                "barramentoBits", "clockBaseMhz", "clockBoostMhz", "geracaoPcie", "larguraPcie",
+            },
+            ("TECHPOWERUP", "FABRICANTE_OFICIAL", "GEIZHALS"),
+        ),
+        (
+            {
+                "comprimentoMm", "alturaMm", "espessuraMm", "slotsOcupados", "consumoWatts",
+                "potenciaFonteRecomendadaWatts", "conectoresPcie6Pinos", "conectoresPcie8Pinos",
+                "conectores12vhpwr", "conectores12v2x6", "hdmi", "displayPort", "saidasVideo",
+            },
+            ("FABRICANTE_OFICIAL", "TECHPOWERUP", "GEIZHALS", "ICECAT"),
+        ),
+    ),
+    "PLACA_MAE": (
+        (
+            {
+                "biosInicial", "biosMinima", "biosFlashback", "revisao", "wifi", "bluetooth",
+                "ethernet", "saidasVideo", "portasSata", "slotsM2", "slotsMemoria",
+                "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb",
+                "frequenciasMemoriaJedecMhz", "frequenciasMemoriaOverclockMhz",
+            },
+            ("FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS"),
+        ),
+    ),
+    "MEMORIA_RAM": (
+        (
+            {
+                "tipo", "formato", "capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz",
+                "frequenciaJedecMhz", "latenciaCl", "tensaoVolts", "suportaXmp", "suportaExpo",
+            },
+            ("FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS"),
+        ),
+    ),
+}
+
+
+def _focused_source_order(category: str, missing: tuple[str, ...]) -> tuple[str, ...]:
+    base = CATEGORY_SOURCE_ORDER.get(
+        category,
+        ("FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS", "PC_KOMBO"),
+    )
+    missing_set = set(missing)
+    preferred: list[str] = ["FABRICANTE_OFICIAL"]
+    for fields, sources in _FIELD_SOURCE_HINTS.get(category, ()):
+        if fields.intersection(missing_set):
+            preferred.extend(sources)
+    preferred.extend(base)
+
+    ordered: list[str] = []
+    for source in preferred:
+        if source == "PC_KOMBO":
+            continue
+        if source not in ordered:
+            ordered.append(source)
+    if "PC_KOMBO" in base:
+        ordered.append("PC_KOMBO")
+    return tuple(ordered)
+
+
 @dataclass(frozen=True)
 class ResearchPlan:
     category: str
@@ -122,7 +202,7 @@ def build_research_plan(category: str, result: dict) -> ResearchPlan:
     missing = tuple(technical_missing_fields(result))
     essential = tuple(essential_missing_fields(result))
     coverage = technical_coverage(result)
-    sources = CATEGORY_SOURCE_ORDER.get(category, ("FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS", "PC_KOMBO"))
+    sources = _focused_source_order(category, missing)
 
     # Ficha muito vazia ou com lacunas essenciais recebe pesquisa mais profunda.
     deep = bool(essential) or coverage < 0.55 or len(missing) >= 8
