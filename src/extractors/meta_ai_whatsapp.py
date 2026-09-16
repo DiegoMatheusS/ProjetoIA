@@ -19,8 +19,15 @@ for _name in dir(_base):
         globals().setdefault(_name, getattr(_base, _name))
 
 
-_MARKDOWN_LINK = re.compile(r"\[([^\]\n]{1,200})\]\(\s*(https?://[^\s)]+(?:\)[^\s)]*)?)\s*\)", re.I)
-_OPENAI_CITATION = re.compile(r"\s*【[^】\n]{1,200}】\s*$")
+_WRAPPED_MARKDOWN_LINK_SUFFIX = re.compile(
+    r"\s*\(\s*\[[^\]\n]{1,200}\]\(\s*https?://.+?\)\s*\)\s*$",
+    re.I,
+)
+_MARKDOWN_LINK_SUFFIX = re.compile(
+    r"\s*\[[^\]\n]{1,200}\]\(\s*https?://.+?\)\s*$",
+    re.I,
+)
+_OPENAI_CITATION_SUFFIX = re.compile(r"\s*【[^】\n]{1,200}】\s*$")
 _RAW_URL_SUFFIX = re.compile(r"\s*(?:\(\s*)?https?://\S+?(?:\s*\))?\s*$", re.I)
 
 
@@ -30,16 +37,17 @@ def _strip_reference_suffix(value: str) -> str:
     if not text:
         return text
 
-    # Caso observado em produção:
+    # Casos observados/esperados:
     # 1.11 ([asrock.com](https://www.asrock.com/...))
-    # Remove primeiro links Markdown e, se eles estavam sozinhos entre parênteses,
-    # remove também o par de parênteses vazio deixado para trás.
+    # 1.11 [asrock.com](https://www.asrock.com/...)
+    # 1.11 (https://www.asrock.com/...)
+    # 1.11 【fonte】
     previous = None
     while text != previous:
         previous = text
-        text = _OPENAI_CITATION.sub("", text).strip()
-        text = _MARKDOWN_LINK.sub("", text).strip()
-        text = re.sub(r"\s*\(\s*\)\s*$", "", text).strip()
+        text = _OPENAI_CITATION_SUFFIX.sub("", text).strip()
+        text = _WRAPPED_MARKDOWN_LINK_SUFFIX.sub("", text).strip()
+        text = _MARKDOWN_LINK_SUFFIX.sub("", text).strip()
         text = _RAW_URL_SUFFIX.sub("", text).strip()
 
     # Limpa separadores que ficaram no fim depois da retirada da citação.
