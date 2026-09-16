@@ -107,15 +107,27 @@ def _motherboard_structured_complements(attributes: list[dict[str, Any]] | None)
 
     ram = attr(mapping, "RAM", "Memória", "Memory")
     if ram:
-        kinds = memory_types(ram)
+        ram_text = _clean(ram)
+        kinds = memory_types(ram_text)
         if kinds:
             specs["tiposMemoriaSuportados"] = kinds
-        maximum = re.search(r"\bmax\.?\s*([0-9.,]+\s*(?:GB|TB))\b", _clean(ram), re.I)
+
+        if re.search(r"\bSO[- ]?DIMM\b", ram_text, re.I):
+            specs["formatosMemoriaSuportados"] = ["SO_DIMM"]
+        elif re.search(r"\b(?:U?DIMM)\b", ram_text, re.I):
+            specs["formatosMemoriaSuportados"] = ["DIMM"]
+
+        slots = re.search(r"\b(\d{1,2})\s*[xX]\s*(?:DDR\s*[345]\s*)?(?:U?DIMM|SO[- ]?DIMM)", ram_text, re.I)
+        if slots:
+            specs["slotsMemoria"] = int(slots.group(1))
+
+        maximum = re.search(r"\bmax\.?\s*([0-9.,]+\s*(?:GB|TB))\b", ram_text, re.I)
         if maximum:
             value = capacity_gb(maximum.group(1))
             if value is not None:
                 specs["capacidadeMaximaMemoriaGb"] = value
-        if re.search(r"\bUDIMM\b", _clean(ram), re.I) and not re.search(r"\bRDIMM\b", _clean(ram), re.I):
+
+        if re.search(r"\bUDIMM\b", ram_text, re.I) and not re.search(r"\bRDIMM\b", ram_text, re.I):
             specs["suportaMemoriaRegistrada"] = False
 
     rates = attr(mapping, "RAM-Datenrate", "RAM Datenrate", "Memory Data Rate", "Memory Speed")
@@ -176,8 +188,10 @@ def extract_research_specs(category: str, attributes=None, context_text: str = "
     structured = _motherboard_structured_complements(attributes or [])
     authoritative = {
         "tiposMemoriaSuportados",
+        "formatosMemoriaSuportados",
         "frequenciasMemoriaJedecMhz",
         "frequenciasMemoriaOverclockMhz",
+        "slotsMemoria",
         "capacidadeMaximaMemoriaGb",
         "suportaMemoriaRegistrada",
         "suportaEcc",
