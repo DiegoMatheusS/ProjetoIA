@@ -104,6 +104,41 @@ def _call_provider_with_budget(provider, prompt: str, budget_seconds: float):
     return provider.enrich(prompt)
 
 
+def _verified_provenance(
+    *,
+    field: str,
+    value: Any,
+    verified_evidence: dict[str, Any],
+    external,
+    source_urls: list[str],
+    round_number: int,
+) -> dict[str, Any]:
+    evidence = verified_evidence.get(field)
+    if isinstance(evidence, dict) and evidence.get("valor") == value:
+        return {
+            "fonte": str(evidence.get("fonte") or "FABRICANTE_OFICIAL").strip().upper(),
+            "url": evidence.get("url"),
+            "trecho": evidence.get("trecho"),
+            "valor": value,
+            "modelo": external.model,
+            "urls": source_urls,
+            "metodo": "OPENAI_COM_CITACAO_OFICIAL_REVALIDADA",
+            "rodada": round_number,
+            "evidenciaCampoConfirmada": True,
+        }
+
+    return {
+        "fonte": "OPENAI_WEB_SEARCH" if source_urls else "OPENAI",
+        "modelo": external.model,
+        "urls": source_urls,
+        "metodo": "IA_PARSER_SCHEMA_VALIDADO",
+        "rodada": round_number,
+        # URLs da rodada são contexto/proveniência de busca, não prova de que uma
+        # página específica sustentou este campo. A confiança decide isso depois.
+        "evidenciaCampoConfirmada": False,
+    }
+
+
 @dataclass
 class IterativeAIResult:
     payload: dict[str, Any]
@@ -138,6 +173,9 @@ def run_iterative_external_research(
     pergunta com uma instrucao de formato mais rigida. V11: todas as chamadas externas
     compartilham um orçamento total de tempo e cada rodada recebe um teto proprio para
     evitar que retries/duas rodadas ultrapassem a janela segura da requisicao principal.
+    V12: URLs retornadas pela Web Search não elevam automaticamente a confiança de
+    todos os campos da rodada. Uma página oficial precisa sustentar o valor daquele
+    campo por reextração determinística para ganhar proveniência oficial.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -168,6 +206,7 @@ def run_iterative_external_research(
     total_budget = _total_budget_seconds()
     round_ceiling = _max_round_budget_seconds()
     external_started = time.monotonic()
+    local_info = local_info if isinstance(local_info, dict) else {}
 
     for round_number in range(1, max_rounds + 1):
         specs_before = current.get(spec_field) if isinstance(current.get(spec_field), dict) else {}
@@ -235,12 +274,18 @@ def run_iterative_external_research(
         round_sources = [item for item in (external.sources or []) if isinstance(item, dict)]
         sources_all.extend(round_sources)
 
+        verified_evidence: dict[str, Any] = {}
         try:
-            collect_cited_sources(category, current, round_sources, local_info or {})
+            verified_evidence = collect_cited_sources(
+                category,
+                current,
+                round_sources,
+                local_info,
+            ) or {}
         except Exception:
             # Citacoes sao proveniencia auxiliar; falha nessa etapa nao invalida
             # o parser/normalizador nem deve derrubar o Completar com IA.
-            pass
+            verified_evidence = {}
 
         merged, filled, parsed_specs, conflicts = merge_meta_ai_response_into_payload_detailed(
             category,
@@ -274,14 +319,18 @@ def run_iterative_external_research(
             for item in round_sources
             if str(item.get("url") or "").strip()
         ][:20]
+        fields_with_verified_evidence: list[str] = []
         for field in valid_filled:
-            provenance[field] = {
-                "fonte": "OPENAI_WEB_SEARCH" if source_urls else "OPENAI",
-                "modelo": external.model,
-                "urls": source_urls,
-                "metodo": "IA_PARSER_SCHEMA_VALIDADO",
-                "rodada": round_number,
-            }
+            provenance[field] = _verified_provenance(
+                field=field,
+                value=normalized_specs.get(field),
+                verified_evidence=verified_evidence,
+                external=external,
+                source_urls=source_urls,
+                round_number=round_number,
+            )
+            if provenance[field].get("evidenciaCampoConfirmada"):
+                fields_with_verified_evidence.append(field)
 
         state_after = {
             "categoriaDetectada": category,
@@ -295,6 +344,7 @@ def run_iterative_external_research(
                 "status": "CONCLUIDA" if valid_filled else "SEM_AVANCO",
                 "camposSolicitados": list(missing_before),
                 "camposPreenchidos": list(valid_filled),
+                "camposComEvidenciaOficialConfirmada": fields_with_verified_evidence,
                 "camposAusentesDepois": list(missing_after),
                 "fontesRetornadas": len(round_sources),
                 "modelo": external.model,
