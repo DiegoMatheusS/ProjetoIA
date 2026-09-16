@@ -14,7 +14,7 @@ from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from .cache import ResearchCache, merge_cached_gaps
 from .confidence import annotate_field_confidence
-from .evidence_resolver import resolve_cache_conflicts
+from .evidence_resolver import resolve_cache_conflicts, resolve_live_research_conflicts
 from .planner import ResearchPlan, build_research_plan
 from .source_router import build_providers
 
@@ -73,10 +73,11 @@ def _merge_round_info(first: dict[str, Any], second: dict[str, Any]) -> dict[str
 class TechnicalResearchAgent:
     """Agente de pesquisa tecnica para um unico hardware selecionado.
 
-    A V4 preserva as buscas focadas da V3, mas trata o cache como dado provisório:
-    valor confirmado no payload original nunca e substituido; valor que entrou apenas
-    pelo cache pode ser corrigido quando uma fonte atual comprovadamente mais forte
-    encontra um valor diferente. A OpenAI continua depois somente para as lacunas.
+    A V7 preserva cache, buscas focadas, rodadas e verificacao independente, mas
+    deixa de aceitar cegamente o primeiro valor encontrado pela pesquisa local.
+    Antes de calcular a confianca, conflitos entre fontes da mesma execucao passam
+    por um resolvedor conservador de consenso. Valores que ja vieram do frontend
+    continuam imutaveis; somente campos preenchidos automaticamente podem mudar.
     """
 
     def __init__(self, *, enabled: bool | None = None, cache: ResearchCache | None = None):
@@ -114,7 +115,7 @@ class TechnicalResearchAgent:
             "coberturaTecnicaAntes": round(technical_coverage(result), 4),
             "coberturaTecnicaDepois": round(technical_coverage(result), 4),
             "agentePesquisa": {
-                "versao": 4,
+                "versao": 7,
                 "ativo": False,
             },
         }
@@ -258,7 +259,7 @@ class TechnicalResearchAgent:
                     "camposPreenchidos": cached_filled,
                     "origemPorCampo": cached_origins,
                     "agentePesquisa": {
-                        "versao": 4,
+                        "versao": 7,
                         "ativo": True,
                         "cacheHit": cache_hit,
                         "camposDoCache": cached_filled,
@@ -348,21 +349,36 @@ class TechnicalResearchAgent:
                 cached_fields=cached_filled,
             )
 
+        # V7: conflitos da pesquisa atual deixam de ser apenas registrados. Quando
+        # existe consenso independente ou uma fonte claramente mais forte, o agente
+        # escolhe o valor tecnicamente melhor. Campos originais continuam imutaveis.
+        safe_after, info = resolve_live_research_conflicts(
+            category,
+            original_payload=safe_original,
+            researched_payload=safe_after,
+            info=info,
+        )
+
         result_state, _ = self._base_result(category, safe_after)
         focused_queries = sum(
             len(item.get("consultasExecutadas") or [])
             for item in info.get("pesquisasFocadas") or []
             if isinstance(item, dict)
         )
+        resolution = info.get("resolucaoConflitosPesquisa") or {}
         info["agentePesquisa"] = {
-            "versao": 4,
+            "versao": 7,
             "ativo": True,
             "cacheHit": cache_hit,
             "camposDoCache": cached_filled,
             "camposCacheSubstituidosPorEvidenciaAtual": list(
                 info.get("camposCacheSubstituidosPorEvidenciaAtual") or []
             ),
+            "camposSubstituidosPorConsenso": list(
+                info.get("camposSubstituidosPorConsenso") or []
+            ),
             "conflitosResolvidos": len(info.get("conflitosResolvidos") or []),
+            "resolucaoConflitosPesquisa": resolution,
             "plano": plan.as_dict(),
             "rodadas": rounds,
             "consultasEspecificasExecutadas": focused_queries,
