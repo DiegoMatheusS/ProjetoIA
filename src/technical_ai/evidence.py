@@ -58,21 +58,34 @@ def filter_grounded_response(category, text, local_info):
 
 
 def collect_cited_sources(category, payload, sources, local_info):
-    """Verify up to two AI citations on configured manufacturer domains."""
+    """Confere citações da IA em domínio oficial e devolve evidência por campo.
+
+    A existência de URLs na busca web não é suficiente para considerar todos os
+    valores da rodada confirmados. Somente um valor reextraído deterministicamente
+    de uma página oficial entra em ``evidenciaPorCampo`` e pode elevar a confiança
+    daquele campo específico.
+    """
     import time
     from urllib.parse import urlparse
     from ..enrichment.identity import build_identity, identity_is_strong
     from ..enrichment.providers import ManufacturerProvider
     from ..enrichment.quality import evidence_for_specs
 
+    verified_by_field = {}
     identity = build_identity({'payloadParcialBackend': payload})
     if not identity_is_strong(identity):
-        return
+        return verified_by_field
+
     provider = ManufacturerProvider()
     provider.timeout = 3
     provider.allow_browser_fallback = False
     domains = provider.search_domains(identity)
     known = {s.get('url') for s in local_info.get('evidenciasColetadas') or []}
+    field_store = local_info.setdefault('evidenciaPorCampo', {})
+    if not isinstance(field_store, dict):
+        field_store = {}
+        local_info['evidenciaPorCampo'] = field_store
+
     started, attempted = time.monotonic(), 0
     for citation in sources or []:
         if attempted >= 2 or time.monotonic() - started >= 6:
@@ -89,13 +102,47 @@ def collect_cited_sources(category, payload, sources, local_info):
         host = (parsed.hostname or '').lower()
         if parsed.scheme != 'https' or parsed.username or parsed.password or not any(host == d or host.endswith('.' + d) for d in domains):
             continue
+
         known.add(url)
         attempted += 1
         source = provider.fetch_candidate(url, identity)
-        local_info.setdefault('fontesConsultadas', []).append({'fonte': provider.name, 'url': url, 'ok': bool(source.get('ok')), 'erro': source.get('erro'), 'diagnostico': source.get('diagnostico')})
+        local_info.setdefault('fontesConsultadas', []).append({
+            'fonte': provider.name,
+            'url': url,
+            'ok': bool(source.get('ok')),
+            'erro': source.get('erro'),
+            'diagnostico': source.get('diagnostico'),
+        })
         if not source.get('ok'):
             continue
-        specs = extract_specs(category, source.get('attributes') or [], context_text=source.get('context_text') or '')
+
+        specs = extract_specs(
+            category,
+            source.get('attributes') or [],
+            context_text=source.get('context_text') or '',
+        )
         evidence = evidence_for_specs(category, {**source, 'fonte': provider.name}, specs)
-        local_info.setdefault('evidenciasColetadas', []).append({'url': url, 'urlFinal': source.get('url') or url, 'fonte': provider.name,
-            'trechos': [e['trecho'] for e in evidence.values()][:60], 'atributos': (source.get('attributes') or [])[:150]})
+        local_info.setdefault('evidenciasColetadas', []).append({
+            'url': url,
+            'urlFinal': source.get('url') or url,
+            'fonte': provider.name,
+            'trechos': [e['trecho'] for e in evidence.values()][:60],
+            'atributos': (source.get('attributes') or [])[:150],
+        })
+
+        for field, item in evidence.items():
+            if not isinstance(item, dict) or item.get('valor') in (None, '', []):
+                continue
+            record = {
+                'fonte': str(item.get('fonte') or provider.name).strip().upper(),
+                'url': item.get('url') or source.get('url') or url,
+                'trecho': item.get('trecho'),
+                'valor': item.get('valor'),
+                'metodo': 'CITACAO_OFICIAL_REEXTRAIDA_DETERMINISTICAMENTE',
+            }
+            # A primeira evidência oficial válida é suficiente; não sobrescrevemos
+            # uma confirmação anterior da mesma execução com outra página tardia.
+            field_store.setdefault(field, record)
+            verified_by_field.setdefault(field, record)
+
+    return verified_by_field
