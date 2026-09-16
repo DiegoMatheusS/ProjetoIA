@@ -5,7 +5,11 @@ import os
 import time
 from typing import Any
 
-from ..enrichment.core import technical_missing_fields
+from ..enrichment.core import (
+    required_missing_fields,
+    technical_coverage,
+    technical_missing_fields,
+)
 from ..enrichment.quality import validate_specs
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
@@ -13,6 +17,7 @@ from ..extractors.meta_ai_whatsapp import (
     build_meta_ai_prompt,
     merge_meta_ai_response_into_payload_detailed,
 )
+from .cost_guard import ExternalAIResponseCache
 from .evidence import collect_cited_sources
 from .providers import TechnicalAIProviderError
 
@@ -45,6 +50,15 @@ def _record_official_evidence_conflicts_enabled() -> bool:
     }
 
 
+def _skip_external_coverage() -> float:
+    """Cobertura local a partir da qual opcionais nao justificam uma chamada paga."""
+    try:
+        value = float(os.getenv("TECH_RESEARCH_OPENAI_SKIP_COVERAGE", "0.88"))
+    except (TypeError, ValueError):
+        value = 0.88
+    return min(0.99, max(0.75, value))
+
+
 def _total_budget_seconds() -> float:
     try:
         value = float(os.getenv("TECH_RESEARCH_OPENAI_TOTAL_BUDGET_SECONDS", "50"))
@@ -71,12 +85,7 @@ def _budget_error() -> TechnicalAIProviderError:
 
 
 def _repair_prompt(base_prompt: str) -> str:
-    """Reforca somente o formato quando a primeira resposta nao foi aproveitavel.
-
-    A primeira chamada continua recebendo exatamente o mesmo prompt usado pelo fluxo
-    manual do Meta AI. Esta variacao so pode aparecer na segunda e ultima rodada,
-    dentro do mesmo limite de chamadas ja configurado pelo agente.
-    """
+    """Reforca somente o formato quando a primeira resposta nao foi aproveitavel."""
     return (
         f"{base_prompt}\n\n"
         "ATENCAO DE FORMATO: a resposta anterior nao pode ser aproveitada pelo parser. "
@@ -127,10 +136,30 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _call_provider_with_budget(provider, prompt: str, budget_seconds: float):
+    # A resposta paga e cacheada pelo prompt exato. Se o cadastro falhar depois e
+    # o mesmo hardware for reenviado, reaproveitamos a resposta sem nova cobranca.
+    response_cache = None
+    try:
+        response_cache = ExternalAIResponseCache()
+        cached = response_cache.get(provider, prompt)
+        if cached is not None:
+            return cached
+    except Exception:
+        # Cache e uma otimizacao; nunca deve derrubar o enriquecimento.
+        response_cache = None
+
     enrich_with_budget = getattr(provider, "enrich_with_budget", None)
     if callable(enrich_with_budget):
-        return enrich_with_budget(prompt, budget_seconds=budget_seconds)
-    return provider.enrich(prompt)
+        response = enrich_with_budget(prompt, budget_seconds=budget_seconds)
+    else:
+        response = provider.enrich(prompt)
+
+    if response_cache is not None:
+        try:
+            response_cache.set(provider, prompt, response)
+        except Exception:
+            pass
+    return response
 
 
 def _verified_provenance(
@@ -166,8 +195,6 @@ def _verified_provenance(
         "urls": source_urls,
         "metodo": "IA_PARSER_SCHEMA_VALIDADO",
         "rodada": round_number,
-        # URLs da rodada são contexto/proveniência de busca, não prova de que uma
-        # página específica sustentou este campo. A confiança decide isso depois.
         "evidenciaCampoConfirmada": False,
     }
 
@@ -224,21 +251,13 @@ def run_iterative_external_research(
     payload: dict[str, Any],
     local_info: dict[str, Any] | None = None,
 ) -> IterativeAIResult:
-    """Executa no maximo duas rodadas externas usando o mesmo prompt do Meta AI.
+    """Pesquisa externa com protecao de custo.
 
-    Fluxo normal: a primeira chamada recebe exatamente o prompt usado no Meta AI;
-    se ela preencher campos e ainda houver lacunas, a segunda rodada pergunta apenas
-    o restante. V10: se a primeira resposta vier com texto mas nenhum campo puder ser
-    aproveitado pelo parser/validador, a segunda e ultima rodada pode repetir a mesma
-    pergunta com uma instrucao de formato mais rigida. V11: todas as chamadas externas
-    compartilham um orçamento total de tempo e cada rodada recebe um teto proprio para
-    evitar que retries/duas rodadas ultrapassem a janela segura da requisicao principal.
-    V12: URLs retornadas pela Web Search não elevam automaticamente a confiança de
-    todos os campos da rodada. Uma página oficial precisa sustentar o valor daquele
-    campo por reextração determinística para ganhar proveniência oficial. V13: quando
-    essa reextração oficial encontra um valor diferente do retornado pela OpenAI, a
-    divergência vira conflito explícito e segue para a auditoria em vez de passar como
-    simples ausência de confirmação documental.
+    Regra normal: no maximo uma chamada OpenAI. Uma segunda rodada so acontece
+    quando, depois da primeira, ainda existe campo OBRIGATORIO ausente. Se a pesquisa
+    local ja atingiu o limiar de cobertura e todos os obrigatorios estao presentes,
+    a OpenAI e ignorada. Respostas OpenAI bem-sucedidas sao cacheadas pelo prompt
+    exato para que uma falha posterior no cadastro nao gere nova cobranca.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -271,15 +290,70 @@ def run_iterative_external_research(
     external_started = time.monotonic()
     local_info = local_info if isinstance(local_info, dict) else {}
 
+    initial_specs = current.get(spec_field) if isinstance(current.get(spec_field), dict) else {}
+    initial_state = {
+        "categoriaDetectada": category,
+        "especificacoesEncontradas": initial_specs,
+    }
+    initial_missing = technical_missing_fields(initial_state)
+    initial_required = required_missing_fields(initial_state)
+    initial_coverage = technical_coverage(initial_state)
+    local_filled = list(local_info.get("camposPreenchidos") or [])
+    skip_threshold = _skip_external_coverage()
+
+    if (
+        initial_missing
+        and local_filled
+        and not initial_required
+        and initial_coverage >= skip_threshold
+    ):
+        return IterativeAIResult(
+            payload=current,
+            filled_fields=[],
+            parsed_specs={},
+            conflicts=[],
+            rejected=[],
+            sources=[],
+            provenance={},
+            rounds=[
+                {
+                    "numero": 0,
+                    "modo": "ECONOMIA_CUSTO",
+                    "status": "OPENAI_IGNORADA_COBERTURA_LOCAL",
+                    "chamadaExecutada": False,
+                    "coberturaLocal": round(initial_coverage, 4),
+                    "limiarCobertura": round(skip_threshold, 4),
+                    "camposAusentes": list(initial_missing),
+                    "camposObrigatoriosAusentes": [],
+                }
+            ],
+            first_prompt=None,
+            first_requested_fields=[],
+            provider="PROJETO_IA",
+            model=None,
+            provider_error=None,
+        )
+
     for round_number in range(1, max_rounds + 1):
         specs_before = current.get(spec_field) if isinstance(current.get(spec_field), dict) else {}
         state_before = {
             "categoriaDetectada": category,
             "especificacoesEncontradas": specs_before,
         }
-        missing_before = technical_missing_fields(state_before)
-        if not missing_before:
+        all_missing_before = technical_missing_fields(state_before)
+        required_before = required_missing_fields(state_before)
+        if not all_missing_before:
             break
+
+        # Primeira rodada pode tentar todas as lacunas. Uma eventual segunda rodada
+        # pergunta SOMENTE pelos obrigatorios restantes, reduzindo tokens e custo.
+        if round_number > 1:
+            if not required_before:
+                break
+            required_set = set(required_before)
+            missing_before = [field for field in all_missing_before if field in required_set]
+        else:
+            missing_before = list(all_missing_before)
 
         elapsed_before = time.monotonic() - external_started
         remaining_total = max(0.0, total_budget - elapsed_before)
@@ -304,7 +378,6 @@ def run_iterative_external_research(
         prompt_mode = "REPARO_FORMATO" if repair_next_round else "PADRAO_META_AI"
         prompt = _repair_prompt(base_prompt) if repair_next_round else base_prompt
         if first_prompt is None:
-            # Mantem para diagnostico o prompt original, igual ao do Meta AI.
             first_prompt = base_prompt
             first_requested = list(missing_before)
 
@@ -334,6 +407,8 @@ def run_iterative_external_research(
         remaining_after_call = max(0.0, total_budget - (time.monotonic() - external_started))
         last_provider = external.provider
         last_model = external.model
+        metadata = external.raw_metadata if isinstance(external.raw_metadata, dict) else {}
+        cache_hit_openai = bool(metadata.get("cacheHit"))
         round_sources = [item for item in (external.sources or []) if isinstance(item, dict)]
         sources_all.extend(round_sources)
 
@@ -346,8 +421,6 @@ def run_iterative_external_research(
                 local_info,
             ) or {}
         except Exception:
-            # Citacoes sao proveniencia auxiliar; falha nessa etapa nao invalida
-            # o parser/normalizador nem deve derrubar o Completar com IA.
             verified_evidence = {}
 
         merged, filled, parsed_specs, conflicts = merge_meta_ai_response_into_payload_detailed(
@@ -413,16 +486,20 @@ def run_iterative_external_research(
             "especificacoesEncontradas": normalized_specs,
         }
         missing_after = technical_missing_fields(state_after)
+        required_after = required_missing_fields(state_after)
         rounds.append(
             {
                 "numero": round_number,
                 "modo": prompt_mode,
                 "status": "CONCLUIDA" if valid_filled else "SEM_AVANCO",
+                "chamadaExecutada": not cache_hit_openai,
+                "cacheHitOpenAI": cache_hit_openai,
                 "camposSolicitados": list(missing_before),
                 "camposPreenchidos": list(valid_filled),
                 "camposComEvidenciaOficialConfirmada": fields_with_verified_evidence,
                 "camposComConflitoEvidenciaOficial": fields_with_official_conflict,
                 "camposAusentesDepois": list(missing_after),
+                "camposObrigatoriosAusentesDepois": list(required_after),
                 "fontesRetornadas": len(round_sources),
                 "modelo": external.model,
                 "reparoDeFormato": prompt_mode == "REPARO_FORMATO",
@@ -433,10 +510,11 @@ def run_iterative_external_research(
         )
 
         if not valid_filled:
-            # A primeira resposta sem avanco pode ter vindo em prosa/tabela/JSON.
-            # Usa a segunda chamada ja prevista pelo limite, sem criar uma terceira.
+            # Reparo de formato so justifica uma segunda chamada paga se ainda falta
+            # um campo obrigatorio para cadastro.
             if (
                 round_number < max_rounds
+                and required_after
                 and not repair_next_round
                 and _repair_on_no_advance_enabled()
                 and remaining_after_call >= 3.0
@@ -446,7 +524,7 @@ def run_iterative_external_research(
             break
 
         repair_next_round = False
-        if not missing_after:
+        if not missing_after or not required_after:
             break
 
     return IterativeAIResult(
