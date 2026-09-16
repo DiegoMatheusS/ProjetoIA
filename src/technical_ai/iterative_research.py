@@ -24,6 +24,32 @@ def _max_rounds() -> int:
     return min(2, max(1, value))
 
 
+def _repair_on_no_advance_enabled() -> bool:
+    return os.getenv("TECH_RESEARCH_OPENAI_REPAIR_ON_NO_ADVANCE", "true").strip().casefold() in {
+        "1",
+        "true",
+        "sim",
+        "yes",
+        "on",
+    }
+
+
+def _repair_prompt(base_prompt: str) -> str:
+    """Reforca somente o formato quando a primeira resposta nao foi aproveitavel.
+
+    A primeira chamada continua recebendo exatamente o mesmo prompt usado pelo fluxo
+    manual do Meta AI. Esta variacao so pode aparecer na segunda e ultima rodada,
+    dentro do mesmo limite de chamadas ja configurado pelo agente.
+    """
+    return (
+        f"{base_prompt}\n\n"
+        "ATENCAO DE FORMATO: a resposta anterior nao pode ser aproveitada pelo parser. "
+        "Responda SOMENTE com uma linha por campo no formato exato Campo: valor. "
+        "Nao use tabela, JSON, Markdown, bullets, cabecalho, explicacoes ou texto antes/depois. "
+        "Use exatamente os nomes dos campos solicitados. Se um valor nao puder ser confirmado, escreva null."
+    )
+
+
 def _missing(value: Any) -> bool:
     return value in (None, "", [])
 
@@ -72,9 +98,12 @@ def run_iterative_external_research(
 ) -> IterativeAIResult:
     """Executa no maximo duas rodadas externas usando o mesmo prompt do Meta AI.
 
-    A segunda rodada so acontece quando a primeira realmente preencheu algum campo
-    e ainda restam lacunas. Isso evita multiplicar custo/latencia quando a primeira
-    resposta nao avanca ou quando o provedor falha.
+    Fluxo normal: a primeira chamada recebe exatamente o prompt usado no Meta AI;
+    se ela preencher campos e ainda houver lacunas, a segunda rodada pergunta apenas
+    o restante. V10: se a primeira resposta vier com texto mas nenhum campo puder ser
+    aproveitado pelo parser/validador, a segunda e ultima rodada pode repetir a mesma
+    pergunta com uma instrucao de formato mais rigida. Isso recupera respostas em
+    prosa/tabela/JSON sem aumentar o numero maximo de chamadas configurado.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -100,8 +129,10 @@ def run_iterative_external_research(
     last_provider: str | None = None
     last_model: str | None = None
     provider_error: TechnicalAIProviderError | None = None
+    repair_next_round = False
+    max_rounds = _max_rounds()
 
-    for round_number in range(1, _max_rounds() + 1):
+    for round_number in range(1, max_rounds + 1):
         specs_before = current.get(spec_field) if isinstance(current.get(spec_field), dict) else {}
         state_before = {
             "categoriaDetectada": category,
@@ -111,9 +142,12 @@ def run_iterative_external_research(
         if not missing_before:
             break
 
-        prompt = build_meta_ai_prompt(category, identity, missing_before)
+        base_prompt = build_meta_ai_prompt(category, identity, missing_before)
+        prompt_mode = "REPARO_FORMATO" if repair_next_round else "PADRAO_META_AI"
+        prompt = _repair_prompt(base_prompt) if repair_next_round else base_prompt
         if first_prompt is None:
-            first_prompt = prompt
+            # Mantem para diagnostico o prompt original, igual ao do Meta AI.
+            first_prompt = base_prompt
             first_requested = list(missing_before)
 
         try:
@@ -123,6 +157,7 @@ def run_iterative_external_research(
             rounds.append(
                 {
                     "numero": round_number,
+                    "modo": prompt_mode,
                     "status": "ERRO_PROVEDOR",
                     "camposSolicitados": list(missing_before),
                     "codigoErro": exc.code,
@@ -192,18 +227,30 @@ def run_iterative_external_research(
         rounds.append(
             {
                 "numero": round_number,
+                "modo": prompt_mode,
                 "status": "CONCLUIDA" if valid_filled else "SEM_AVANCO",
                 "camposSolicitados": list(missing_before),
                 "camposPreenchidos": list(valid_filled),
                 "camposAusentesDepois": list(missing_after),
                 "fontesRetornadas": len(round_sources),
                 "modelo": external.model,
+                "reparoDeFormato": prompt_mode == "REPARO_FORMATO",
             }
         )
 
-        # Sem avanco, nova chamada com o mesmo contexto tenderia a repetir custo.
         if not valid_filled:
+            # A primeira resposta sem avanco pode ter vindo em prosa/tabela/JSON.
+            # Usa a segunda chamada ja prevista pelo limite, sem criar uma terceira.
+            if (
+                round_number < max_rounds
+                and not repair_next_round
+                and _repair_on_no_advance_enabled()
+            ):
+                repair_next_round = True
+                continue
             break
+
+        repair_next_round = False
         if not missing_after:
             break
 
