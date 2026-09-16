@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from typing import Any
 
 
@@ -18,12 +19,25 @@ SOURCE_CONFIDENCE = {
 }
 
 
+def _require_field_evidence_for_web_confidence() -> bool:
+    return os.getenv(
+        "TECH_RESEARCH_REQUIRE_FIELD_EVIDENCE_FOR_WEB_CONFIDENCE",
+        "true",
+    ).strip().casefold() in {"1", "true", "sim", "yes", "on"}
+
+
 def source_confidence(source: str | None) -> float:
     return SOURCE_CONFIDENCE.get(str(source or "").strip().upper(), 0.65)
 
 
 def annotate_field_confidence(info: dict[str, Any]) -> dict[str, Any]:
-    """Anota confiança por campo sem inventar nem substituir valores confirmados."""
+    """Anota confiança por campo sem inventar nem substituir valores confirmados.
+
+    V12: ter URLs de Web Search na mesma rodada não prova, por si só, que cada valor
+    veio dessas páginas. Quando a evidência específica por campo é exigida, um valor
+    apenas associado à rodada da busca recebe confiança conservadora até ser confirmado
+    por uma fonte independente ou por extração determinística de uma página oficial.
+    """
     out = deepcopy(info or {})
     origins = out.get("origemPorCampo") or {}
     conflicts = out.get("conflitos") or []
@@ -34,11 +48,24 @@ def annotate_field_confidence(info: dict[str, Any]) -> dict[str, Any]:
     }
 
     confidence_by_field: dict[str, dict[str, Any]] = {}
+    require_field_evidence = _require_field_evidence_for_web_confidence()
     for field, origin in origins.items():
         if not isinstance(origin, dict):
             continue
         source = str(origin.get("fonte") or "").strip().upper()
         score = source_confidence(source)
+        evidence_confirmed = bool(origin.get("evidenciaCampoConfirmada"))
+
+        # OPENAI_WEB_SEARCH significa que a rodada usou busca web. Sem uma evidência
+        # vinculada ao campo, o valor continua útil, mas não deve ganhar confiança de
+        # confirmação documental automaticamente.
+        if (
+            source == "OPENAI_WEB_SEARCH"
+            and require_field_evidence
+            and not evidence_confirmed
+        ):
+            score = min(score, 0.74)
+
         if field in conflict_fields:
             score = max(0.40, score - 0.12)
         confidence_by_field[field] = {
@@ -47,6 +74,8 @@ def annotate_field_confidence(info: dict[str, Any]) -> dict[str, Any]:
             "fonte": source or None,
             "url": origin.get("url"),
             "comConflito": field in conflict_fields,
+            "evidenciaCampoConfirmada": evidence_confirmed,
+            "metodo": origin.get("metodo"),
         }
 
     out["confiancaPorCampo"] = confidence_by_field
