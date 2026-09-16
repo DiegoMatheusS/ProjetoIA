@@ -35,6 +35,16 @@ def _repair_on_no_advance_enabled() -> bool:
     }
 
 
+def _record_official_evidence_conflicts_enabled() -> bool:
+    return os.getenv("TECH_RESEARCH_RECORD_OFFICIAL_EVIDENCE_CONFLICTS", "true").strip().casefold() in {
+        "1",
+        "true",
+        "sim",
+        "yes",
+        "on",
+    }
+
+
 def _total_budget_seconds() -> float:
     try:
         value = float(os.getenv("TECH_RESEARCH_OPENAI_TOTAL_BUDGET_SECONDS", "50"))
@@ -80,6 +90,25 @@ def _missing(value: Any) -> bool:
     return value in (None, "", [])
 
 
+def _comparison_key(value: Any) -> Any:
+    """Normaliza apenas para comparar IA x evidência oficial; não altera o payload."""
+    if isinstance(value, str):
+        return ("str", " ".join(value.split()).casefold())
+    if isinstance(value, list):
+        return ("list", tuple(sorted((_comparison_key(item) for item in value), key=repr)))
+    if isinstance(value, dict):
+        return (
+            "dict",
+            tuple(
+                sorted(
+                    ((str(key), _comparison_key(item)) for key, item in value.items()),
+                    key=lambda pair: pair[0],
+                )
+            ),
+        )
+    return ("scalar", value)
+
+
 def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen = set()
@@ -114,7 +143,11 @@ def _verified_provenance(
     round_number: int,
 ) -> dict[str, Any]:
     evidence = verified_evidence.get(field)
-    if isinstance(evidence, dict) and evidence.get("valor") == value:
+    if (
+        isinstance(evidence, dict)
+        and not _missing(evidence.get("valor"))
+        and _comparison_key(evidence.get("valor")) == _comparison_key(value)
+    ):
         return {
             "fonte": str(evidence.get("fonte") or "FABRICANTE_OFICIAL").strip().upper(),
             "url": evidence.get("url"),
@@ -136,6 +169,33 @@ def _verified_provenance(
         # URLs da rodada são contexto/proveniência de busca, não prova de que uma
         # página específica sustentou este campo. A confiança decide isso depois.
         "evidenciaCampoConfirmada": False,
+    }
+
+
+def _official_evidence_conflict(
+    *,
+    field: str,
+    current_value: Any,
+    evidence: Any,
+    round_number: int,
+) -> dict[str, Any] | None:
+    if not _record_official_evidence_conflicts_enabled() or not isinstance(evidence, dict):
+        return None
+    official_value = evidence.get("valor")
+    if _missing(current_value) or _missing(official_value):
+        return None
+    if _comparison_key(current_value) == _comparison_key(official_value):
+        return None
+    return {
+        "campo": field,
+        "valorAtual": current_value,
+        "valorExterno": official_value,
+        "fonte": str(evidence.get("fonte") or "FABRICANTE_OFICIAL").strip().upper(),
+        "url": evidence.get("url"),
+        "trecho": evidence.get("trecho"),
+        "rodada": round_number,
+        "metodo": "CITACAO_OFICIAL_DIVERGIU_DA_RESPOSTA_OPENAI",
+        "requerRevisao": True,
     }
 
 
@@ -175,7 +235,10 @@ def run_iterative_external_research(
     evitar que retries/duas rodadas ultrapassem a janela segura da requisicao principal.
     V12: URLs retornadas pela Web Search não elevam automaticamente a confiança de
     todos os campos da rodada. Uma página oficial precisa sustentar o valor daquele
-    campo por reextração determinística para ganhar proveniência oficial.
+    campo por reextração determinística para ganhar proveniência oficial. V13: quando
+    essa reextração oficial encontra um valor diferente do retornado pela OpenAI, a
+    divergência vira conflito explícito e segue para a auditoria em vez de passar como
+    simples ausência de confirmação documental.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -320,10 +383,23 @@ def run_iterative_external_research(
             if str(item.get("url") or "").strip()
         ][:20]
         fields_with_verified_evidence: list[str] = []
+        fields_with_official_conflict: list[str] = []
         for field in valid_filled:
+            current_value = normalized_specs.get(field)
+            evidence = verified_evidence.get(field)
+            official_conflict = _official_evidence_conflict(
+                field=field,
+                current_value=current_value,
+                evidence=evidence,
+                round_number=round_number,
+            )
+            if official_conflict is not None:
+                conflicts_all.append(official_conflict)
+                fields_with_official_conflict.append(field)
+
             provenance[field] = _verified_provenance(
                 field=field,
-                value=normalized_specs.get(field),
+                value=current_value,
                 verified_evidence=verified_evidence,
                 external=external,
                 source_urls=source_urls,
@@ -345,6 +421,7 @@ def run_iterative_external_research(
                 "camposSolicitados": list(missing_before),
                 "camposPreenchidos": list(valid_filled),
                 "camposComEvidenciaOficialConfirmada": fields_with_verified_evidence,
+                "camposComConflitoEvidenciaOficial": fields_with_official_conflict,
                 "camposAusentesDepois": list(missing_after),
                 "fontesRetornadas": len(round_sources),
                 "modelo": external.model,
