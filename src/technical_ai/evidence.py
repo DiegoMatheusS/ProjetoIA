@@ -86,6 +86,12 @@ def collect_cited_sources(category, payload, sources, local_info):
         field_store = {}
         local_info['evidenciaPorCampo'] = field_store
 
+    # Evidência oficial coletada numa rodada anterior da mesma execução também pode
+    # confirmar um campo preenchido agora, sem refazer a mesma requisição HTTP.
+    for field, item in field_store.items():
+        if isinstance(item, dict) and item.get('valor') not in (None, '', []):
+            verified_by_field[field] = dict(item)
+
     started, attempted = time.monotonic(), 0
     for citation in sources or []:
         if attempted >= 2 or time.monotonic() - started >= 6:
