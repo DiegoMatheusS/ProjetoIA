@@ -44,13 +44,13 @@ def evaluate_research_quality(
     conflicts: list[dict[str, Any]] | None = None,
     registration_issues: list[Any] | tuple[Any, ...] | None = None,
 ) -> dict[str, Any]:
-    """Audita a ficha final e, opcionalmente, tenta confirmar campos duvidosos.
+    """Audita a ficha final e tenta confirmar campos essenciais questionaveis.
 
-    Valores que ja estavam no payload original continuam considerados confirmados.
-    Para campos essenciais preenchidos automaticamente, a auditoria exige
-    proveniencia/confianca minima. Quando a verificacao independente esta ativada,
-    campos de baixa confianca ou sem proveniencia recebem uma ultima tentativa em
-    outra fonte tecnica antes de serem enviados para revisao manual.
+    Valores que ja estavam no payload original continuam considerados confirmados
+    e nunca sao alterados por esta camada. Para campos preenchidos automaticamente,
+    a auditoria exige proveniencia/confianca minima. A V8 tambem usa a verificacao
+    independente para tentar encerrar conflitos remanescentes da pesquisa: a fonte
+    que originou o valor e as fontes que ja discordaram ficam fora da nova consulta.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -87,16 +87,35 @@ def evaluate_research_quality(
     threshold = _min_essential_confidence()
     essentials = list((COVERAGE_WEIGHT_TIERS.get(category) or {}).get("essenciais") or [])
 
-    # Primeiro identifica apenas os campos que podem se beneficiar de uma segunda
-    # fonte. Campos ja em conflito continuam para revisao e nao gastam outra busca.
+    # V8: campos essenciais em conflito tambem recebem uma ultima verificacao,
+    # desde que tenham sido preenchidos automaticamente. Para manter independencia,
+    # excluimos tanto a fonte atual quanto as fontes que ja participaram do conflito.
     questionable_fields: list[str] = []
+    excluded_sources_by_field: dict[str, list[str]] = {}
     for field in essentials:
         value = final_specs.get(field)
-        if _missing(value) or not _missing(original_specs.get(field)) or field in base_conflict_fields:
+        if _missing(value) or not _missing(original_specs.get(field)):
             continue
         field_confidence = confidence.get(field)
-        if not isinstance(field_confidence, dict) or _score(field_confidence) < threshold:
+        needs_confidence_check = (
+            not isinstance(field_confidence, dict)
+            or _score(field_confidence) < threshold
+        )
+        has_conflict = field in base_conflict_fields
+        if needs_confidence_check or has_conflict:
             questionable_fields.append(field)
+
+        excluded: list[str] = []
+        if isinstance(field_confidence, dict) and field_confidence.get("fonte"):
+            excluded.append(str(field_confidence.get("fonte")).strip().upper())
+        for conflict in base_conflicts:
+            if str(conflict.get("campo") or "").strip() != field:
+                continue
+            source = str(conflict.get("fonte") or "").strip().upper()
+            if source:
+                excluded.append(source)
+        if excluded:
+            excluded_sources_by_field[field] = list(dict.fromkeys(excluded))
 
     try:
         verification = verify_questionable_fields(
@@ -110,6 +129,7 @@ def evaluate_research_quality(
                 for field in questionable_fields
                 if isinstance(confidence.get(field), dict)
             },
+            excluded_sources_by_field=excluded_sources_by_field,
         )
     except Exception as exc:
         # A verificacao e uma tentativa extra; nunca pode derrubar o Completar com IA.
@@ -129,7 +149,40 @@ def evaluate_research_quality(
     verification_conflicts = [
         item for item in (verification_conflicts or []) if isinstance(item, dict)
     ]
-    all_conflicts = base_conflicts + verification_conflicts
+
+    # Uma terceira fonte forte que confirma o valor atual pode encerrar somente
+    # conflitos de campos preenchidos automaticamente. Conflitos em valores que ja
+    # vieram do frontend continuam visiveis para revisao, mesmo se outra fonte concordar.
+    conflict_fields_confirmed: set[str] = set()
+    resolved_conflicts_by_verification: list[dict[str, Any]] = []
+    for field in base_conflict_fields:
+        if not _missing(original_specs.get(field)):
+            continue
+        confirmation = confirmations.get(field) if isinstance(confirmations.get(field), dict) else None
+        if confirmation is None or _score(confirmation) < threshold:
+            continue
+        conflict_fields_confirmed.add(field)
+        affected = [
+            item for item in base_conflicts
+            if str(item.get("campo") or "").strip() == field
+        ]
+        resolved_conflicts_by_verification.append(
+            {
+                "campo": field,
+                "valorMantido": final_specs.get(field),
+                "fonteConfirmacao": confirmation.get("fonte"),
+                "urlConfirmacao": confirmation.get("url"),
+                "scoreConfirmacao": round(_score(confirmation), 2),
+                "conflitosEncerrados": len(affected),
+                "metodo": "TERCEIRA_FONTE_INDEPENDENTE_CONFIRMOU_VALOR_ATUAL",
+            }
+        )
+
+    remaining_base_conflicts = [
+        item for item in base_conflicts
+        if str(item.get("campo") or "").strip() not in conflict_fields_confirmed
+    ]
+    all_conflicts = remaining_base_conflicts + verification_conflicts
     conflict_fields = {
         str(item.get("campo") or "").strip()
         for item in all_conflicts
@@ -238,6 +291,7 @@ def evaluate_research_quality(
         "camposOriginaisConsideradosConfirmados": original_confirmed,
         "camposConfirmadosAutomaticamente": automatically_confirmed,
         "conflitosNaoResolvidos": all_conflicts,
+        "conflitosResolvidosPorVerificacao": resolved_conflicts_by_verification,
         "problemasPayload": registration_issues,
         "verificacaoIndependente": verification,
     }
