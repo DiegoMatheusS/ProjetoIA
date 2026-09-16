@@ -246,6 +246,15 @@ class OpenAIProvider(TechnicalAIProvider):
             safe_message,
         )
 
+    @staticmethod
+    def _budget_error() -> TechnicalAIProviderError:
+        return TechnicalAIProviderError(
+            "ORCAMENTO_TEMPO_ESGOTADO",
+            "Orçamento de tempo da chamada OpenAI esgotado",
+            status_code=504,
+            transient=True,
+        )
+
     def enrich(self, prompt: str) -> TechnicalAIResponse:
         try:
             return self._enrich(prompt)
@@ -253,7 +262,20 @@ class OpenAIProvider(TechnicalAIProvider):
             self._log_failure(exc)
             raise
 
-    def _enrich(self, prompt: str) -> TechnicalAIResponse:
+    def enrich_with_budget(self, prompt: str, *, budget_seconds: float) -> TechnicalAIResponse:
+        """Executa a chamada dentro de um teto de tempo compartilhado pelo agente.
+
+        O timeout configurado em OPENAI_TIMEOUT_SECONDS continua sendo o teto normal,
+        mas a pesquisa iterativa pode fornecer um orçamento menor para impedir que
+        duas rodadas + retries consumam toda a janela da requisição principal.
+        """
+        try:
+            return self._enrich(prompt, budget_seconds=budget_seconds)
+        except TechnicalAIProviderError as exc:
+            self._log_failure(exc)
+            raise
+
+    def _enrich(self, prompt: str, *, budget_seconds: float | None = None) -> TechnicalAIResponse:
         if not self.enabled:
             raise TechnicalAIProviderError(
                 "PROVEDOR_NAO_CONFIGURADO",
@@ -274,6 +296,15 @@ class OpenAIProvider(TechnicalAIProvider):
                 status_code=400,
             )
 
+        deadline: float | None = None
+        applied_budget: float | None = None
+        if budget_seconds is not None:
+            try:
+                applied_budget = max(3.0, float(budget_seconds))
+            except (TypeError, ValueError):
+                applied_budget = 3.0
+            deadline = time.monotonic() + applied_budget
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -283,12 +314,19 @@ class OpenAIProvider(TechnicalAIProvider):
         last_error: TechnicalAIProviderError | None = None
 
         for attempt in range(self.max_retries + 1):
+            request_timeout = self.timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 1.0:
+                    raise self._budget_error()
+                request_timeout = min(self.timeout, max(1.0, remaining - 0.25))
+
             try:
                 response = self.session.post(
                     self.endpoint,
                     headers=headers,
                     json=body,
-                    timeout=self.timeout,
+                    timeout=request_timeout,
                 )
             except requests.Timeout as exc:
                 last_error = TechnicalAIProviderError(
@@ -298,8 +336,10 @@ class OpenAIProvider(TechnicalAIProvider):
                     transient=True,
                 )
                 if attempt < self.max_retries:
-                    time.sleep(min(2.0, 0.35 * (2 ** attempt)))
-                    continue
+                    sleep_seconds = min(2.0, 0.35 * (2 ** attempt))
+                    if deadline is None or deadline - time.monotonic() > sleep_seconds + 1.0:
+                        time.sleep(sleep_seconds)
+                        continue
                 raise last_error from exc
             except requests.RequestException as exc:
                 last_error = TechnicalAIProviderError(
@@ -309,15 +349,19 @@ class OpenAIProvider(TechnicalAIProvider):
                     transient=True,
                 )
                 if attempt < self.max_retries:
-                    time.sleep(min(2.0, 0.35 * (2 ** attempt)))
-                    continue
+                    sleep_seconds = min(2.0, 0.35 * (2 ** attempt))
+                    if deadline is None or deadline - time.monotonic() > sleep_seconds + 1.0:
+                        time.sleep(sleep_seconds)
+                        continue
                 raise last_error from exc
 
             if response.status_code >= 400:
                 last_error = self._provider_error(response)
                 if last_error.transient and attempt < self.max_retries:
-                    time.sleep(min(2.0, 0.35 * (2 ** attempt)))
-                    continue
+                    sleep_seconds = min(2.0, 0.35 * (2 ** attempt))
+                    if deadline is None or deadline - time.monotonic() > sleep_seconds + 1.0:
+                        time.sleep(sleep_seconds)
+                        continue
                 raise last_error
 
             try:
@@ -353,7 +397,11 @@ class OpenAIProvider(TechnicalAIProvider):
                 model=self.model,
                 text=text,
                 sources=self._sources(data),
-                raw_metadata={"webSearchAtivo": bool(self.web_search)},
+                raw_metadata={
+                    "webSearchAtivo": bool(self.web_search),
+                    "budgetSegundos": round(applied_budget, 2) if applied_budget is not None else None,
+                    "timeoutEfetivoSegundos": round(float(request_timeout), 2),
+                },
             )
 
         raise last_error or TechnicalAIProviderError(
