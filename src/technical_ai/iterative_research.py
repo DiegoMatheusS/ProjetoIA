@@ -10,6 +10,7 @@ from ..enrichment.core import (
     technical_coverage,
     technical_missing_fields,
 )
+from ..enrichment.identity import build_identity
 from ..enrichment.quality import validate_specs
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
@@ -135,17 +136,26 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _call_provider_with_budget(provider, prompt: str, budget_seconds: float):
-    # A resposta paga e cacheada pelo prompt exato. Se o cadastro falhar depois e
-    # o mesmo hardware for reenviado, reaproveitamos a resposta sem nova cobranca.
+def _call_provider_with_budget(
+    provider,
+    prompt: str,
+    budget_seconds: float,
+    *,
+    cache_identity: str | None = None,
+):
+    # A resposta paga e cacheada por identidade forte + prompt exato. Se o cadastro
+    # falhar depois e o mesmo hardware for reenviado, nao ha nova cobranca.
     response_cache = None
     try:
         response_cache = ExternalAIResponseCache()
-        cached = response_cache.get(provider, prompt)
+        cached = response_cache.get(
+            provider,
+            prompt,
+            identity_key=cache_identity,
+        )
         if cached is not None:
             return cached
     except Exception:
-        # Cache e uma otimizacao; nunca deve derrubar o enriquecimento.
         response_cache = None
 
     enrich_with_budget = getattr(provider, "enrich_with_budget", None)
@@ -156,7 +166,12 @@ def _call_provider_with_budget(provider, prompt: str, budget_seconds: float):
 
     if response_cache is not None:
         try:
-            response_cache.set(provider, prompt, response)
+            response_cache.set(
+                provider,
+                prompt,
+                response,
+                identity_key=cache_identity,
+            )
         except Exception:
             pass
     return response
@@ -256,8 +271,8 @@ def run_iterative_external_research(
     Regra normal: no maximo uma chamada OpenAI. Uma segunda rodada so acontece
     quando, depois da primeira, ainda existe campo OBRIGATORIO ausente. Se a pesquisa
     local ja atingiu o limiar de cobertura e todos os obrigatorios estao presentes,
-    a OpenAI e ignorada. Respostas OpenAI bem-sucedidas sao cacheadas pelo prompt
-    exato para que uma falha posterior no cadastro nao gere nova cobranca.
+    a OpenAI e ignorada. Respostas OpenAI bem-sucedidas sao cacheadas pela identidade
+    forte + prompt para que uma falha posterior no cadastro nao gere nova cobranca.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -270,6 +285,14 @@ def run_iterative_external_research(
     spec_field = schema[1]
     current = normalize_hardware_payload_for_backend(category, payload or {})
     identity = str(name or current.get("nome") or current.get("modelo") or "hardware").strip()
+    identity_info = build_identity(
+        {
+            "categoriaDetectada": category,
+            "payloadParcialBackend": current,
+        }
+    )
+    identity_key = str(identity_info.get("chave") or "").strip()
+    cache_identity = f"{category}|{identity_key}" if identity_key else None
 
     all_filled: list[str] = []
     parsed_all: dict[str, Any] = {}
@@ -383,7 +406,12 @@ def run_iterative_external_research(
 
         round_started = time.monotonic()
         try:
-            external = _call_provider_with_budget(provider, prompt, round_budget)
+            external = _call_provider_with_budget(
+                provider,
+                prompt,
+                round_budget,
+                cache_identity=cache_identity,
+            )
         except TechnicalAIProviderError as exc:
             provider_error = exc
             elapsed_round = time.monotonic() - round_started
@@ -510,8 +538,6 @@ def run_iterative_external_research(
         )
 
         if not valid_filled:
-            # Reparo de formato so justifica uma segunda chamada paga se ainda falta
-            # um campo obrigatorio para cadastro.
             if (
                 round_number < max_rounds
                 and required_after
