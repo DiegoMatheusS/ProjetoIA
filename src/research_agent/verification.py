@@ -52,7 +52,12 @@ def _normalized(value: Any):
     return value
 
 
-def _source_names(category: str, origin_by_field: dict[str, Any], fields: list[str]) -> list[str]:
+def _source_names(
+    category: str,
+    origin_by_field: dict[str, Any],
+    fields: list[str],
+    excluded_sources_by_field: dict[str, Any] | None = None,
+) -> list[str]:
     category = str(category or "").strip().upper()
     ordered = list(
         CATEGORY_SOURCE_ORDER.get(
@@ -60,17 +65,23 @@ def _source_names(category: str, origin_by_field: dict[str, Any], fields: list[s
             ("FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS", "PC_KOMBO"),
         )
     )
-    original_sources = {
+    excluded: set[str] = {
         str((origin_by_field.get(field) or {}).get("fonte") or "").strip().upper()
         for field in fields
         if isinstance(origin_by_field.get(field), dict)
     }
-    original_sources.discard("")
+    for field in fields:
+        raw = (excluded_sources_by_field or {}).get(field)
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, (list, tuple, set)):
+            excluded.update(str(source or "").strip().upper() for source in raw)
+    excluded.discard("")
 
-    # A verificação precisa ser independente. Evita reutilizar a mesma fonte que
-    # originou o valor questionado; fontes externas como OPENAI nem fazem parte
-    # deste roteador local, mas o filtro também cobre PC_KOMBO/Geizhals etc.
-    independent = [source for source in ordered if source not in original_sources]
+    # A verificacao precisa ser realmente independente. Alem da fonte que originou
+    # o valor atual, a V8 pode excluir tambem as fontes que ja participam de um
+    # conflito conhecido. Assim a auditoria busca uma terceira opiniao tecnica.
+    independent = [source for source in ordered if source not in excluded]
     return independent or ordered
 
 
@@ -80,12 +91,14 @@ def verify_questionable_fields(
     payload: dict[str, Any],
     fields: list[str] | tuple[str, ...],
     origin_by_field: dict[str, Any] | None = None,
+    excluded_sources_by_field: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Tenta confirmar campos essenciais em uma segunda fonte independente.
+    """Tenta confirmar campos essenciais em uma fonte independente.
 
-    A função nunca altera o payload. Ela apenas devolve confirmações/conflitos
-    para a auditoria de qualidade decidir se um campo pode sair da revisão.
-    Browser fallback fica desligado nesta etapa para limitar latência.
+    A funcao nunca altera o payload. Ela apenas devolve confirmacoes/conflitos
+    para a auditoria de qualidade decidir se um campo pode sair da revisao.
+    Pode ser usada tanto para baixa confianca quanto para conflitos ainda nao
+    resolvidos. Browser fallback fica desligado para limitar latencia.
     """
     targets = list(dict.fromkeys(str(field) for field in fields if field))
     if not targets:
@@ -145,12 +158,18 @@ def verify_questionable_fields(
         }
 
     origin_by_field = origin_by_field or {}
+    excluded_sources_by_field = excluded_sources_by_field or {}
     max_fields = _int_env("TECH_RESEARCH_VERIFY_MAX_FIELDS", 3, 1, 6)
     max_sources = _int_env("TECH_RESEARCH_VERIFY_MAX_SOURCES", 2, 1, 4)
     total_timeout = _float_env("TECH_RESEARCH_VERIFY_TOTAL_TIMEOUT_SECONDS", 8.0, 2.0, 20.0)
     source_timeout = _int_env("TECH_RESEARCH_VERIFY_SOURCE_TIMEOUT_SECONDS", 3, 1, 6)
     targets = targets[:max_fields]
-    sources = _source_names(category, origin_by_field, targets)[:max_sources]
+    sources = _source_names(
+        category,
+        origin_by_field,
+        targets,
+        excluded_sources_by_field,
+    )[:max_sources]
     providers = build_providers(sources, category=category, missing_fields=targets)
 
     confirmations: dict[str, dict[str, Any]] = {}
@@ -233,7 +252,7 @@ def verify_questionable_fields(
                 }
                 continue
 
-            # Divergência de fonte técnica forte precisa continuar visível para revisão.
+            # Divergencia de fonte tecnica forte precisa continuar visivel para revisao.
             if source_score >= 0.85:
                 conflicts.append(
                     {
@@ -247,6 +266,22 @@ def verify_questionable_fields(
                     }
                 )
 
+    excluded_diagnostic = {
+        field: sorted(
+            {
+                str(source or "").strip().upper()
+                for source in (
+                    excluded_sources_by_field.get(field)
+                    if isinstance(excluded_sources_by_field.get(field), (list, tuple, set))
+                    else [excluded_sources_by_field.get(field)]
+                )
+                if source
+            }
+        )
+        for field in targets
+        if excluded_sources_by_field.get(field)
+    }
+
     return {
         "executado": True,
         "motivoIgnorado": None,
@@ -254,6 +289,7 @@ def verify_questionable_fields(
         "confirmacoes": confirmations,
         "conflitos": conflicts,
         "fontesConsultadas": consulted,
+        "fontesExcluidasPorCampo": excluded_diagnostic,
         "duracaoMs": int((time.monotonic() - started) * 1000),
         "limiteSegundos": total_timeout,
     }
