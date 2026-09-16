@@ -33,11 +33,12 @@ def _provider_name(provider: Any) -> str:
     return str(getattr(provider, "name", "") or "").strip().upper()
 
 
-def _params(provider: Any, prompt: str) -> dict[str, Any]:
+def _params(provider: Any, prompt: str, identity_key: str) -> dict[str, Any]:
     return {
         "provider": _provider_name(provider),
         "model": str(getattr(provider, "model", "") or "").strip(),
         "webSearch": bool(getattr(provider, "web_search", False)),
+        "identity": str(identity_key or "").strip(),
         "prompt": str(prompt or "").strip(),
     }
 
@@ -45,23 +46,31 @@ def _params(provider: Any, prompt: str) -> dict[str, Any]:
 class ExternalAIResponseCache:
     """Cache curto da resposta paga, separado do cache de pesquisa local.
 
-    O objetivo e impedir nova cobranca quando o mesmo hardware e reenviado logo
-    depois de um erro de cadastro. A chave inclui modelo, Web Search e o prompt
-    completo; qualquer mudanca de identidade/campos faltantes gera outra entrada.
+    So reutiliza resposta quando ha identidade forte do hardware. A chave inclui
+    categoria/identidade, modelo OpenAI, uso de Web Search e o prompt completo.
+    Assim uma falha de cadastro pode ser repetida sem nova cobranca, sem misturar
+    variantes ou revisoes diferentes.
     """
 
     def __init__(self, cache: JsonDiskCache | None = None):
         self.cache = cache or JsonDiskCache()
 
-    def get(self, provider: Any, prompt: str) -> TechnicalAIResponse | None:
-        if not _enabled() or _provider_name(provider) != "OPENAI":
+    def get(
+        self,
+        provider: Any,
+        prompt: str,
+        *,
+        identity_key: str | None,
+    ) -> TechnicalAIResponse | None:
+        clean_identity = str(identity_key or "").strip()
+        if not _enabled() or _provider_name(provider) != "OPENAI" or not clean_identity:
             return None
         clean_prompt = str(prompt or "").strip()
         if not clean_prompt:
             return None
         cached = self.cache.get(
             _CACHE_URL,
-            params=_params(provider, clean_prompt),
+            params=_params(provider, clean_prompt, clean_identity),
             namespace=_CACHE_NAMESPACE,
             ttl_seconds=_ttl_seconds(),
         )
@@ -76,11 +85,23 @@ class ExternalAIResponseCache:
             model=str(cached.get("model") or getattr(provider, "model", "")),
             text=text,
             sources=sources,
-            raw_metadata={"cacheHit": True, "cacheTipo": "RESPOSTA_OPENAI_PAGA"},
+            raw_metadata={
+                "cacheHit": True,
+                "cacheTipo": "RESPOSTA_OPENAI_PAGA",
+                "cacheIdentity": clean_identity,
+            },
         )
 
-    def set(self, provider: Any, prompt: str, response: TechnicalAIResponse) -> None:
-        if not _enabled() or _provider_name(provider) != "OPENAI":
+    def set(
+        self,
+        provider: Any,
+        prompt: str,
+        response: TechnicalAIResponse,
+        *,
+        identity_key: str | None,
+    ) -> None:
+        clean_identity = str(identity_key or "").strip()
+        if not _enabled() or _provider_name(provider) != "OPENAI" or not clean_identity:
             return
         clean_prompt = str(prompt or "").strip()
         text = str(getattr(response, "text", "") or "").strip()
@@ -96,6 +117,6 @@ class ExternalAIResponseCache:
                     item for item in (getattr(response, "sources", None) or []) if isinstance(item, dict)
                 ],
             },
-            params=_params(provider, clean_prompt),
+            params=_params(provider, clean_prompt, clean_identity),
             namespace=_CACHE_NAMESPACE,
         )
