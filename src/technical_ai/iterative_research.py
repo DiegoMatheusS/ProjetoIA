@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import time
 from typing import Any
 
 from ..enrichment.core import technical_missing_fields
@@ -32,6 +33,31 @@ def _repair_on_no_advance_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _total_budget_seconds() -> float:
+    try:
+        value = float(os.getenv("TECH_RESEARCH_OPENAI_TOTAL_BUDGET_SECONDS", "50"))
+    except (TypeError, ValueError):
+        value = 50.0
+    return min(75.0, max(10.0, value))
+
+
+def _max_round_budget_seconds() -> float:
+    try:
+        value = float(os.getenv("TECH_RESEARCH_OPENAI_MAX_ROUND_SECONDS", "28"))
+    except (TypeError, ValueError):
+        value = 28.0
+    return min(45.0, max(5.0, value))
+
+
+def _budget_error() -> TechnicalAIProviderError:
+    return TechnicalAIProviderError(
+        "ORCAMENTO_TEMPO_ESGOTADO",
+        "Orçamento de tempo da pesquisa OpenAI esgotado antes da próxima rodada",
+        status_code=504,
+        transient=True,
+    )
 
 
 def _repair_prompt(base_prompt: str) -> str:
@@ -71,6 +97,13 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _call_provider_with_budget(provider, prompt: str, budget_seconds: float):
+    enrich_with_budget = getattr(provider, "enrich_with_budget", None)
+    if callable(enrich_with_budget):
+        return enrich_with_budget(prompt, budget_seconds=budget_seconds)
+    return provider.enrich(prompt)
+
+
 @dataclass
 class IterativeAIResult:
     payload: dict[str, Any]
@@ -102,8 +135,9 @@ def run_iterative_external_research(
     se ela preencher campos e ainda houver lacunas, a segunda rodada pergunta apenas
     o restante. V10: se a primeira resposta vier com texto mas nenhum campo puder ser
     aproveitado pelo parser/validador, a segunda e ultima rodada pode repetir a mesma
-    pergunta com uma instrucao de formato mais rigida. Isso recupera respostas em
-    prosa/tabela/JSON sem aumentar o numero maximo de chamadas configurado.
+    pergunta com uma instrucao de formato mais rigida. V11: todas as chamadas externas
+    compartilham um orçamento total de tempo e cada rodada recebe um teto proprio para
+    evitar que retries/duas rodadas ultrapassem a janela segura da requisicao principal.
     """
     category = str(category or "").strip().upper()
     schema = SCHEMAS.get(category)
@@ -131,6 +165,9 @@ def run_iterative_external_research(
     provider_error: TechnicalAIProviderError | None = None
     repair_next_round = False
     max_rounds = _max_rounds()
+    total_budget = _total_budget_seconds()
+    round_ceiling = _max_round_budget_seconds()
+    external_started = time.monotonic()
 
     for round_number in range(1, max_rounds + 1):
         specs_before = current.get(spec_field) if isinstance(current.get(spec_field), dict) else {}
@@ -142,6 +179,25 @@ def run_iterative_external_research(
         if not missing_before:
             break
 
+        elapsed_before = time.monotonic() - external_started
+        remaining_total = max(0.0, total_budget - elapsed_before)
+        if remaining_total < 3.0:
+            provider_error = _budget_error()
+            rounds.append(
+                {
+                    "numero": round_number,
+                    "modo": "REPARO_FORMATO" if repair_next_round else "PADRAO_META_AI",
+                    "status": "ORCAMENTO_TEMPO_ESGOTADO",
+                    "camposSolicitados": list(missing_before),
+                    "codigoErro": provider_error.code,
+                    "mensagemErro": provider_error.message,
+                    "orcamentoTotalSegundos": round(total_budget, 2),
+                    "tempoRestanteAntesSegundos": round(remaining_total, 2),
+                }
+            )
+            break
+
+        round_budget = min(round_ceiling, remaining_total)
         base_prompt = build_meta_ai_prompt(category, identity, missing_before)
         prompt_mode = "REPARO_FORMATO" if repair_next_round else "PADRAO_META_AI"
         prompt = _repair_prompt(base_prompt) if repair_next_round else base_prompt
@@ -150,10 +206,13 @@ def run_iterative_external_research(
             first_prompt = base_prompt
             first_requested = list(missing_before)
 
+        round_started = time.monotonic()
         try:
-            external = provider.enrich(prompt)
+            external = _call_provider_with_budget(provider, prompt, round_budget)
         except TechnicalAIProviderError as exc:
             provider_error = exc
+            elapsed_round = time.monotonic() - round_started
+            remaining_after_error = max(0.0, total_budget - (time.monotonic() - external_started))
             rounds.append(
                 {
                     "numero": round_number,
@@ -162,10 +221,15 @@ def run_iterative_external_research(
                     "camposSolicitados": list(missing_before),
                     "codigoErro": exc.code,
                     "mensagemErro": exc.message,
+                    "orcamentoRodadaSegundos": round(round_budget, 2),
+                    "duracaoRodadaMs": int(elapsed_round * 1000),
+                    "tempoRestanteDepoisSegundos": round(remaining_after_error, 2),
                 }
             )
             break
 
+        elapsed_round = time.monotonic() - round_started
+        remaining_after_call = max(0.0, total_budget - (time.monotonic() - external_started))
         last_provider = external.provider
         last_model = external.model
         round_sources = [item for item in (external.sources or []) if isinstance(item, dict)]
@@ -235,6 +299,9 @@ def run_iterative_external_research(
                 "fontesRetornadas": len(round_sources),
                 "modelo": external.model,
                 "reparoDeFormato": prompt_mode == "REPARO_FORMATO",
+                "orcamentoRodadaSegundos": round(round_budget, 2),
+                "duracaoRodadaMs": int(elapsed_round * 1000),
+                "tempoRestanteDepoisSegundos": round(remaining_after_call, 2),
             }
         )
 
@@ -245,6 +312,7 @@ def run_iterative_external_research(
                 round_number < max_rounds
                 and not repair_next_round
                 and _repair_on_no_advance_enabled()
+                and remaining_after_call >= 3.0
             ):
                 repair_next_round = True
                 continue
