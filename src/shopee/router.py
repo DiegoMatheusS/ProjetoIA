@@ -14,7 +14,9 @@ router = APIRouter(prefix="/shopee", tags=["Shopee Affiliate"])
 
 
 class ShopeeProductSearchRequest(BaseModel):
-    consulta: str = Field(min_length=2, max_length=300)
+    consulta: str | None = Field(default=None, max_length=300)
+    itemId: int | None = Field(default=None, ge=1)
+    shopId: int | None = Field(default=None, ge=1)
     limite: int = Field(default=20, ge=1, le=100)
     somentePromocoes: bool = False
     ordenacao: int = Field(default=1, ge=1, le=5)
@@ -76,9 +78,14 @@ def shopee_agent_products(
     x_api_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
+    consulta = str(payload.consulta or "").strip()
+    if len(consulta) < 2 and payload.itemId is None:
+        raise HTTPException(status_code=422, detail="Informe consulta ou itemId da Shopee.")
     try:
         return ShopeeAffiliateAgent(_client()).find_products(
-            query=payload.consulta,
+            query=consulta or None,
+            item_id=payload.itemId,
+            shop_id=payload.shopId,
             limit=payload.limite,
             promotions_only=payload.somentePromocoes,
             sort_type=payload.ordenacao,
