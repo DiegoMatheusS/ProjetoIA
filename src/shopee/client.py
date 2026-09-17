@@ -25,6 +25,13 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _as_percent(value: Any) -> float | None:
+    parsed = _as_float(value)
+    if parsed is not None and 0 < parsed <= 1:
+        parsed *= 100
+    return parsed
+
+
 def _as_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
@@ -144,9 +151,7 @@ class ShopeeAffiliateClient:
     def normalize_product(node: dict[str, Any]) -> dict[str, Any]:
         price_min = _as_float(node.get("priceMin"))
         price_max = _as_float(node.get("priceMax"))
-        discount = _as_float(node.get("priceDiscountRate"))
-        if discount is not None and 0 < discount <= 1:
-            discount *= 100
+        discount = _as_percent(node.get("priceDiscountRate"))
 
         return {
             "fonte": "SHOPEE_AFFILIATE_API",
@@ -166,9 +171,9 @@ class ShopeeAffiliateClient:
             "emPromocao": bool(discount and discount > 0),
             "vendas": _as_int(node.get("sales")),
             "avaliacao": _as_float(node.get("ratingStar")),
-            "comissaoPercentual": _as_float(node.get("commissionRate")),
-            "comissaoSellerPercentual": _as_float(node.get("sellerCommissionRate")),
-            "comissaoShopeePercentual": _as_float(node.get("shopeeCommissionRate")),
+            "comissaoPercentual": _as_percent(node.get("commissionRate")),
+            "comissaoSellerPercentual": _as_percent(node.get("sellerCommissionRate")),
+            "comissaoShopeePercentual": _as_percent(node.get("shopeeCommissionRate")),
             "comissaoEstimada": _as_float(node.get("commission")),
             "promocaoInicio": _as_int(node.get("periodStartTime")),
             "promocaoFim": _as_int(node.get("periodEndTime")),
@@ -269,7 +274,7 @@ class ShopeeAffiliateClient:
                     "imagemUrl": node.get("imageUrl"),
                     "urlOriginal": node.get("originalLink"),
                     "urlAfiliada": node.get("offerLink"),
-                    "comissaoPercentual": _as_float(node.get("commissionRate")),
+                    "comissaoPercentual": _as_percent(node.get("commissionRate")),
                     "promocaoInicio": _as_int(node.get("periodStartTime")),
                     "promocaoFim": _as_int(node.get("periodEndTime")),
                     "apiOficial": True,
