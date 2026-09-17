@@ -33,7 +33,7 @@ class ShopeeAffiliateAgent:
     def _score(item: dict[str, Any], query: str) -> float:
         wanted = _tokens(query)
         found = _tokens(item.get("nome") or "")
-        overlap = len(wanted & found) / max(1, len(wanted))
+        overlap = len(wanted & found) / max(1, len(wanted)) if wanted else 0.0
         sales = max(0, int(item.get("vendas") or 0))
         rating = float(item.get("avaliacao") or 0)
         discount = float(item.get("descontoPercentual") or 0)
@@ -47,14 +47,19 @@ class ShopeeAffiliateAgent:
     def find_products(
         self,
         *,
-        query: str,
+        query: str | None = None,
+        item_id: int | None = None,
+        shop_id: int | None = None,
         limit: int = 20,
         promotions_only: bool = False,
         sort_type: int = 1,
         list_type: int = 0,
     ) -> dict[str, Any]:
+        normalized_query = str(query or "").strip()
         result = self.client.search_products(
-            keyword=query,
+            keyword=normalized_query or None,
+            item_id=item_id,
+            shop_id=shop_id,
             limit=max(1, min(100, int(limit))),
             sort_type=sort_type,
             list_type=list_type,
@@ -62,14 +67,24 @@ class ShopeeAffiliateAgent:
         items = list(result.get("itens") or [])
         if promotions_only:
             items = [item for item in items if item.get("emPromocao")]
-        items.sort(key=lambda item: self._score(item, query), reverse=True)
+
+        if item_id is not None:
+            expected = str(item_id)
+            items = [item for item in items if str(item.get("itemId") or "") == expected]
+        if shop_id is not None:
+            expected_shop = str(shop_id)
+            items = [item for item in items if str(item.get("shopId") or "") == expected_shop]
+
+        items.sort(key=lambda item: self._score(item, normalized_query), reverse=True)
         for index, item in enumerate(items, start=1):
-            item["relevanciaAgente"] = round(self._score(item, query), 4)
+            item["relevanciaAgente"] = round(self._score(item, normalized_query), 4)
             item["ordemAgente"] = index
         return {
             "agente": "SHOPEE_AFFILIATE",
             "modo": "API_OFICIAL_PRIMEIRO",
-            "consulta": query,
+            "consulta": normalized_query or None,
+            "itemId": str(item_id) if item_id is not None else None,
+            "shopId": str(shop_id) if shop_id is not None else None,
             "quantidade": len(items),
             "itens": items,
             "pagina": result.get("pagina") or {},
