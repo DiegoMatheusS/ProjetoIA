@@ -14,6 +14,7 @@ class FakeShopeeClient:
             "itens": [
                 {
                     "itemId": "2",
+                    "shopId": "20",
                     "nome": "Cabo USB comum",
                     "preco": 20.0,
                     "descontoPercentual": 0,
@@ -23,6 +24,7 @@ class FakeShopeeClient:
                 },
                 {
                     "itemId": "1",
+                    "shopId": "10",
                     "nome": "ASUS TUF RTX 5070 12GB",
                     "preco": 4299.0,
                     "descontoPercentual": 12,
@@ -62,6 +64,9 @@ class ShopeeAffiliateClientTest(unittest.TestCase):
                 "priceMin": "3999.90",
                 "priceMax": "4299.90",
                 "priceDiscountRate": "0.15",
+                "commissionRate": "0.0850",
+                "sellerCommissionRate": "0.05",
+                "shopeeCommissionRate": "0.035",
                 "sales": "20",
                 "ratingStar": "4.8",
             }
@@ -69,6 +74,9 @@ class ShopeeAffiliateClientTest(unittest.TestCase):
         self.assertEqual(item["itemId"], "99")
         self.assertEqual(item["preco"], 3999.90)
         self.assertEqual(item["descontoPercentual"], 15.0)
+        self.assertEqual(item["comissaoPercentual"], 8.5)
+        self.assertEqual(item["comissaoSellerPercentual"], 5.0)
+        self.assertEqual(item["comissaoShopeePercentual"], 3.5000000000000004)
         self.assertTrue(item["emPromocao"])
         self.assertTrue(item["apiOficial"])
 
@@ -86,6 +94,15 @@ class ShopeeAffiliateAgentTest(unittest.TestCase):
             promotions_only=True,
         )
         self.assertEqual([item["itemId"] for item in result["itens"]], ["1"])
+
+    def test_agent_can_select_exact_item_and_shop(self):
+        result = ShopeeAffiliateAgent(FakeShopeeClient()).find_products(
+            item_id=1,
+            shop_id=10,
+        )
+        self.assertEqual([item["itemId"] for item in result["itens"]], ["1"])
+        self.assertEqual(result["itemId"], "1")
+        self.assertEqual(result["shopId"], "10")
 
 
 if __name__ == "__main__":
