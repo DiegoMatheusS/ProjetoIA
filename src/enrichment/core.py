@@ -5,8 +5,9 @@ import time
 from .quality import validate_specs, evidence_for_specs, source_diagnostic
 from .identity import build_identity, identity_is_strong
 from .providers import (
-    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
-    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
+    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, PangolyProvider,
+    GeizhalsProvider, CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+    IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED
 from ..extractors.ml_specs import extract_specs
@@ -53,7 +54,7 @@ PROVIDER_PRIORITY = {
     "FONTE": ["FABRICANTE_OFICIAL", "GEIZHALS", "ICECAT", "PC_KOMBO"],
     "GABINETE": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
     "COOLER": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
-    "VENTOINHA": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
+    "VENTOINHA": ["PANGOLY", "FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS"],
 }
 
 def _provider_rank(category, provider):
@@ -221,6 +222,7 @@ class TechnicalEnricher:
             WikiChipProvider(),
             TechPowerUpProvider(),
             PCKomboProvider(),
+            PangolyProvider(),
             GeizhalsProvider(),
         ]
 
