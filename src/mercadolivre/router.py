@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from ..auth.mercadolivre_oauth import _env
 from ..scrapers.mercadolivre_scraper import MercadoLivreScraper
 
 
@@ -105,11 +106,11 @@ def mercadolivre_api_status(x_api_key: str | None = Header(default=None)) -> dic
         "ok": True,
         "fonte": "MERCADO_LIVRE_API",
         "apiOficial": True,
-        "clientIdConfigurado": bool(os.getenv("ML_CLIENT_ID", "").strip()),
-        "clientSecretConfigurado": bool(os.getenv("ML_CLIENT_SECRET", "").strip()),
-        "accessTokenConfigurado": bool(os.getenv("ML_ACCESS_TOKEN", "").strip()),
-        "refreshTokenConfigurado": bool(os.getenv("ML_REFRESH_TOKEN", "").strip()),
-        "pkce": os.getenv("ML_USE_PKCE", "").strip().lower() in {"1", "true", "yes", "sim", "on"},
+        "clientIdConfigurado": bool(_env("ML_CLIENT_ID")),
+        "clientSecretConfigurado": bool(_env("ML_CLIENT_SECRET")),
+        "accessTokenConfigurado": bool(_env("ML_ACCESS_TOKEN")),
+        "refreshTokenConfigurado": bool(_env("ML_REFRESH_TOKEN")),
+        "pkce": str(_env("ML_USE_PKCE") or "").lower() in {"1", "true", "yes", "sim", "on"},
     }
 
 

@@ -23,6 +23,7 @@ data/raw/*
 
 # OAuth temporário
 .ml_oauth_pending.json
+.ml_tokens*
 
 # Cache HTTP local
 .cache/

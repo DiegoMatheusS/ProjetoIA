@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from .mercadolivre_token_store import token_storage_status
 from .mercadolivre_oauth import (
     PENDING_FILE,
     build_authorization_url,
@@ -71,6 +72,7 @@ def mercadolivre_oauth_status() -> dict[str, Any]:
         "accessTokenConfigurado": bool(_env("ML_ACCESS_TOKEN")),
         "refreshTokenConfigurado": bool(_env("ML_REFRESH_TOKEN")),
         "pkce": _truthy(_env("ML_USE_PKCE")),
+        "armazenamentoTokens": token_storage_status(),
     }
 
 
@@ -127,7 +129,12 @@ def mercadolivre_oauth_callback(
 
     expires_in = token_data.get("expires_in")
     user_id = token_data.get("user_id")
+    storage = token_storage_status()
     details = "A conta foi autorizada e os tokens foram recebidos pelo ProjetoIA."
+    if storage.get("configurado"):
+        details += " Os tokens foram salvos no armazenamento persistente criptografado."
+    else:
+        details += " Atenção: o armazenamento persistente ainda não está configurado; um redeploy pode exigir nova autorização."
     if expires_in:
         details += f" Access token válido por aproximadamente {expires_in} segundos."
     if user_id:

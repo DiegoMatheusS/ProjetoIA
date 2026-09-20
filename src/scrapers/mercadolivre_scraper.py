@@ -8,7 +8,7 @@ import requests
 from loguru import logger
 
 from ..utils.normalizers import clean_text, first_attr, to_float
-from ..auth.mercadolivre_oauth import refresh_access_token
+from ..auth.mercadolivre_oauth import _env, refresh_access_token
 from ..utils.rate_limiter import PoliteRateLimiter, JsonDiskCache
 
 
@@ -16,7 +16,7 @@ class MercadoLivreScraper:
     API_BASE = "https://api.mercadolibre.com"
 
     def __init__(self):
-        self.token = clean_text(os.getenv("ML_ACCESS_TOKEN"))
+        self.token = clean_text(_env("ML_ACCESS_TOKEN"))
         self.timeout = int(os.getenv("TIMEOUT", "20"))
         self.session = requests.Session()
         self.session.headers.update({
@@ -113,14 +113,14 @@ class MercadoLivreScraper:
 
     def _refresh_token_if_possible(self):
         if not (
-            os.getenv("ML_REFRESH_TOKEN")
-            and os.getenv("ML_CLIENT_ID")
-            and os.getenv("ML_CLIENT_SECRET")
+            _env("ML_REFRESH_TOKEN")
+            and _env("ML_CLIENT_ID")
+            and _env("ML_CLIENT_SECRET")
         ):
             return False
         try:
             refresh_access_token(save=True)
-            self.token = clean_text(os.getenv("ML_ACCESS_TOKEN"))
+            self.token = clean_text(_env("ML_ACCESS_TOKEN"))
             return bool(self.token)
         except Exception as exc:
             logger.warning(f"Não foi possível renovar o token do Mercado Livre: {exc}")
