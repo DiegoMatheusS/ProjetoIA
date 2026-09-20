@@ -1,0 +1,54 @@
+name: Mercado Livre OAuth
+
+on:
+  pull_request:
+    paths:
+      - "src/auth/mercadolivre_oauth.py"
+      - "src/auth/mercadolivre_router.py"
+      - "src/auth/mercadolivre_token_store.py"
+      - "src/mercadolivre/**"
+      - "src/scrapers/mercadolivre_scraper.py"
+      - "tests/test_mercadolivre_*.py"
+      - "requirements.txt"
+      - ".github/workflows/mercadolivre-oauth.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/auth/mercadolivre_oauth.py"
+      - "src/auth/mercadolivre_router.py"
+      - "src/auth/mercadolivre_token_store.py"
+      - "src/mercadolivre/**"
+      - "src/scrapers/mercadolivre_scraper.py"
+      - "tests/test_mercadolivre_*.py"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependências mínimas
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "beautifulsoup4>=4.12,<5" \
+            "cryptography>=44,<47" \
+            "fastapi>=0.115,<1" \
+            "loguru>=0.7,<1" \
+            "pydantic>=2.10,<3" \
+            "python-dotenv>=1.0,<2" \
+            "requests>=2.32,<3"
+      - name: Testar OAuth e API Mercado Livre
+        run: |
+          python -m unittest \
+            tests.test_mercadolivre_token_store \
+            tests.test_mercadolivre_oauth_router \
+            tests.test_mercadolivre_ofertas_router
