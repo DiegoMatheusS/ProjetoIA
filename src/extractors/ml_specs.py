@@ -1551,7 +1551,16 @@ def extract_fan(mapping, text):
         specs["rgb"] = True
     elif re.search(r"\bRGB\b", text or "", re.I):
         specs["rgb"] = True
-    reverse = explicit_keyword_bool(text, [r"fluxo\s+reverso", r"reverse\s+(?:blade|airflow)"], [])
+    reverse = explicit_keyword_bool(
+        text,
+        [
+            r"fluxo\s+reverso",
+            r"reverse\s+(?:blade|airflow)",
+            r"airflow\s+direction\s*:?\s*reverse",
+            r"fan\s+airflow\s*:?\s*reverse",
+        ],
+        [],
+    )
     set_if(specs, "fluxoReverso", reverse)
     return specs
 
