@@ -1537,21 +1537,36 @@ def extract_fan(mapping, text):
     set_if(specs, "pressaoEstaticaMmH2o", number(attr(mapping, "STATIC_PRESSURE", "Pressão estática")) or text_number(text, r"([0-9.,]+)\s*mm\s*H2O"))
     set_if(specs, "ruidoDb", number(attr(mapping, "NOISE_LEVEL", "Ruído", "Nível de Ruído")) or text_number(text, r"([0-9.,]+)\s*dB"))
 
-    conn_source = attr(mapping, "CONNECTOR", "Conector")
+    pwm_explicit = boolean(attr(mapping, "PWM", "PWM Connector", "PWM Support", "Suporte PWM"))
+    conn_source = attr(mapping, "CONNECTOR", "Conector", "Fan Connector", "Power Connector")
     connector = connector_fan(conn_source or text)
-    if connector is None and re.search(r"PWM\s+de\s+4\s+pinos?", text or "", re.I):
+    if connector is None and (
+        pwm_explicit is True
+        or (pwm_explicit is None and re.search(r"\bPWM\b", text or "", re.I))
+    ):
         connector = "PWM_4_PINOS"
     set_if(specs, "conector", connector)
     set_if(specs, "tensaoVolts", number(attr(mapping, "VOLTAGE", "Tensão")))
     set_if(specs, "correnteAmperes", number(attr(mapping, "CURRENT", "Corrente")))
-    if connector == "PWM_4_PINOS" or re.search(r"\bPWM\b", text or "", re.I):
+    if connector == "PWM_4_PINOS" or pwm_explicit is True:
         specs["pwm"] = True
+    elif pwm_explicit is False:
+        specs["pwm"] = False
     if re.search(r"\bARGB\b", text or "", re.I):
         specs["argb"] = True
         specs["rgb"] = True
     elif re.search(r"\bRGB\b", text or "", re.I):
         specs["rgb"] = True
-    reverse = explicit_keyword_bool(text, [r"fluxo\s+reverso", r"reverse\s+(?:blade|airflow)"], [])
+    reverse = explicit_keyword_bool(
+        text,
+        [
+            r"fluxo\s+reverso",
+            r"reverse\s+(?:blade|airflow)",
+            r"airflow\s+direction\s*:?\s*reverse",
+            r"fan\s+airflow\s*:?\s*reverse",
+        ],
+        [],
+    )
     set_if(specs, "fluxoReverso", reverse)
     return specs
 

@@ -716,8 +716,10 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
             normalized["socketsSuportados"] = _socket_list(normalized.get("socketsSuportados"))
 
     elif category == "VENTOINHA":
-        if "conector" in normalized:
-            normalized["conector"] = _fan_connector(normalized.get("conector"))
+        connector = _fan_connector(normalized.get("conector"))
+        if connector is None and normalized.get("pwm") is True:
+            connector = "PWM_4_PINOS"
+        normalized["conector"] = connector
 
     return normalized
 
