@@ -76,7 +76,7 @@ def _normalize_result(raw: dict[str, Any], requested_url: str, requested_item_id
         "fonte": source,
         "marketplace": "MERCADO_LIVRE",
         "apiOficial": bool(raw.get("api_used")),
-        "fallbackUsado": bool(raw.get("api_used")) and source != "MERCADO_LIVRE_API",
+        "fallbackUsado": source != "MERCADO_LIVRE_API",
         "itemId": item_id,
         "catalogProductId": raw.get("catalog_product_id"),
         "codigoMarketplace": raw.get("marketplace_product_code") or item_id,
