@@ -49,7 +49,7 @@ DEFAULT_SOURCES_BY_CATEGORY = {
     "FONTE": ["PC_KOMBO", "GEIZHALS"],
     "GABINETE": ["PC_KOMBO", "GEIZHALS"],
     "COOLER": ["PC_KOMBO", "GEIZHALS"],
-    "VENTOINHA": ["PC_KOMBO", "GEIZHALS"],
+    "VENTOINHA": ["PANGOLY", "GEIZHALS"],
 }
 
 SOURCE_DOMAINS = {
@@ -59,6 +59,7 @@ SOURCE_DOMAINS = {
     "TECHPOWERUP": ["techpowerup.com"],
     "PC_KOMBO": ["pc-kombo.com"],
     "GEIZHALS": ["geizhals.eu", "geizhals.de", "geizhals.at"],
+    "PANGOLY": ["pangoly.com"],
 }
 
 # Catálogos públicos conhecidos. A descoberta usa essas páginas diretamente
@@ -963,6 +964,78 @@ class DiscoverySourceCatalog:
         result = self._dedupe(found)[:limit]
         return result, None if result else (error or "NAO_ENCONTRADO")
 
+    def _pangoly_case_fans(self, marca=None, consulta=None, limit=50):
+        """Descobre ventoinhas no catálogo dedicado do Pangoly.
+
+        O PC-Kombo não possui catálogo dedicado de case fans. O Pangoly expõe
+        uma listagem própria de ventoinhas com links de produto estáveis; a ficha
+        individual é detalhada depois pelo PangolyProvider.
+        """
+        base_url = "https://pangoly.com/en/browse/case-fan"
+        found = []
+        last_error = None
+        max_pages = min(4, max(1, (max(1, int(limit)) + 23) // 24))
+
+        def parse_page(html, final):
+            local = []
+            soup = BeautifulSoup(html or "", "html.parser")
+            for link in soup.select('a[href*="/en/product/"]'):
+                href = link.get("href") or ""
+                if not re.search(r"/en/product/[a-z0-9][a-z0-9-]*", href, re.I):
+                    continue
+                name = self._norm(link.get_text(" ", strip=True))
+                if not name or name.casefold() in {
+                    "add", "compare", "remove", "price history", "product"
+                }:
+                    continue
+                if len(name) < 4 or not re.search(r"[A-Za-z]", name):
+                    continue
+                if not self._matches_filters(name, marca, consulta):
+                    continue
+                local.append(DiscoveryCandidate(
+                    nome=name,
+                    url=urljoin(final, href),
+                    fonte="PANGOLY",
+                    marca=marca,
+                    resumo={"catalog_text": name},
+                ))
+            return self._dedupe(local)
+
+        for page in range(1, max_pages + 1):
+            url = base_url if page == 1 else f"{base_url}?page={page}"
+            html, final, error = self._fetch_html(url, ["pangoly.com"])
+            page_items = parse_page(html, final) if html else []
+            if not page_items:
+                last_error = error or last_error
+
+            if not page_items and self.allow_browser_fallback:
+                rendered, rendered_final, render_error = self._fetch_rendered_catalog(
+                    url, ["pangoly.com"]
+                )
+                if rendered:
+                    page_items = parse_page(rendered, rendered_final)
+                elif render_error:
+                    last_error = render_error or last_error
+
+            found = self._dedupe(found + page_items)
+            if len(found) >= limit:
+                break
+            # Página sem produtos indica fim real da paginação.
+            if not page_items and page > 1:
+                break
+
+        # Filtro por marca/modelo pode não estar nas primeiras páginas. Nesse
+        # caso usa a busca pública limitada apenas ao domínio do Pangoly.
+        if (marca or consulta) and not found:
+            searched, search_error = self._search_source(
+                "PANGOLY", "VENTOINHA", marca, consulta, limit
+            )
+            found = self._dedupe(found + searched)
+            last_error = search_error or last_error
+
+        result = self._dedupe(found)[:limit]
+        return result, None if result else (last_error or "NAO_ENCONTRADO")
+
     def _techpowerup_reference_index(self):
         """Baixa UMA vez a GPU Database e monta um índice por GPU de referência.
 
@@ -1114,6 +1187,7 @@ class DiscoverySourceCatalog:
                     "PC_KOMBO": lambda: self._pc_kombo(categoria, marca, consulta, per_source_limit),
                     "CPU_MONKEY": lambda: self._cpu_monkey(marca, consulta, per_source_limit) if categoria == "PROCESSADOR" else ([], "CATEGORIA_NAO_SUPORTADA"),
                     "TECHPOWERUP": lambda: self._techpowerup(marca, consulta, per_source_limit) if categoria == "PLACA_VIDEO" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                    "PANGOLY": lambda: self._pangoly_case_fans(marca, consulta, per_source_limit) if categoria == "VENTOINHA" else ([], "CATEGORIA_NAO_SUPORTADA"),
                 }
                 handler = handlers.get(source)
                 if handler:
