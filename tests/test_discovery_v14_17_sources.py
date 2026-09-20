@@ -1,4 +1,6 @@
 from src.discovery.sources import DiscoverySourceCatalog, DEFAULT_SOURCES_BY_CATEGORY
+from src.enrichment.providers import PangolyProvider
+from src.extractors.ml_specs import extract_specs
 from src.scrapers.generic_scraper import GenericScraper
 
 
@@ -102,3 +104,58 @@ def test_v14_17_generic_parser_understands_pc_kombo_producer_mpn_ean():
     by_name = {x["name"]: x["value_name"] for x in raw["attributes"]}
     assert by_name["Socket"] == "AM4"
     assert by_name["Cores"] == "6"
+
+
+def test_ventoinha_usa_pangoly_como_catalogo_primario():
+    sources = DEFAULT_SOURCES_BY_CATEGORY["VENTOINHA"]
+    assert sources[0] == "PANGOLY"
+    assert "PC_KOMBO" not in sources
+    assert PangolyProvider().supports("VENTOINHA", {})
+
+
+def test_pangoly_descobre_ventoinhas_pelo_catalogo_dedicado():
+    html = """
+    <html><body>
+      <div class="product-card">
+        <a href="/en/product/noctua-nf-a12x25-g2-pwm-chromax-black">
+          Noctua NF-A12x25 G2 PWM chromax.black
+        </a>
+      </div>
+      <div class="product-card">
+        <a href="/en/product/asus-prime-mr120-argb-reverse">
+          ASUS Prime MR120 ARGB Reverse
+        </a>
+      </div>
+      <a href="/en/product/not-a-card"></a>
+    </body></html>
+    """
+    session = FakeSession(html, "https://pangoly.com/en/browse/case-fan")
+    catalog = DiscoverySourceCatalog(session=session)
+    catalog.rate_limiter.wait = lambda *_: None
+    items, error = catalog._pangoly_case_fans(limit=2)
+
+    assert error is None
+    assert [x.nome for x in items] == [
+        "Noctua NF-A12x25 G2 PWM chromax.black",
+        "ASUS Prime MR120 ARGB Reverse",
+    ]
+    assert all(x.fonte == "PANGOLY" for x in items)
+    assert all(x.url.startswith("https://pangoly.com/en/product/") for x in items)
+
+
+def test_pangoly_spec_shape_alimenta_extrator_de_ventoinha():
+    text = (
+        "Fan Size: 120 mm - Airflow: 0 - 63.15 CFM - "
+        "Airflow Direction: Reverse - Fan RPM: 500 - 2000 RPM - "
+        "PWM Connector: Yes - ARGB"
+    )
+    specs = extract_specs("VENTOINHA", [], text)
+
+    assert specs["tamanhoMm"] == 120
+    assert specs["rpmMinima"] == 500
+    assert specs["rpmMaxima"] == 2000
+    assert specs["fluxoArCfm"] == 63.15
+    assert specs["conector"] == "PWM_4_PINOS"
+    assert specs["pwm"] is True
+    assert specs["fluxoReverso"] is True
+    assert specs["argb"] is True
