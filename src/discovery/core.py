@@ -14,8 +14,9 @@ from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_m
 from ..enrichment.quality import evidence_for_specs, validate_specs
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
-    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
-    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
+    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, PangolyProvider,
+    GeizhalsProvider, CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+    IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED, HARDWARE_CATEGORIES
 from ..extractors.ml_specs import extract_specs
@@ -33,6 +34,7 @@ PROVIDER_BY_SOURCE = {
     "WIKICHIP": WikiChipProvider,
     "TECHPOWERUP": TechPowerUpProvider,
     "PC_KOMBO": PCKomboProvider,
+    "PANGOLY": PangolyProvider,
     "GEIZHALS": GeizhalsProvider,
 }
 
@@ -44,6 +46,7 @@ SOURCE_LABELS = {
     "WIKICHIP": "WikiChip",
     "TECHPOWERUP": "TechPowerUp",
     "PC_KOMBO": "PC-Kombo",
+    "PANGOLY": "Pangoly",
     "GEIZHALS": "Geizhals",
 }
 
@@ -209,7 +212,8 @@ class HardwareDiscoveryService:
             "fontesPadraoPorCategoria": deepcopy(DEFAULT_SOURCES_BY_CATEGORY),
             "fontesTecnicas": [
                 {"id": "ICECAT", "papel": ["ENRIQUECIMENTO_API"], "categorias": list(SUPPORTED_DISCOVERY_CATEGORIES), "configuracaoOpcional": ["ICECAT_USERNAME", "ICECAT_API_TOKEN", "ICECAT_CONTENT_TOKEN"]},
-                {"id": "PC_KOMBO", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER", "VENTOINHA"]},
+                {"id": "PC_KOMBO", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER"]},
+                {"id": "PANGOLY", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["VENTOINHA"]},
                 {"id": "CPU_MONKEY", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR"]},
                 {"id": "CPU_WORLD", "papel": ["CONFIRMACAO", "ENRIQUECIMENTO"], "categorias": ["PROCESSADOR"]},
                 {"id": "WIKICHIP", "papel": ["CONFIRMACAO", "ENRIQUECIMENTO"], "categorias": ["PROCESSADOR", "PLACA_VIDEO"]},
