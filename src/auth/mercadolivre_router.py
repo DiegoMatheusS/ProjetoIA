@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -88,10 +88,10 @@ def mercadolivre_oauth_authorize() -> RedirectResponse:
 
 @router.get("/oauth/callback", response_class=HTMLResponse)
 def mercadolivre_oauth_callback(
-    code: str | None = Query(default=None),
-    state: str | None = Query(default=None),
-    error: str | None = Query(default=None),
-    error_description: str | None = Query(default=None),
+    code: Annotated[str | None, Query()] = None,
+    state: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+    error_description: Annotated[str | None, Query()] = None,
 ) -> HTMLResponse:
     """Recebe o code do Mercado Livre e troca por access/refresh token no servidor."""
     if error:
