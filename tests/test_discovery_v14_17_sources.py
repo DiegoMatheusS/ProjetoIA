@@ -159,3 +159,55 @@ def test_pangoly_spec_shape_alimenta_extrator_de_ventoinha():
     assert specs["pwm"] is True
     assert specs["fluxoReverso"] is True
     assert specs["argb"] is True
+
+
+def test_pangoly_detail_provider_extrai_ficha_tecnica_da_ventoinha():
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          "name": "Noctua NF-A12x25 G2 PWM chromax.black",
+          "brand": {"@type": "Brand", "name": "Noctua"},
+          "model": "NF-A12x25 G2 PWM chromax.black"
+        }
+        </script>
+      </head>
+      <body>
+        <h1>Noctua NF-A12x25 G2 PWM chromax.black</h1>
+        <table>
+          <tr><th>Fan Size</th><td>120 mm</td></tr>
+          <tr><th>Airflow</th><td>0 - 63.15 CFM</td></tr>
+          <tr><th>Fan RPM</th><td>360 - 1800 RPM</td></tr>
+          <tr><th>PWM Connector</th><td>Yes</td></tr>
+        </table>
+      </body>
+    </html>
+    """
+    provider = PangolyProvider()
+    identity = {
+        "metodo": "MARCA_MODELO",
+        "confianca": "ALTA",
+        "chave": "noctua|nfa12x25g2pwmchromaxblack",
+        "marca": "Noctua",
+        "modelo": "NF-A12x25 G2 PWM chromax.black",
+        "mpn": None,
+        "gtin": None,
+    }
+    url = "https://pangoly.com/en/product/noctua-nf-a12x25-g2-pwm-chromax-black"
+    result = provider._parse_candidate_html(url, url, html, identity)
+
+    assert result["ok"] is True
+    specs = extract_specs(
+        "VENTOINHA",
+        result["attributes"],
+        result["context_text"],
+    )
+    assert specs["tamanhoMm"] == 120
+    assert specs["rpmMinima"] == 360
+    assert specs["rpmMaxima"] == 1800
+    assert specs["fluxoArCfm"] == 63.15
+    assert specs["conector"] == "PWM_4_PINOS"
+    assert specs["pwm"] is True
