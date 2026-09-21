@@ -8,6 +8,7 @@ on:
       - "src/auth/mercadolivre_token_store.py"
       - "src/mercadolivre/**"
       - "src/scrapers/mercadolivre_scraper.py"
+      - "src/main.py"
       - "tests/test_mercadolivre_*.py"
       - "requirements.txt"
       - ".github/workflows/mercadolivre-oauth.yml"
@@ -19,6 +20,7 @@ on:
       - "src/auth/mercadolivre_token_store.py"
       - "src/mercadolivre/**"
       - "src/scrapers/mercadolivre_scraper.py"
+      - "src/main.py"
       - "tests/test_mercadolivre_*.py"
       - "requirements.txt"
 
@@ -51,4 +53,5 @@ jobs:
           python -m unittest \
             tests.test_mercadolivre_token_store \
             tests.test_mercadolivre_oauth_router \
-            tests.test_mercadolivre_ofertas_router
+            tests.test_mercadolivre_ofertas_router \
+            tests.test_mercadolivre_price_description
