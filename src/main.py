@@ -143,6 +143,8 @@ def _category_hint_from_product_url(url):
         (r"\baspirador\b", "ASPIRADOR_PO"),
         (r"\bnotebook\b", "NOTEBOOK"),
         (r"\bmonitor\b", "MONITOR"),
+        (r"\b(?:memoria(?: ram)?|kit (?:de )?(?:memoria|ram)|ram)\b", "MEMORIA_RAM"),
+        (r"\b(?:4|8|16|24|32|48|64|96|128) gb\b.{0,45}\bddr[345]\b", "MEMORIA_RAM"),
     )
     for pattern, category in strong_hints:
         if re.search(pattern, hint, flags=re.I):
