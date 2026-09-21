@@ -171,6 +171,32 @@ class BrowserScraper:
                     except Exception:
                         pass
 
+                # A verificacao do Magalu pode ser resolvida pelo navegador
+                # cloud alguns segundos depois do primeiro DOMContentLoaded. Nao
+                # declaramos bloqueio imediatamente: aguardamos a mesma pagina,
+                # sem navegar para outros produtos e sem interagir com CAPTCHA.
+                if interaction_profile == "magalu":
+                    for _ in range(6):
+                        try:
+                            probe_url = page.url
+                            probe_title = page.title()
+                            probe_text = page.locator("body").inner_text(timeout=5000)
+                            probe_sample = f"{probe_title}\n{probe_text[:5000]}".casefold()
+                            verification = (
+                                "account-verification" in probe_url.lower()
+                                or "az-request-verify" in probe_url.lower()
+                                or "acessou nosso site de uma forma um pouco diferente do comum" in probe_sample
+                                or "para sua segurança precisamos de uma verificação rápida" in probe_sample
+                                or "para sua seguranca precisamos de uma verificacao rapida" in probe_sample
+                                or "access denied" in probe_sample
+                                or "403 forbidden" in probe_sample
+                            )
+                            if not verification:
+                                break
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(2000)
+
                 final_url = page.url
                 title = page.title()
                 html = page.content()

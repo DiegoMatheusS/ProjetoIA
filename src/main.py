@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -121,6 +122,20 @@ def _build_spec_description(raw, specs, max_items=18, max_length=1200):
     return description or None
 
 
+def _category_hint_from_product_url(url):
+    """Usa somente o slug público do produto como pista quando a página bloqueia."""
+    try:
+        path = unquote(urlparse(str(url or "")).path)
+    except Exception:
+        return None
+    before_product_code = re.split(r"/p/", path, maxsplit=1, flags=re.I)[0]
+    slug = before_product_code.rstrip("/").split("/")[-1]
+    if not slug:
+        return None
+    hint = re.sub(r"[-_]+", " ", slug)
+    return detect_category(hint)
+
+
 def build_result(raw, forced_category=None):
     blocked = bool(raw.get("blocked"))
     text = "\n".join(filter(None, [
@@ -137,7 +152,13 @@ def build_result(raw, forced_category=None):
     # Em coleta bloqueada não interpretar texto de CAPTCHA/verificação como
     # produto. Se o backend informou uma categoria esperada, ela pode ser
     # preservada apenas como contexto, nunca como evidência coletada.
-    category = forced_category if blocked else detect_category(raw.get("title") or "", forced_category)
+    category = (
+        forced_category
+        if blocked and forced_category
+        else _category_hint_from_product_url(raw.get("url_original"))
+        if blocked
+        else detect_category(raw.get("title") or "", forced_category)
+    )
     if not forced_category and not blocked:
         explicit_type = None
         for row in raw.get("attributes") or []:
