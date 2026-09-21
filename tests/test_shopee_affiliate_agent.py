@@ -4,6 +4,7 @@ import unittest
 
 from src.shopee.agent import ShopeeAffiliateAgent, extract_shopee_ids, is_shopee_url
 from src.shopee.client import ShopeeAffiliateClient
+from src.main import build_result
 
 
 class FakeShopeeClient:
@@ -56,6 +57,28 @@ class ShopeeUrlTest(unittest.TestCase):
         self.assertEqual(
             extract_shopee_ids("https://shopee.com.br/product/12345/987654321"),
             (12345, 987654321),
+        )
+
+
+    def test_build_result_preserves_affiliate_link_and_marketplace(self):
+        result = build_result(
+            {
+                "ok": True,
+                "source": "SHOPEE_AFFILIATE_API",
+                "api_used": True,
+                "url_original": "https://shopee.com.br/RTX-5070-i.12345.987654321",
+                "url_final": "https://shopee.com.br/RTX-5070-i.12345.987654321",
+                "affiliate_url": "https://s.shopee.com.br/abc123",
+                "title": "ASUS TUF RTX 5070 12GB",
+                "price": 3999.9,
+                "attributes": [],
+            }
+        )
+        self.assertEqual(result["marketplace"]["plataforma"], "SHOPEE")
+        self.assertTrue(result["marketplace"]["apiUsada"])
+        self.assertEqual(
+            result["ofertaColetada"]["urlAfiliada"],
+            "https://s.shopee.com.br/abc123",
         )
 
 
