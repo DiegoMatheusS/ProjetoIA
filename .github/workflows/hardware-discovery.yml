@@ -37,4 +37,8 @@ jobs:
           python -m pip install -r requirements.txt pytest
       - name: Testar descoberta e categorias
         run: |
-          python -m pytest -q             tests/test_discovery_v14_17_sources.py             tests/test_discovery_v14_20_3_all_categories.py             tests/test_categories_criabyte.py
+          python -m pytest -q \
+            tests/test_discovery_v14_17_sources.py \
+            tests/test_discovery_v14_20_3_all_categories.py \
+            tests/test_categories_criabyte.py \
+            tests/test_gpu_clock_normalization.py
