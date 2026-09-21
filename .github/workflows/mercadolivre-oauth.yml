@@ -47,11 +47,13 @@ jobs:
             "loguru>=0.7,<1" \
             "pydantic>=2.10,<3" \
             "python-dotenv>=1.0,<2" \
-            "requests>=2.32,<3"
-      - name: Testar OAuth e API Mercado Livre
+            "requests>=2.32,<3" \
+            "pytest>=8,<9"
+      - name: Testar OAuth, catálogo e preços Mercado Livre
         run: |
-          python -m unittest \
-            tests.test_mercadolivre_token_store \
-            tests.test_mercadolivre_oauth_router \
-            tests.test_mercadolivre_ofertas_router \
-            tests.test_mercadolivre_price_description
+          python -m pytest -q \
+            tests/test_mercadolivre_token_store.py \
+            tests/test_mercadolivre_oauth_router.py \
+            tests/test_mercadolivre_ofertas_router.py \
+            tests/test_mercadolivre_catalog_fallback.py \
+            tests/test_mercadolivre_price_description.py
