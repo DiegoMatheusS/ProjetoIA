@@ -145,7 +145,7 @@ def detect_category(text: str, forced: str | None = None):
         ("VIDEOGAME", [r"\b(?:videogame|console)\b", r"\bplaystation\s*[345]\b", r"\bxbox\b", r"\bnintendo\s+switch\b", r"\bsteam\s+deck\b"]),
         ("SMART_TV", [r"\bsmart\s*tv\b"]),
         ("TV", [r"\b(?:tv|televis[aã]o)\b.{0,30}\b(?:led|qled|oled|mini[- ]?led|4k|8k|uhd)\b"]),
-        ("CAMERA", [r"\bcamera\b.{0,20}\b(?:digital|mirrorless|dslr)\b"]),
+        ("CAMERA", [r"\bcamera\b.{0,20}\b(?:digital|mirrorless|dslr|fotografica)\b", r"\bmaquina\s+fotografica\b"]),
         ("POWER_BANK", [r"\bpower\s*bank\b"]),
         ("HUB_USB", [r"\bhub\s+usb\b"]),
         ("DOCK_STATION", [r"\bdock(?:ing)?\s+station\b"]),
