@@ -780,6 +780,19 @@ class MercadoLivreScraper:
                         (row for row in rows if clean_text(row.get("item_id")) == item_id),
                         None,
                     )
+                else:
+                    # Em URLs de catálogo (/p/MLB...), o link pode não carregar
+                    # item_id. Nesse caso, usa somente o anúncio explicitamente
+                    # indicado pelo buy_box_winner do próprio catálogo. Não escolhe
+                    # vendedor arbitrário quando existem várias ofertas.
+                    winner_item_id = clean_text(self._buy_box(catalog).get("item_id"))
+                    if winner_item_id:
+                        catalog_offer = next(
+                            (row for row in rows if clean_text(row.get("item_id")) == winner_item_id),
+                            None,
+                        )
+                    elif len(rows) == 1:
+                        catalog_offer = rows[0]
 
         api_result = None
         if item or catalog or catalog_offer:
