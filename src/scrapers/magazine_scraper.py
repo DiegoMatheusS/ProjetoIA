@@ -893,7 +893,20 @@ class MagazineScraper:
         apenas URLs públicas do mesmo código de produto que podem ter políticas
         de entrega/cache diferentes na borda.
         """
+        parsed_input = urlparse(url or "")
+        input_host = (parsed_input.hostname or "").casefold()
         base = cls._magazineluiza_equivalent_url(url)
+        if not base and (
+            input_host == "magazineluiza.com.br"
+            or input_host.endswith(".magazineluiza.com.br")
+        ):
+            # Normaliza links desktop/mobile do próprio Magazine Luiza para a
+            # página pública canônica antes de gerar as variantes.
+            base = urlunparse(parsed_input._replace(
+                scheme="https",
+                netloc="www.magazineluiza.com.br",
+                fragment="",
+            ))
         if not base:
             return []
 
@@ -905,7 +918,8 @@ class MagazineScraper:
                 seen.add(candidate)
                 result.append((mode, candidate))
 
-        add("MAGAZINELUIZA", base)
+        if base != url:
+            add("MAGAZINELUIZA", base)
 
         parsed = urlparse(base)
         query_without_seller = [
@@ -1085,7 +1099,7 @@ class MagazineScraper:
         scraper = BrowserScraper()
         if not scraper.surfsky_configured():
             return None, "SURFSKY_NAO_CONFIGURADO", False
-        browser = scraper.fetch_surfsky(candidate_url)
+        browser = scraper.fetch_surfsky(candidate_url, interaction_profile="magalu")
         if browser.get("error"):
             return None, browser.get("error"), False
         title = browser.get("title") or ""
