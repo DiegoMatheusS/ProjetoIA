@@ -649,8 +649,28 @@ class MercadoLivreScraper:
                 if value not in (None, "", []):
                     out[key] = value
 
-        # Uma descrição pública renderizada costuma ser mais completa que o
-        # short_description do catálogo; só substituímos quando for claramente maior.
+        # Para preço, a PDP renderizada representa o valor que o usuário está
+        # vendo naquele anúncio. A API pode retornar o preço regular enquanto uma
+        # promoção ativa aparece apenas na PDP. Nesse caso, o preço visível atual
+        # deve vencer e o valor maior vira precoAnterior.
+        secondary_price = to_float(secondary.get("price"))
+        secondary_previous = to_float(secondary.get("previous_price"))
+        primary_price = to_float(primary.get("price"))
+        secondary_price_source = clean_text(secondary.get("price_source"))
+
+        if secondary_price is not None and secondary_price_source == "MERCADO_LIVRE_PDP":
+            out["price"] = secondary_price
+            previous_candidates = [
+                value for value in (secondary_previous, primary_price, to_float(primary.get("previous_price")))
+                if value is not None and value > secondary_price
+            ]
+            out["previous_price"] = min(previous_candidates) if previous_candidates else None
+            out["price_source"] = secondary_price_source
+            if secondary.get("currency"):
+                out["currency"] = secondary.get("currency")
+
+        # A descrição final é montada depois a partir das especificações. Aqui
+        # mantemos o texto bruto apenas como evidência para classificação/extrator.
         if secondary.get("description") and len(str(secondary.get("description"))) > len(str(out.get("description") or "")):
             out["description"] = secondary.get("description")
 
