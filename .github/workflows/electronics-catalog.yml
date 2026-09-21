@@ -1,0 +1,37 @@
+name: Electronics Catalog
+
+on:
+  pull_request:
+    paths:
+      - "src/extractors/category.py"
+      - "src/extractors/backend_schemas.py"
+      - "src/extractors/ml_specs.py"
+      - "tests/test_electronics_categories.py"
+      - ".github/workflows/electronics-catalog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/extractors/category.py"
+      - "src/extractors/backend_schemas.py"
+      - "src/extractors/ml_specs.py"
+      - "tests/test_electronics_categories.py"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Testar categorias de eletrônicos
+        run: python -m unittest tests.test_electronics_categories
