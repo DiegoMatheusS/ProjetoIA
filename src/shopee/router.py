@@ -13,6 +13,10 @@ from .client import ShopeeAffiliateClient, ShopeeAffiliateError
 router = APIRouter(prefix="/shopee", tags=["Shopee Affiliate"])
 
 
+class ShopeeProductRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=4096)
+
+
 class ShopeeProductSearchRequest(BaseModel):
     consulta: str | None = Field(default=None, max_length=300)
     itemId: int | None = Field(default=None, ge=1)
@@ -91,6 +95,29 @@ def shopee_agent_products(
             sort_type=payload.ordenacao,
             list_type=payload.tipoLista,
         )
+    except ShopeeAffiliateError as exc:
+        raise _translate_error(exc) from exc
+
+
+@router.post("/agente/produto")
+def shopee_agent_product(
+    payload: ShopeeProductRequest,
+    x_api_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validate_api_key(x_api_key)
+    try:
+        agent = ShopeeAffiliateAgent(_client())
+        item = agent.find_product_by_url(payload.url)
+        if item is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Não foi possível identificar shopId/itemId ou localizar o anúncio na Shopee Affiliate API.",
+            )
+        return {
+            "agente": "SHOPEE_AFFILIATE",
+            "modo": "API_OFICIAL",
+            "item": item,
+        }
     except ShopeeAffiliateError as exc:
         raise _translate_error(exc) from exc
 
