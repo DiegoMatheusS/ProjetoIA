@@ -1,0 +1,42 @@
+name: Shopee Affiliate
+
+on:
+  pull_request:
+    paths:
+      - "src/shopee/**"
+      - "src/api.py"
+      - "src/main.py"
+      - "src/utils/sites.py"
+      - "tests/test_shopee_*.py"
+      - "requirements.txt"
+      - ".github/workflows/shopee-affiliate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/shopee/**"
+      - "src/api.py"
+      - "src/main.py"
+      - "src/utils/sites.py"
+      - "tests/test_shopee_*.py"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Testar Shopee Affiliate
+        run: |
+          python -m unittest tests.test_shopee_affiliate_agent
