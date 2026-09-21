@@ -8,6 +8,7 @@ on:
       - "src/extractors/**"
       - "config/manufacturer_domains.json"
       - "tests/test_discovery_*.py"
+      - "tests/test_hardware_null_payload.py"
       - ".github/workflows/hardware-discovery.yml"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "src/extractors/**"
       - "config/manufacturer_domains.json"
       - "tests/test_discovery_*.py"
+      - "tests/test_hardware_null_payload.py"
 
 permissions:
   contents: read
@@ -41,4 +43,5 @@ jobs:
             tests/test_discovery_v14_17_sources.py \
             tests/test_discovery_v14_20_3_all_categories.py \
             tests/test_categories_criabyte.py \
-            tests/test_gpu_clock_normalization.py
+            tests/test_gpu_clock_normalization.py \
+            tests/test_hardware_null_payload.py
