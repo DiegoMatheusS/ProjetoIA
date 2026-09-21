@@ -12,6 +12,8 @@ from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
+from .shopee.agent import ShopeeAffiliateAgent, is_shopee_url
+from .shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
 from .extractors.backend_schemas import SCHEMAS
@@ -58,6 +60,7 @@ _discovery_service = HardwareDiscoveryService()
 
 class AnalyzeRequest(BaseModel):
     url: str = Field(min_length=8, max_length=4096)
+    urlAfiliada: str | None = Field(default=None, min_length=8, max_length=4096)
     categoria: str | None = Field(default=None, max_length=80)
     enrich: bool = False
     criabytePlan: bool = False
@@ -396,17 +399,90 @@ def _validate_url(url: str) -> str:
     return value
 
 
+def _shopee_api_raw(url: str) -> tuple[dict[str, Any] | None, list[str]]:
+    client = ShopeeAffiliateClient()
+    if not client.configured:
+        return None, ["SHOPEE_AFFILIATE_API_NAO_CONFIGURADA"]
+
+    try:
+        item = ShopeeAffiliateAgent(client).find_product_by_url(url)
+    except ShopeeAffiliateError as exc:
+        return None, [str(exc)]
+
+    if not item:
+        return None, ["ANUNCIO_NAO_LOCALIZADO_NA_SHOPEE_AFFILIATE_API"]
+
+    item_id = str(item.get("itemId") or "").strip() or None
+    shop_id = str(item.get("shopId") or "").strip() or None
+    code = (
+        f"SHOPEE-{shop_id}-{item_id}"
+        if shop_id and item_id
+        else (f"SHOPEE-{item_id}" if item_id else None)
+    )
+    title = str(item.get("nome") or "").strip() or None
+    return {
+        "ok": bool(title),
+        "source": "SHOPEE_AFFILIATE_API",
+        "api_used": True,
+        "url_original": url,
+        "url_final": item.get("urlOriginal") or url,
+        "affiliate_url": item.get("urlAfiliada"),
+        "title": title,
+        "brand": None,
+        "model": None,
+        "mpn": None,
+        "gtin": None,
+        "image_url": item.get("imagemUrl"),
+        "description": None,
+        "price": item.get("preco"),
+        "previous_price": None,
+        "price_source": "SHOPEE_AFFILIATE_API",
+        "currency": "BRL",
+        "available": None,
+        "marketplace_product_code": code,
+        "item_id": item_id,
+        "shop_id": shop_id,
+        "attributes": [],
+        "attributes_text": "",
+        "product_attributes": [],
+        "selected_variants": [],
+        "api_errors": [],
+        "api_debug": [{"fonte": "SHOPEE_AFFILIATE_API", "sucesso": True}],
+        "collection_attempts": [
+            {"modo": "SHOPEE_AFFILIATE_API", "url": url, "bloqueado": False, "erro": None}
+        ],
+        "blocked": False,
+        "requires_local_capture": False,
+        "error": None if title else "SHOPEE_API_SEM_NOME",
+    }, []
+
+
 def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     url = _validate_url(payload.url)
+    affiliate_url = _validate_url(payload.urlAfiliada) if payload.urlAfiliada else None
 
     if MercadoLivreScraper.is_mercadolivre(url):
         raw = MercadoLivreScraper().collect(url, no_browser=payload.noBrowser)
+    elif is_shopee_url(url):
+        raw, shopee_errors = _shopee_api_raw(url)
+        if raw is None:
+            raw = GenericScraper().collect(url, no_browser=payload.noBrowser)
+            raw.setdefault("source", "SHOPEE_PAGINA_FALLBACK")
+            raw.setdefault("api_used", False)
+            raw["api_errors"] = [*(raw.get("api_errors") or []), *shopee_errors]
+            raw.setdefault(
+                "api_debug",
+                [{"fonte": "SHOPEE_AFFILIATE_API", "sucesso": False, "erros": shopee_errors}],
+            )
     elif MagazineScraper.is_magazine(url):
         raw = MagazineScraper().collect(url, no_browser=payload.noBrowser)
     else:
         raw = GenericScraper().collect(url, no_browser=payload.noBrowser)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)
+
+    if affiliate_url:
+        raw["affiliate_url"] = affiliate_url
 
     result = build_result(raw, payload.categoria)
 
