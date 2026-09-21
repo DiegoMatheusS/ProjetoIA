@@ -142,7 +142,7 @@ def detect_category(text: str, forced: str | None = None):
         ("VOLANTE", [r"\bvolante\b.{0,25}\b(?:gamer|jogo|simulador)\b"]),
         ("JOYSTICK", [r"\bjoystick\b"]),
         ("CONTROLE_VIDEO_GAME", [r"\bcontrole\b.{0,30}\b(?:xbox|playstation|ps[345]|switch|videogame|console)\b", r"\bgamepad\b"]),
-        ("VIDEOGAME", [r"\b(?:videogame|console)\b", r"\bplaystation\s*[345]\b", r"\bxbox\b", r"\bnintendo\s+switch\b", r"\bst eam\s+deck\b"]),
+        ("VIDEOGAME", [r"\b(?:videogame|console)\b", r"\bplaystation\s*[345]\b", r"\bxbox\b", r"\bnintendo\s+switch\b", r"\bsteam\s+deck\b"]),
         ("SMART_TV", [r"\bsmart\s*tv\b"]),
         ("TV", [r"\b(?:tv|televis[aã]o)\b.{0,30}\b(?:led|qled|oled|mini[- ]?led|4k|8k|uhd)\b"]),
         ("CAMERA", [r"\bcamera\b.{0,20}\b(?:digital|mirrorless|dslr)\b"]),
