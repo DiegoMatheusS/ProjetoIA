@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,106 @@ from .utils.data_handler import DataHandler
 from .utils.sites import detect_site
 
 load_dotenv()
+
+
+def _humanize_spec_key(key):
+    text = str(key or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    text = text.replace("_", " ").strip()
+    aliases = {
+        "tdp watts": "TDP",
+        "clock base ghz": "Clock base",
+        "clock boost ghz": "Clock boost",
+        "nucleos": "Núcleos",
+        "threads": "Threads",
+        "socket cpu": "Socket",
+        "socket": "Socket",
+        "memoria gb": "Memória",
+        "armazenamento gb": "Armazenamento",
+        "tamanho tela polegadas": "Tela",
+        "taxa atualizacao hz": "Taxa de atualização",
+        "potencia watts": "Potência",
+        "autonomia minutos": "Autonomia",
+    }
+    normalized = text.casefold()
+    return aliases.get(normalized) or text[:1].upper() + text[1:]
+
+
+def _format_spec_value(key, value):
+    if value in (None, "", []):
+        return None
+    if isinstance(value, bool):
+        return "Sim" if value else "Não"
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return ", ".join(parts[:8]) or None
+    if isinstance(value, dict):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = str(key or "").casefold()
+    suffixes = {
+        "ghz": " GHz",
+        "mhz": " MHz",
+        "watts": " W",
+        "gb": " GB",
+        "mb": " MB",
+        "polegadas": '\"',
+        "minutos": " min",
+        "metros": " m",
+        "litros": " L",
+        "cm": " cm",
+        "hz": " Hz",
+    }
+    if not re.search(r"[A-Za-zÀ-ÿ]", text):
+        for token, suffix in suffixes.items():
+            if normalized.endswith(token):
+                return f"{text}{suffix}"
+    return text
+
+
+def _build_spec_description(raw, specs, max_items=18, max_length=1200):
+    """Cria descrição curta a partir da ficha técnica, nunca do texto bruto da página."""
+    parts = []
+    seen = set()
+
+    def add(label, value):
+        value = _format_spec_value(label, value)
+        label = _humanize_spec_key(label)
+        if not label or not value:
+            return
+        signature = f"{label.casefold()}|{value.casefold()}"
+        if signature in seen:
+            return
+        seen.add(signature)
+        parts.append(f"{label}: {value}")
+
+    add("marca", raw.get("brand"))
+    add("modelo", raw.get("model"))
+    for key, value in (specs or {}).items():
+        if len(parts) >= max_items:
+            break
+        add(key, value)
+
+    # Produtos genéricos podem ter poucas specs normalizadas; nesses casos,
+    # completa com atributos reais do marketplace sem copiar a descrição inteira.
+    if len(parts) < 6:
+        for row in raw.get("product_attributes") or []:
+            if len(parts) >= max_items:
+                break
+            if not isinstance(row, dict):
+                continue
+            add(row.get("nome") or row.get("name"), row.get("valor") or row.get("value"))
+
+    description = " · ".join(parts)
+    if len(description) > max_length:
+        description = description[: max_length - 1].rstrip(" ·,;:") + "…"
+    return description or None
 
 
 def build_result(raw, forced_category=None):
@@ -68,7 +169,7 @@ def build_result(raw, forced_category=None):
         "nome": None if blocked else raw.get("title"),
         "marca": None if blocked else raw.get("brand"),
         "modelo": None if blocked else raw.get("model"),
-        "descricao": None if blocked else raw.get("description"),
+        "descricao": None if blocked else _build_spec_description(raw, specs),
         # Não usar MODEL como MPN. MPN só entra quando o marketplace realmente
         # fornece part number / manufacturer part number.
         "mpn": None if blocked else raw.get("mpn"),
