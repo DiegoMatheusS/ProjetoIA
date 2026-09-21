@@ -16,6 +16,7 @@ from .extractors.ml_specs import extract_specs
 from .extractors.dto_normalizer import normalize_specs_for_backend
 from .utils.data_handler import DataHandler
 from .utils.sites import detect_site
+from .utils.normalizers import to_float
 
 load_dotenv()
 
@@ -199,6 +200,17 @@ def build_result(raw, forced_category=None):
 
     site = detect_site(raw.get("url_original") or "")
 
+    current_price = to_float(raw.get("price"))
+    previous_price = to_float(raw.get("previous_price"))
+    # Contrato da Oferta: precoAnterior nunca pode representar um valor menor
+    # que o preço atual. Se uma fonte entregar os campos invertidos, corrigimos
+    # antes de enviar ao backend; valores iguais não são exibidos como "de".
+    if current_price is not None and previous_price is not None:
+        if previous_price < current_price:
+            current_price, previous_price = previous_price, current_price
+        elif previous_price == current_price:
+            previous_price = None
+
     brand_key = (raw.get("brand") or "").strip().casefold() or None
     model_key = (raw.get("model") or "").strip().casefold() or None
     mpn_key = (raw.get("mpn") or "").strip().casefold() or None
@@ -219,8 +231,8 @@ def build_result(raw, forced_category=None):
         "tipoCadastro": tipo_cadastro,
         "payloadParcialBackend": payload,
         "ofertaColetada": {
-            "preco": raw.get("price"),
-            "precoAnterior": raw.get("previous_price"),
+            "preco": current_price,
+            "precoAnterior": previous_price,
             "fontePreco": raw.get("price_source"),
             "moeda": raw.get("currency") or "BRL",
             "disponivel": raw.get("available"),
