@@ -990,7 +990,19 @@ def extract_gpu(mapping, text):
         bus_width = text_integer(text, r"\b\d+(?:[.,]\d+)?\s*(?:GB|MB)\s*,?\s*(?:GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\s*,?\s*(\d{2,4})\s*bit")
     set_if(specs, "barramentoBits", bus_width)
 
-    base = frequency_mhz(attr(mapping, "GPU_BASE_CLOCK", "BASE_CLOCK", "GPU Clock", "Base Clock", "Clock base"))
+    base = frequency_mhz(attr(
+        mapping,
+        "GPU_BASE_CLOCK",
+        "BASE_CLOCK",
+        "GPU Clock",
+        "Base Clock",
+        "Clock base",
+        "Clock do Processador de Vídeo",
+        "Clock do processador gráfico",
+        "Velocidade do processador gráfico",
+        "Velocidade de clock do processador gráfico",
+        "Frequência do processador gráfico",
+    ))
     if base is None:
         base = text_frequency(
             text,
@@ -1000,8 +1012,14 @@ def extract_gpu(mapping, text):
     set_if(specs, "clockBaseMhz", base)
 
     boost = frequency_mhz(attr(
-        mapping, "GPU_BOOST_CLOCK", "BOOST_CLOCK", "Boost Clock",
-        "Clock boost", "Clock do Processador de Vídeo",
+        mapping,
+        "GPU_BOOST_CLOCK",
+        "BOOST_CLOCK",
+        "Boost Clock",
+        "Clock boost",
+        "GPU Boost Clock",
+        "Clock de boost",
+        "Frequência boost",
     ))
     if boost is None:
         boost = text_frequency(
