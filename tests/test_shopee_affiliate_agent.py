@@ -2,7 +2,7 @@ import hashlib
 import json
 import unittest
 
-from src.shopee.agent import ShopeeAffiliateAgent
+from src.shopee.agent import ShopeeAffiliateAgent, extract_shopee_ids, is_shopee_url
 from src.shopee.client import ShopeeAffiliateClient
 
 
@@ -38,6 +38,25 @@ class FakeShopeeClient:
 
     def list_campaigns(self, **kwargs):
         return {"itens": [{"nome": "Oferta Tech"}], "pagina": {"page": 1}}
+
+
+class ShopeeUrlTest(unittest.TestCase):
+    def test_recognizes_shopee_br_hosts(self):
+        self.assertTrue(is_shopee_url("https://shopee.com.br/produto-i.10.20"))
+        self.assertTrue(is_shopee_url("https://s.shopee.com.br/abc"))
+        self.assertFalse(is_shopee_url("https://example.com/produto-i.10.20"))
+
+    def test_extracts_ids_from_slug_url(self):
+        self.assertEqual(
+            extract_shopee_ids("https://shopee.com.br/RTX-5070-i.12345.987654321"),
+            (12345, 987654321),
+        )
+
+    def test_extracts_ids_from_product_url(self):
+        self.assertEqual(
+            extract_shopee_ids("https://shopee.com.br/product/12345/987654321"),
+            (12345, 987654321),
+        )
 
 
 class ShopeeAffiliateClientTest(unittest.TestCase):
@@ -87,6 +106,14 @@ class ShopeeAffiliateAgentTest(unittest.TestCase):
         self.assertEqual(result["itens"][0]["itemId"], "1")
         self.assertEqual(result["fontePrimaria"], "SHOPEE_AFFILIATE_API")
         self.assertFalse(result["scrapingNecessario"])
+
+    def test_agent_resolves_exact_product_from_url(self):
+        item = ShopeeAffiliateAgent(FakeShopeeClient()).find_product_by_url(
+            "https://shopee.com.br/ASUS-TUF-RTX-5070-i.10.1"
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["itemId"], "1")
+        self.assertEqual(item["shopId"], "10")
 
     def test_agent_can_filter_only_promotions(self):
         result = ShopeeAffiliateAgent(FakeShopeeClient()).find_products(
