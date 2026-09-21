@@ -126,6 +126,7 @@ def build_result(raw, forced_category=None):
             "urlOriginal": raw.get("url_original"),
             "urlProduto": raw.get("url_final"),
             "codigoMarketplace": raw.get("marketplace_product_code"),
+            "urlAfiliada": raw.get("affiliate_url"),
         },
         # Guarda tudo o que a página informou sobre o PRODUTO, mesmo quando o
         # backend ainda não possui um campo específico. Dados de vendedor,
@@ -165,7 +166,11 @@ def build_result(raw, forced_category=None):
                 else (
                     "MAGALU"
                     if MagazineScraper.is_magazine(raw.get("url_original") or "")
-                    else None
+                    else (
+                        "SHOPEE"
+                        if detect_site(raw.get("url_original") or "").get("plataforma") == "SHOPEE"
+                        else None
+                    )
                 )
             ),
             "apiUsada": raw.get("api_used", False),
