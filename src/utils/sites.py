@@ -10,7 +10,7 @@ def detect_site(url: str):
         (("terabyteshop.com.br",), "TERABYTE", "PAGINA_ESTRUTURADA"),
         (("amazon.com.br",), "AMAZON", "PAGINA_ESTRUTURADA"),
         (("magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"), "MAGALU", "EXTRATOR_ESPECIFICO"),
-        (("shopee.com.br",), "SHOPEE", "PAGINA_ESTRUTURADA"),
+        (("shopee.com.br",), "SHOPEE", "API_OFICIAL"),
         (("aliexpress.com",), "ALIEXPRESS", "PAGINA_ESTRUTURADA"),
     ]
     for suffixes, name, mode in rules:

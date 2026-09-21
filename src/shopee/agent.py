@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from .client import ShopeeAffiliateClient
 
@@ -13,6 +14,29 @@ def _tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-z0-9]+", str(text or "").casefold())
         if len(token) >= 2
     }
+
+
+def is_shopee_url(url: str) -> bool:
+    host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
+    return host == "shopee.com.br" or host.endswith(".shopee.com.br")
+
+
+def extract_shopee_ids(url: str) -> tuple[int | None, int | None]:
+    """Extrai shopId/itemId das formas públicas mais comuns de URL da Shopee BR."""
+    if not is_shopee_url(url):
+        return None, None
+    parsed = urlparse(str(url or ""))
+    path = parsed.path or ""
+
+    match = re.search(r"/product/(\d+)/(\d+)(?:/|$)", path, re.I)
+    if not match:
+        match = re.search(r"(?:^|[-/])i\.(\d+)\.(\d+)(?:[/?#.-]|$)", path, re.I)
+    if not match:
+        match = re.search(r"/(\d+)/(\d+)(?:/|$)", path)
+
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
 
 
 class ShopeeAffiliateAgent:
@@ -91,6 +115,23 @@ class ShopeeAffiliateAgent:
             "fontePrimaria": "SHOPEE_AFFILIATE_API",
             "scrapingNecessario": False,
         }
+
+    def find_product_by_url(self, url: str) -> dict[str, Any] | None:
+        """Resolve um anúncio exato da Shopee pela API oficial quando a URL contém IDs."""
+        shop_id, item_id = extract_shopee_ids(url)
+        if item_id is None:
+            return None
+        result = self.find_products(item_id=item_id, shop_id=shop_id, limit=20)
+        items = list(result.get("itens") or [])
+        expected_item = str(item_id)
+        expected_shop = str(shop_id) if shop_id is not None else None
+        for item in items:
+            if str(item.get("itemId") or "") != expected_item:
+                continue
+            if expected_shop is not None and str(item.get("shopId") or "") != expected_shop:
+                continue
+            return item
+        return None
 
     def find_promotions(self, *, query: str | None = None, limit: int = 20) -> dict[str, Any]:
         campaigns = self.client.list_campaigns(keyword=query, limit=limit)
