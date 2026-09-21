@@ -1989,6 +1989,64 @@ def extract_generic(category,mapping,text):
         set_if(specs,"profundidadeCm",number(attr(mapping,"DEPTH","Profundidade")))
         set_if(specs,"alturaCm",number(attr(mapping,"HEIGHT","Altura")))
         set_if(specs,"pesoMaximoKg",number(attr(mapping,"MAX_WEIGHT","Peso máximo")))
+    elif category in {"TV", "SMART_TV"}:
+        set_if(specs,"tamanhoPolegadas",number(attr(mapping,"SCREEN_SIZE","DISPLAY_SIZE","Tamanho da tela")))
+        set_if(specs,"resolucao",resolution(attr(mapping,"SCREEN_RESOLUTION","RESOLUTION","Resolução","Resolução da tela")))
+        set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização")))
+        set_if(specs,"tipoPainel",attr(mapping,"PANEL_TYPE","DISPLAY_TYPE","Tipo de painel","Tipo de tela"))
+        set_if(specs,"sistemaOperacional",attr(mapping,"OPERATING_SYSTEM","Sistema operacional"))
+        if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+    elif category in {"ASPIRADOR_PO", "ROBO_ASPIRADOR"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","POWER_WATTS","Potência","Potência máxima")))
+        set_if(specs,"capacidadeReservatorioLitros",number(attr(mapping,"DUST_CONTAINER_CAPACITY","Capacidade do reservatório","Capacidade")))
+        set_if(specs,"filtro",attr(mapping,"FILTER_TYPE","Tipo de filtro","Filtro"))
+        if category=="ROBO_ASPIRADOR":
+            set_if(specs,"potenciaSuccaoPa",integer(attr(mapping,"SUCTION_POWER","Poder de sucção","Potência de sucção")))
+            set_if(specs,"autonomiaMinutos",integer(attr(mapping,"BATTERY_LIFE","Autonomia","Duração da bateria")))
+            set_if(specs,"mapeamento",attr(mapping,"MAPPING_TYPE","Mapeamento","Sistema de mapeamento"))
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+    elif category in {"CAMERA", "CAMERA_ACAO", "CAMERA_SEGURANCA"}:
+        set_if(specs,"resolucaoMegapixels",number(attr(mapping,"CAMERA_RESOLUTION","RESOLUTION_MP","Resolução da câmera","Megapixels")))
+        set_if(specs,"resolucaoVideo",resolution(attr(mapping,"VIDEO_RESOLUTION","Resolução de vídeo","Resolução máxima de vídeo")))
+        set_if(specs,"sensor",attr(mapping,"SENSOR_TYPE","IMAGE_SENSOR","Tipo de sensor","Sensor"))
+        set_if(specs,"zoomOptico",number(attr(mapping,"OPTICAL_ZOOM","Zoom óptico")))
+        if category=="CAMERA_SEGURANCA":
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+            if re.search(r"vis[aã]o\s+noturna|night\s+vision", text or "", re.I): specs["visaoNoturna"]=True
+        if category=="CAMERA_ACAO":
+            if re.search(r"\bIP\d{2}\b|resistente\s+[aà]\s+[aá]gua|waterproof", text or "", re.I): specs["resistenciaAgua"]=True
+    elif category=="DRONE":
+        set_if(specs,"resolucaoCamera",resolution(attr(mapping,"VIDEO_RESOLUTION","CAMERA_RESOLUTION","Resolução da câmera")))
+        set_if(specs,"autonomiaMinutos",integer(attr(mapping,"FLIGHT_TIME","Tempo de voo","Autonomia")))
+        set_if(specs,"alcanceMetros",integer(attr(mapping,"MAX_RANGE","Alcance máximo","Alcance")))
+    elif category in {"SOUNDBAR", "HOME_THEATER", "CAIXA_DE_SOM", "SMART_SPEAKER"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","OUTPUT_POWER","Potência","Potência de saída")))
+        set_if(specs,"canais",attr(mapping,"CHANNELS","Canais","Configuração de canais"))
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+        if category=="SMART_SPEAKER":
+            set_if(specs,"assistente",attr(mapping,"VOICE_ASSISTANT","Assistente de voz"))
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+    elif category in {"AIR_FRYER", "CAFETEIRA", "LIQUIDIFICADOR", "VENTILADOR", "CLIMATIZADOR"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","Potência")))
+        set_if(specs,"capacidadeLitros",number(attr(mapping,"CAPACITY","Capacidade")))
+        set_if(specs,"velocidades",integer(attr(mapping,"SPEEDS_NUMBER","Quantidade de velocidades","Velocidades")))
+    elif category in {"LAMPADA_INTELIGENTE", "TOMADA_INTELIGENTE", "FECHADURA_INTELIGENTE"}:
+        if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+        if category=="LAMPADA_INTELIGENTE":
+            set_if(specs,"potenciaWatts",number(attr(mapping,"POWER","Potência")))
+            set_if(specs,"soquete",attr(mapping,"SOCKET_TYPE","Soquete","Base"))
+            if re.search(r"\bRGB\b", text or "", re.I): specs["rgb"]=True
+        elif category=="TOMADA_INTELIGENTE":
+            set_if(specs,"correnteAmperes",number(attr(mapping,"CURRENT","Corrente máxima","Corrente")))
+        else:
+            set_if(specs,"tipoAbertura",attr(mapping,"UNLOCK_METHOD","Método de abertura","Tipo de abertura"))
+            if re.search(r"biometr|impress[aã]o\s+digital", text or "", re.I): specs["biometria"]=True
+    elif category=="E_READER":
+        set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela")))
+        set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"STORAGE_CAPACITY","Armazenamento","Memória interna")))
+        if re.search(r"\bIP\d{2}\b|resistente\s+[aà]\s+[aá]gua|waterproof", text or "", re.I): specs["resistenciaAgua"]=True
     return specs
 
 
