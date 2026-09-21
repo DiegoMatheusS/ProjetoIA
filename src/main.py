@@ -133,6 +133,20 @@ def _category_hint_from_product_url(url):
     if not slug:
         return None
     hint = re.sub(r"[-_]+", " ", slug)
+    strong_hints = (
+        (r"\b(?:smartphone|celular|iphone)\b", "CELULAR"),
+        (r"\btablet\b", "TABLET"),
+        (r"\b(?:videogame|console|playstation|xbox|nintendo switch)\b", "VIDEOGAME"),
+        (r"\bsmart tv\b", "SMART_TV"),
+        (r"\b(?:camera|câmera|maquina fotografica|máquina fotográfica)\b", "CAMERA"),
+        (r"\brobo aspirador\b", "ROBO_ASPIRADOR"),
+        (r"\baspirador\b", "ASPIRADOR_PO"),
+        (r"\bnotebook\b", "NOTEBOOK"),
+        (r"\bmonitor\b", "MONITOR"),
+    )
+    for pattern, category in strong_hints:
+        if re.search(pattern, hint, flags=re.I):
+            return category
     return detect_category(hint)
 
 
