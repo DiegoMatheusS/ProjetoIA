@@ -778,7 +778,14 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     except Exception:
         expected = []
     if expected:
-        specs = {field: specs.get(field) for field in expected}
+        # Campos técnicos não encontrados devem ser omitidos, não enviados como
+        # null. DTOs Nest com @IsOptional() aceitam null, mas o Prisma pode ter
+        # coluna obrigatória com default e rejeitar explicitamente o null.
+        specs = {
+            field: specs.get(field)
+            for field in expected
+            if specs.get(field) is not None
+        }
 
     # Contrato atual do CriaByte: o campo deve SEMPRE existir e ser array.
     # Se a geração foi confirmada, enviamos apenas enums válidos. Se não foi,
