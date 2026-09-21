@@ -122,6 +122,32 @@ class BrowserScraper:
                 page.goto(url, wait_until="domcontentloaded", timeout=max(self.timeout_ms, 60000))
                 page.wait_for_timeout(4000)
 
+                if interaction_profile == "magalu":
+                    # A borda do Magalu às vezes mostra uma verificação automática
+                    # por poucos segundos e depois libera a própria PDP. Apenas
+                    # aguardamos essa navegação normal; não resolvemos CAPTCHA nem
+                    # simulamos interação de usuário.
+                    for _ in range(4):
+                        try:
+                            current_url = page.url.lower()
+                            sample = f"{page.title()}\n{page.locator('body').inner_text(timeout=5000)[:3500]}".casefold()
+                        except Exception:
+                            break
+                        verification = (
+                            "az-request-verify" in current_url
+                            or "account-verification" in current_url
+                            or "acessou nosso site de uma forma um pouco diferente do comum" in sample
+                            or "para sua segurança precisamos de uma verificação rápida" in sample
+                            or "para sua seguranca precisamos de uma verificacao rapida" in sample
+                        )
+                        if not verification:
+                            break
+                        page.wait_for_timeout(2500)
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        except Exception:
+                            pass
+
                 # v14.13: algumas PDPs do Mercado Livre deixam a ficha técnica
                 # atrás de conteúdo preguiçoso/expansível. O perfil de interação
                 # só rola a própria PDP e tenta expandir botões de características/
