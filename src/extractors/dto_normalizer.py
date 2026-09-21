@@ -683,6 +683,18 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
         if "saidasVideo" in normalized:
             normalized["saidasVideo"] = _string_list(normalized.get("saidasVideo"))
 
+        base = normalized.get("clockBaseMhz")
+        boost = normalized.get("clockBoostMhz")
+        if (
+            isinstance(base, (int, float))
+            and isinstance(boost, (int, float))
+            and base > boost
+        ):
+            # Não inverter automaticamente: isso poderia transformar clock de
+            # memória ou outro campo mal rotulado em clock do núcleo. Mantemos
+            # o base explicitamente coletado e descartamos o boost conflitante.
+            normalized["clockBoostMhz"] = None
+
     elif category == "ARMAZENAMENTO":
         if "tipo" in normalized:
             normalized["tipo"] = _storage_type(normalized.get("tipo"))
