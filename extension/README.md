@@ -21,6 +21,7 @@ Resultados possíveis:
 - Mesmo anúncio já cadastrado: atualiza preço e link afiliado.
 - Hardware não existe: cadastra Hardware/Produto e cria a oferta inicial.
 - Cadastro técnico inseguro/incompleto: retorna revisão necessária.
+- Se o preço não puder ser coletado, a extensão abre um campo **Preço do anúncio (R$)** para preenchimento manual e permite concluir sem sair da janela.
 
 Novos Hardwares/Produtos ficam como rascunho (`publicado=false`).
 
