@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Criabyte - Enviar oferta",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Envia a página atual e o link afiliado para o agente do Criabyte.",
   "permissions": [
     "activeTab",
@@ -15,8 +15,10 @@
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
-    "default_title": "Enviar oferta para Criabyte",
-    "default_popup": "popup.html"
+    "default_title": "Abrir Criabyte - Enviar oferta"
   }
 }

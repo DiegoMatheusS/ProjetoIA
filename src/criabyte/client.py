@@ -109,6 +109,17 @@ class CriaByteClient:
     def listar_categorias(self):
         return _extract_list(self._request("GET", "/admin/categorias-produto"), "categorias", "items")
 
+    def importar_oferta_extensao(self, dados, api_key=None):
+        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
+        if not key:
+            raise CriaByteApiError("PRODUTO_IA_API_KEY não configurada para a integração interna.")
+        return self._request(
+            "POST",
+            "/interno/produto-ia/extensao/importar-oferta",
+            json=dados,
+            headers={"X-API-Key": key},
+        )
+
     def cadastrar_hardware_descoberto(self, payload, id_temporario=None):
         self.ensure_authenticated()
         body = {"payload": payload}

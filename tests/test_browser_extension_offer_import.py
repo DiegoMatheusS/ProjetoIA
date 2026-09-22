@@ -1,8 +1,4 @@
-from src.extension.router import (
-    _offer_payload,
-    _partner_from_analysis,
-    _same_offer,
-)
+from src.extension.router import _offer_payload, _partner_from_analysis
 
 
 def test_partner_marketplace_shopee():
@@ -20,40 +16,6 @@ def test_partner_marketplace_shopee():
     assert partner["dominio"] == "shopee.com.br"
 
 
-def test_same_hardware_different_partner_is_new_offer():
-    existing = {
-        "id": 7,
-        "hardwareId": 42,
-        "parceiroId": 1,
-        "urlOriginal": "https://mercadolivre.com.br/item/123",
-        "codigoMarketplace": "MLB123",
-    }
-    assert not _same_offer(
-        existing,
-        hardware_id=42,
-        partner_id=2,
-        original_url="https://shopee.com.br/item/999",
-        marketplace_code="999",
-    )
-
-
-def test_same_ad_is_updated_instead_of_duplicated():
-    existing = {
-        "id": 8,
-        "hardware": {"id": 42},
-        "parceiro": {"id": 2},
-        "urlOriginal": "https://shopee.com.br/item/999#share",
-        "codigoMarketplace": "SHOPEE-999",
-    }
-    assert _same_offer(
-        existing,
-        hardware_id=42,
-        partner_id=2,
-        original_url="https://shopee.com.br/item/999",
-        marketplace_code="SHOPEE-999",
-    )
-
-
 def test_offer_payload_preserves_affiliate_link():
     analysis = {
         "ofertaColetada": {
@@ -66,11 +28,24 @@ def test_offer_payload_preserves_affiliate_link():
     }
     payload = _offer_payload(
         analysis,
-        hardware_id=42,
-        partner_id=2,
         affiliate_url="https://s.shopee.com.br/abc",
     )
-    assert payload["hardwareId"] == 42
-    assert payload["parceiroId"] == 2
     assert payload["urlAfiliada"] == "https://s.shopee.com.br/abc"
+    assert payload["urlOriginal"] == "https://shopee.com.br/item/999"
+    assert payload["codigoMarketplace"] == "SHOPEE-999"
     assert payload["preco"] == 4299.90
+
+
+def test_offer_payload_drops_invalid_previous_price():
+    analysis = {
+        "ofertaColetada": {
+            "preco": 100.0,
+            "precoAnterior": 90.0,
+            "urlOriginal": "https://loja.example/produto",
+        }
+    }
+    payload = _offer_payload(
+        analysis,
+        affiliate_url="https://afiliado.example/x",
+    )
+    assert "precoAnterior" not in payload
