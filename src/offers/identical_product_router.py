@@ -112,6 +112,17 @@ def _query(payload: IdenticalProductOffersRequest) -> str:
     return payload.nome.strip()
 
 
+def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
+    gtin = _digits(payload.gtin)
+    if gtin:
+        return f"{gtin} {payload.marca or ''}".strip()
+    if payload.mpn:
+        return f"{payload.marca or ''} {payload.mpn.strip()}".strip()
+    if payload.modelo:
+        return f"{payload.marca or ''} {payload.modelo.strip()}".strip()
+    return payload.nome.strip()
+
+
 def _price(value: Any) -> float | None:
     try:
         number = float(value)
@@ -205,7 +216,7 @@ def _search_shopee(
 
     try:
         response = ShopeeAffiliateAgent(client).find_products(
-            query=_query(payload),
+            query=_marketplace_query(payload),
             limit=max(limit * 5, 20),
         )
     except ShopeeAffiliateError as exc:
