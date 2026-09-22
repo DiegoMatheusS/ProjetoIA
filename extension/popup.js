@@ -9,6 +9,7 @@ const els = {
   pasteAffiliate: document.querySelector("#pasteAffiliate"),
   send: document.querySelector("#send"),
   saveConfig: document.querySelector("#saveConfig"),
+  pinAlwaysOnTop: document.querySelector("#pinAlwaysOnTop"),
   result: document.querySelector("#result"),
 };
 
@@ -79,6 +80,84 @@ async function saveConfig() {
   return true;
 }
 
+async function pinAlwaysOnTop() {
+  if (!("documentPictureInPicture" in window)) {
+    showResult(
+      "Este Chrome não oferece o modo de janela sempre sobreposta.",
+      "warning",
+    );
+    return;
+  }
+
+  try {
+    const app = document.querySelector(".app");
+    const sourceWindow = await chrome.windows.getCurrent();
+
+    const pipWindow = await documentPictureInPicture.requestWindow({
+      width: 500,
+      height: 720,
+      disallowReturnToOpener: true,
+    });
+
+    for (const styleSheet of [...document.styleSheets]) {
+      try {
+        const cssText = [...styleSheet.cssRules]
+          .map((rule) => rule.cssText)
+          .join("\n");
+        const style = pipWindow.document.createElement("style");
+        style.textContent = cssText;
+        pipWindow.document.head.appendChild(style);
+      } catch {
+        if (!styleSheet.href) continue;
+        const link = pipWindow.document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = styleSheet.href;
+        pipWindow.document.head.appendChild(link);
+      }
+    }
+
+    const favicon = pipWindow.document.createElement("link");
+    favicon.rel = "icon";
+    favicon.type = "image/png";
+    favicon.href = chrome.runtime.getURL("icons/icon32.png");
+    pipWindow.document.head.appendChild(favicon);
+    pipWindow.document.title = "Criabyte — Enviar oferta";
+    pipWindow.document.documentElement.style.background = "#ffffff";
+    pipWindow.document.body.style.margin = "0";
+    pipWindow.document.body.style.background = "#ffffff";
+
+    app.classList.add("pip-mode");
+    pipWindow.document.body.appendChild(app);
+
+    if (sourceWindow?.id !== undefined) {
+      try {
+        await chrome.windows.update(sourceWindow.id, { state: "minimized" });
+      } catch {
+        // O PiP já continua sobreposto mesmo se a janela de origem não minimizar.
+      }
+    }
+
+    pipWindow.addEventListener(
+      "pagehide",
+      async () => {
+        if (sourceWindow?.id === undefined) return;
+        try {
+          await chrome.windows.remove(sourceWindow.id);
+        } catch {
+          // A janela de origem pode já ter sido encerrada.
+        }
+      },
+      { once: true },
+    );
+  } catch (error) {
+    showResult(
+      error?.message ||
+        "Não foi possível ativar o modo sempre sobreposto.",
+      "warning",
+    );
+  }
+}
+
 function resultMessage(data) {
   const hardware = data?.hardware?.nome ? ` — ${data.hardware.nome}` : "";
   const partner = data?.parceiro?.nome ? ` (${data.parceiro.nome})` : "";
@@ -117,6 +196,7 @@ els.pasteAffiliate.addEventListener("click", async () => {
 });
 
 els.saveConfig.addEventListener("click", saveConfig);
+els.pinAlwaysOnTop?.addEventListener("click", pinAlwaysOnTop);
 
 els.send.addEventListener("click", async () => {
   const productUrl = String(els.productUrl.value || "").trim();
