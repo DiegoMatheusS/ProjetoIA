@@ -1,53 +1,51 @@
 # Extensão Criabyte — envio de ofertas
 
-Extensão Manifest V3 para Chrome/Edge. Ela não contém a lógica de cadastro do
-Criabyte: apenas envia a página do produto e o link afiliado para a Produto IA.
+Extensão Manifest V3 focada no Google Chrome. A extensão envia a página do
+produto e o link afiliado para a Produto IA; toda a identificação e integração
+com o catálogo do Criabyte continuam no servidor.
 
-## Fluxo
+## Como funciona
 
-1. Abra o anúncio original no navegador.
-2. Gere/copie o link afiliado da loja.
-3. Abra a extensão.
-4. O campo **Página do produto** usa a aba atual.
-5. Cole o **Link afiliado** e clique em **Enviar para Criabyte**.
-6. A Produto IA identifica o Hardware e chama o backend do Criabyte:
-   - Hardware já existe + anúncio novo: cria somente a nova oferta.
-   - Mesmo anúncio já cadastrado: atualiza preço/link afiliado.
-   - Hardware não existe: tenta cadastrar o Hardware, cria o Produto de catálogo
-     se necessário e cria a oferta inicial.
-   - Cadastro técnico inseguro/incompleto: retorna `REVISAO_NECESSARIA`.
+1. Abra o anúncio original no Chrome.
+2. Clique no ícone **Criabyte - Enviar oferta**.
+3. A extensão abre uma janela própria, que continua aberta quando você clica
+   fora e só é encerrada ao fechar a janela.
+4. **Página do produto** recebe automaticamente a aba que estava ativa.
+5. Cole o **Link afiliado**.
+6. Clique em **Enviar para Criabyte**.
 
-Novo Hardware/Produto é criado como **rascunho** (`publicado=false`).
+Resultados possíveis:
+
+- Hardware já existe + anúncio novo: cria somente a nova oferta.
+- Mesmo anúncio já cadastrado: atualiza preço e link afiliado.
+- Hardware não existe: cadastra Hardware/Produto e cria a oferta inicial.
+- Cadastro técnico inseguro/incompleto: retorna revisão necessária.
+
+Novos Hardwares/Produtos ficam como rascunho (`publicado=false`).
 
 ## Configuração
 
-No popup, abra **Configuração** e informe:
+A URL de produção já vem preenchida:
 
-- URL pública/local da Produto IA.
-- `PRODUTO_IA_API_KEY`, quando configurada no servidor.
+`https://projetoia-production.up.railway.app`
 
-A sessão administrativa do Criabyte continua no servidor da Produto IA via
-`CRIABYTE_SESSION_TOKEN` ou `CRIABYTE_ADMIN_EMAIL` +
-`CRIABYTE_ADMIN_PASSWORD`. A extensão nunca recebe essas credenciais.
+Só é necessário informar `PRODUTO_IA_API_KEY` uma vez. A configuração fica
+salva no armazenamento local do Chrome.
 
-## Instalar localmente
+A extensão não recebe login ou senha administrativa do Criabyte. A comunicação
+Produto IA → backend usa uma rota interna autenticada pela mesma
+`PRODUTO_IA_API_KEY` configurada nos dois serviços.
 
-Chrome/Edge:
+## Instalar/atualizar localmente no Chrome
 
-1. Abra a página de extensões.
-2. Ative o modo de desenvolvedor.
-3. Escolha **Carregar sem compactação**.
-4. Selecione esta pasta `extension/`.
+1. Atualize o repositório.
+2. Abra `chrome://extensions`.
+3. Ative **Modo do desenvolvedor**.
+4. Em uma instalação nova, clique em **Carregar sem compactação** e selecione
+   a pasta `extension/`.
+5. Se a extensão já estiver instalada, clique no botão **Atualizar** ou no
+   ícone de recarregar do card da extensão depois de atualizar os arquivos.
 
-O endpoint usado é:
+O endpoint público da extensão é:
 
 `POST /extensao/importar-oferta`
-
-Payload:
-
-```json
-{
-  "urlProduto": "https://loja.com/anuncio",
-  "urlAfiliada": "https://link-afiliado.example/..."
-}
-```
