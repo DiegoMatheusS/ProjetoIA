@@ -1,3 +1,5 @@
+const DEFAULT_API_URL = "https://projetoia-production.up.railway.app";
+
 const els = {
   productUrl: document.querySelector("#productUrl"),
   affiliateUrl: document.querySelector("#affiliateUrl"),
@@ -29,20 +31,36 @@ function showResult(message, type = "success") {
 }
 
 async function loadCurrentTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url && /^https?:/i.test(tab.url)) {
-    els.productUrl.value = tab.url;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "GET_CURRENT_PRODUCT_URL",
+    });
+    if (response?.url && /^https?:/i.test(response.url)) {
+      els.productUrl.value = response.url;
+      return;
+    }
+  } catch {
+    // Usa o último endereço salvo como fallback.
+  }
+
+  const saved = await chrome.storage.local.get(["lastProductUrl"]);
+  if (saved.lastProductUrl && /^https?:/i.test(saved.lastProductUrl)) {
+    els.productUrl.value = saved.lastProductUrl;
   }
 }
 
 async function loadConfig() {
   const saved = await chrome.storage.local.get(["apiUrl", "apiKey"]);
-  els.apiUrl.value = saved.apiUrl || "";
+  els.apiUrl.value = saved.apiUrl || DEFAULT_API_URL;
   els.apiKey.value = saved.apiKey || "";
+
+  if (!saved.apiUrl) {
+    await chrome.storage.local.set({ apiUrl: DEFAULT_API_URL });
+  }
 }
 
 async function saveConfig() {
-  const apiUrl = cleanBaseUrl(els.apiUrl.value);
+  const apiUrl = cleanBaseUrl(els.apiUrl.value || DEFAULT_API_URL);
   const apiKey = String(els.apiKey.value || "").trim();
 
   if (!isHttpUrl(apiUrl)) {
@@ -50,9 +68,14 @@ async function saveConfig() {
     return false;
   }
 
+  if (!apiKey) {
+    showResult("Informe a chave PRODUTO_IA_API_KEY.", "warning");
+    return false;
+  }
+
   await chrome.storage.local.set({ apiUrl, apiKey });
   els.apiUrl.value = apiUrl;
-  showResult("Configuração salva.", "success");
+  showResult("Configuração salva no Chrome.", "success");
   return true;
 }
 
@@ -76,6 +99,9 @@ function resultMessage(data) {
 
 els.currentTab.addEventListener("click", async () => {
   await loadCurrentTab();
+  if (els.productUrl.value) {
+    showResult("Página atualizada com a aba ativa do Chrome.", "success");
+  }
 });
 
 els.pasteAffiliate.addEventListener("click", async () => {
@@ -83,16 +109,21 @@ els.pasteAffiliate.addEventListener("click", async () => {
     const text = await navigator.clipboard.readText();
     els.affiliateUrl.value = text.trim();
   } catch {
-    showResult("Não consegui ler a área de transferência. Cole o link manualmente.", "warning");
+    showResult(
+      "Não consegui ler a área de transferência. Cole o link manualmente.",
+      "warning",
+    );
   }
 });
 
 els.saveConfig.addEventListener("click", saveConfig);
 
 els.send.addEventListener("click", async () => {
+  await loadCurrentTab();
+
   const productUrl = String(els.productUrl.value || "").trim();
   const affiliateUrl = String(els.affiliateUrl.value || "").trim();
-  const apiUrl = cleanBaseUrl(els.apiUrl.value);
+  const apiUrl = cleanBaseUrl(els.apiUrl.value || DEFAULT_API_URL);
   const apiKey = String(els.apiKey.value || "").trim();
 
   if (!isHttpUrl(productUrl)) {
@@ -104,7 +135,11 @@ els.send.addEventListener("click", async () => {
     return;
   }
   if (!isHttpUrl(apiUrl)) {
-    showResult("Configure primeiro a URL da Produto IA.", "warning");
+    showResult("A URL da Produto IA é inválida.", "warning");
+    return;
+  }
+  if (!apiKey) {
+    showResult("Abra Configuração e informe a chave da API.", "warning");
     return;
   }
 
@@ -119,7 +154,7 @@ els.send.addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        "X-API-Key": apiKey,
       },
       body: JSON.stringify({
         urlProduto: productUrl,
@@ -139,14 +174,20 @@ els.send.addEventListener("click", async () => {
       const message =
         typeof detail === "string"
           ? detail
-          : detail?.mensagem || detail?.message || `Erro HTTP ${response.status}`;
+          : detail?.mensagem ||
+            detail?.message ||
+            data?.message ||
+            `Erro HTTP ${response.status}`;
       throw new Error(message);
     }
 
     const warning = data?.status === "REVISAO_NECESSARIA";
     showResult(resultMessage(data), warning ? "warning" : "success");
   } catch (error) {
-    showResult(error?.message || "Falha ao enviar a oferta.", "error");
+    showResult(
+      error?.message || "Falha ao enviar a oferta para o Criabyte.",
+      "error",
+    );
   } finally {
     els.send.disabled = false;
     els.send.textContent = "Enviar para Criabyte";
