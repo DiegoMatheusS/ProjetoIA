@@ -23,6 +23,15 @@ class ImportAffiliateOfferRequest(BaseModel):
     urlProduto: str = Field(min_length=8, max_length=4096)
     urlAfiliada: str = Field(min_length=8, max_length=4096)
     categoria: str | None = Field(default=None, max_length=80)
+    precoManual: float | None = Field(
+        default=None,
+        gt=0,
+        le=100_000_000,
+    )
+
+
+class MissingPriceError(ValueError):
+    pass
 
 
 _MARKETPLACE_PARTNERS: dict[str, tuple[str, str | None]] = {
@@ -102,19 +111,20 @@ def _offer_payload(
     analysis: dict[str, Any],
     *,
     affiliate_url: str,
+    manual_price: float | None = None,
 ) -> dict[str, Any]:
     collected = (
         analysis.get("ofertaColetada")
         if isinstance(analysis.get("ofertaColetada"), dict)
         else {}
     )
-    price = collected.get("preco")
+    price = manual_price if manual_price is not None else collected.get("preco")
     try:
         price_value = round(float(price), 2)
     except (TypeError, ValueError):
         price_value = 0.0
     if price_value <= 0:
-        raise ValueError("Preço do anúncio não foi identificado.")
+        raise MissingPriceError("Preço do anúncio não foi identificado.")
 
     previous = collected.get("precoAnterior")
     try:
@@ -189,7 +199,11 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Link afiliado inválido.")
 
     partner = _partner_from_analysis(analysis, payload.urlProduto)
-    offer = _offer_payload(analysis, affiliate_url=affiliate_url)
+    offer = _offer_payload(
+        analysis,
+        affiliate_url=affiliate_url,
+        manual_price=payload.precoManual,
+    )
 
     internal_payload = {
         "hardwarePayload": hardware_payload,
@@ -221,6 +235,15 @@ async def import_affiliate_offer(
         return await asyncio.to_thread(_import_sync, payload)
     except HTTPException:
         raise
+    except MissingPriceError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "codigo": "PRECO_NAO_IDENTIFICADO",
+                "mensagem": str(exc),
+                "requerPrecoManual": True,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except CriaByteApiError as exc:
