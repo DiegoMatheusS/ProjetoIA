@@ -119,8 +119,6 @@ els.pasteAffiliate.addEventListener("click", async () => {
 els.saveConfig.addEventListener("click", saveConfig);
 
 els.send.addEventListener("click", async () => {
-  await loadCurrentTab();
-
   const productUrl = String(els.productUrl.value || "").trim();
   const affiliateUrl = String(els.affiliateUrl.value || "").trim();
   const apiUrl = cleanBaseUrl(els.apiUrl.value || DEFAULT_API_URL);
