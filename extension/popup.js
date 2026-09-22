@@ -347,7 +347,16 @@ els.send.addEventListener("click", async () => {
     );
   } finally {
     els.send.disabled = false;
-    els.send.textContent = "Enviar para Criabyte";
+    els.send.textContent = els.manualPriceBox.classList.contains("hidden")
+      ? "Enviar para Criabyte"
+      : "Enviar com preço informado";
+  }
+});
+
+els.manualPrice?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    els.send.click();
   }
 });
 
