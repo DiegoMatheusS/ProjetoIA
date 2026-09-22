@@ -1,3 +1,4 @@
+from src.criabyte.client import CriaByteClient
 from src.extension.router import _offer_payload, _partner_from_analysis
 
 
@@ -49,3 +50,17 @@ def test_offer_payload_drops_invalid_previous_price():
         affiliate_url="https://afiliado.example/x",
     )
     assert "precoAnterior" not in payload
+
+
+def test_criabyte_client_adds_api_prefix_by_default():
+    client = CriaByteClient(base_url="https://api.criabyte.com.br")
+    assert client.base_url == "https://api.criabyte.com.br/api/"
+    assert (
+        client._url("/interno/produto-ia/extensao/importar-oferta")
+        == "https://api.criabyte.com.br/api/interno/produto-ia/extensao/importar-oferta"
+    )
+
+
+def test_criabyte_client_does_not_duplicate_api_prefix():
+    client = CriaByteClient(base_url="https://api.criabyte.com.br/api")
+    assert client.base_url == "https://api.criabyte.com.br/api/"
