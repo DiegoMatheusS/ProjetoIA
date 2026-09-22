@@ -55,11 +55,13 @@ function parseBrlPrice(value) {
     text = text.replace(/\./g, "").replace(",", ".");
   } else {
     const dots = (text.match(/\./g) || []).length;
-    if (dots > 1) {
-      const last = text.lastIndexOf(".");
-      text =
-        text.slice(0, last).replace(/\./g, "") +
-        text.slice(last);
+    if (dots === 1) {
+      const decimals = text.length - text.lastIndexOf(".") - 1;
+      if (decimals === 3) {
+        text = text.replace(".", "");
+      }
+    } else if (dots > 1) {
+      text = text.replace(/\./g, "");
     }
   }
 
