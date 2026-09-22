@@ -32,6 +32,16 @@ async function activeTabFromNormalWindow() {
   return tab?.url && /^https?:/i.test(tab.url) ? tab.url : null;
 }
 
+async function findExistingPanel() {
+  const panelUrl = chrome.runtime.getURL("popup.html");
+  const windows = await chrome.windows.getAll({ populate: true });
+  return (
+    windows.find((win) =>
+      win.tabs?.some((item) => item.url === panelUrl),
+    ) || null
+  );
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   if (tab?.windowId !== undefined) {
     lastNormalWindowId = tab.windowId;
@@ -45,6 +55,13 @@ chrome.action.onClicked.addListener(async (tab) => {
     } catch {
       panelWindowId = null;
     }
+  }
+
+  const existing = await findExistingPanel();
+  if (existing?.id !== undefined) {
+    panelWindowId = existing.id;
+    await chrome.windows.update(existing.id, { focused: true });
+    return;
   }
 
   const created = await chrome.windows.create({
