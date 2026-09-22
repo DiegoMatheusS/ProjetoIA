@@ -6,7 +6,7 @@ Criabyte: apenas envia a página do produto e o link afiliado para a Produto IA.
 ## Fluxo
 
 1. Abra o anúncio original no navegador.
-2. Gere/copiei o link afiliado da loja.
+2. Gere/copie o link afiliado da loja.
 3. Abra a extensão.
 4. O campo **Página do produto** usa a aba atual.
 5. Cole o **Link afiliado** e clique em **Enviar para Criabyte**.
