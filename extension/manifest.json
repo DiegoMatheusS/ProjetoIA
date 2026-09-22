@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Criabyte - Enviar oferta",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Envia a página atual e o link afiliado para o agente do Criabyte.",
   "permissions": [
     "activeTab",
@@ -30,5 +30,6 @@
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
     }
-  }
+  },
+  "minimum_chrome_version": "124"
 }
