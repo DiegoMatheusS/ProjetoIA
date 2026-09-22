@@ -20,11 +20,12 @@ def _extract_list(payload, *keys):
 
 
 class CriaByteClient:
-    """Cliente de leitura do backend real do CriaByte.
+    """Cliente HTTP do backend real do CriaByte.
 
-    A v14 usa este cliente para CONSULTAR o banco e montar um plano. Nenhuma
-    alteração é aplicada automaticamente. A autenticação do backend atual é
-    feita por cookie de sessão, então aceitamos um token de sessão já emitido
+    As rotas de leitura continuam servindo ao planejador da v14. As rotas de
+    escrita abaixo são usadas apenas por fluxos administrativos explícitos,
+    como a extensão de importação de ofertas. A autenticação do backend atual
+    é feita por cookie de sessão, então aceitamos um token de sessão já emitido
     ou login administrativo por e-mail/senha via variáveis de ambiente.
     """
 
@@ -107,6 +108,33 @@ class CriaByteClient:
 
     def listar_categorias(self):
         return _extract_list(self._request("GET", "/admin/categorias-produto"), "categorias", "items")
+
+    def cadastrar_hardware_descoberto(self, payload, id_temporario=None):
+        self.ensure_authenticated()
+        body = {"payload": payload}
+        if id_temporario:
+            body["idTemporario"] = id_temporario
+        return self._request("POST", "/admin/hardwares/descobrir/cadastrar", json=body)
+
+    def criar_produto_de_hardware(self, hardware_id, dados=None):
+        self.ensure_authenticated()
+        return self._request(
+            "POST",
+            f"/admin/produtos/de-hardware/{int(hardware_id)}",
+            json=dados or {},
+        )
+
+    def criar_oferta(self, dados):
+        self.ensure_authenticated()
+        return self._request("POST", "/admin/ofertas", json=dados)
+
+    def atualizar_oferta(self, oferta_id, dados):
+        self.ensure_authenticated()
+        return self._request("PATCH", f"/admin/ofertas/{int(oferta_id)}", json=dados)
+
+    def criar_parceiro(self, dados):
+        self.ensure_authenticated()
+        return self._request("POST", "/admin/ofertas/parceiros", json=dados)
 
     def snapshot(self):
         self.ensure_authenticated()
