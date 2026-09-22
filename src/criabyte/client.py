@@ -37,7 +37,14 @@ class CriaByteClient:
         cookie_name=None,
         timeout=None,
     ):
-        self.base_url = (base_url or os.getenv("CRIABYTE_API_URL") or "https://api.criabyte.com.br").rstrip("/") + "/"
+        api_base = (
+            base_url
+            or os.getenv("CRIABYTE_API_URL")
+            or "https://api.criabyte.com.br"
+        ).rstrip("/")
+        if not api_base.endswith("/api"):
+            api_base = f"{api_base}/api"
+        self.base_url = f"{api_base}/"
         self.session = session or requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
