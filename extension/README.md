@@ -10,9 +10,10 @@ com o catálogo do Criabyte continuam no servidor.
 2. Clique no ícone **Criabyte - Enviar oferta**.
 3. A extensão abre uma janela própria, que continua aberta quando você clica
    fora e só é encerrada ao fechar a janela.
-4. **Página do produto** recebe automaticamente a aba que estava ativa.
-5. Cole o **Link afiliado**.
-6. Clique em **Enviar para Criabyte**.
+4. Para mantê-la realmente sobre outras janelas, clique em **Fixar sobre tudo**.
+5. **Página do produto** recebe automaticamente a aba que estava ativa.
+6. Cole o **Link afiliado**.
+7. Clique em **Enviar para Criabyte**.
 
 Resultados possíveis:
 
@@ -49,3 +50,7 @@ Produto IA → backend usa uma rota interna autenticada pela mesma
 O endpoint público da extensão é:
 
 `POST /extensao/importar-oferta`
+
+## Ícone
+
+A extensão usa o ícone oficial do Criabyte com apenas o **C** branco no fundo azul, em PNG 16/32/48/128 px para o Chrome.
