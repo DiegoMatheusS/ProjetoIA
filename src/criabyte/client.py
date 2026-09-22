@@ -115,7 +115,7 @@ class CriaByteClient:
             raise CriaByteApiError("PRODUTO_IA_API_KEY não configurada para a integração interna.")
         return self._request(
             "POST",
-            "/interno/produto-ia/extensao/importar-oferta",
+            "/api/interno/produto-ia/extensao/importar-oferta",
             json=dados,
             headers={"X-API-Key": key},
         )
