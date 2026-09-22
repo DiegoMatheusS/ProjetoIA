@@ -3,42 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Criabyte</title>
+  <title>Criabyte — Enviar oferta</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <main class="app">
-    <header>
-      <div class="brand">CRIABYTE</div>
-      <div class="subtitle">Enviar oferta afiliada</div>
+    <header class="topbar">
+      <div>
+        <div class="brand">CRIABYTE</div>
+        <div class="subtitle">Enviar oferta afiliada</div>
+      </div>
+      <span class="window-note">janela fixa</span>
     </header>
 
-    <label for="productUrl">Página do produto</label>
-    <div class="row">
-      <input id="productUrl" type="url" placeholder="https://loja.com/produto">
-      <button id="currentTab" class="secondary" type="button">Aba atual</button>
-    </div>
+    <section class="card">
+      <label for="productUrl">Página do produto</label>
+      <div class="row">
+        <input id="productUrl" type="url" placeholder="https://loja.com/produto">
+        <button id="currentTab" class="secondary" type="button">Aba atual</button>
+      </div>
 
-    <label for="affiliateUrl">Link afiliado</label>
-    <div class="row">
-      <input id="affiliateUrl" type="url" placeholder="Cole o link afiliado">
-      <button id="pasteAffiliate" class="secondary" type="button">Colar</button>
-    </div>
+      <label for="affiliateUrl">Link afiliado</label>
+      <div class="row">
+        <input id="affiliateUrl" type="url" placeholder="Cole o link afiliado">
+        <button id="pasteAffiliate" class="secondary" type="button">Colar</button>
+      </div>
 
-    <button id="send" class="primary" type="button">Enviar para Criabyte</button>
+      <button id="send" class="primary" type="button">Enviar para Criabyte</button>
 
-    <section id="result" class="result hidden" aria-live="polite"></section>
+      <section id="result" class="result hidden" aria-live="polite"></section>
+    </section>
 
-    <details>
+    <details class="config">
       <summary>Configuração</summary>
+
       <label for="apiUrl">URL da Produto IA</label>
-      <input id="apiUrl" type="url" placeholder="https://sua-api.up.railway.app">
+      <input id="apiUrl" type="url">
 
       <label for="apiKey">Chave da API</label>
-      <input id="apiKey" type="password" placeholder="X-API-Key">
+      <input id="apiKey" type="password" placeholder="Cole sua PRODUTO_IA_API_KEY">
 
       <button id="saveConfig" class="secondary full" type="button">Salvar configuração</button>
-      <small>A chave fica salva apenas no armazenamento local da extensão.</small>
+      <small>Esses dados ficam salvos localmente no Chrome.</small>
     </details>
   </main>
 
