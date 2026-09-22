@@ -10,6 +10,8 @@ const els = {
   send: document.querySelector("#send"),
   saveConfig: document.querySelector("#saveConfig"),
   pinAlwaysOnTop: document.querySelector("#pinAlwaysOnTop"),
+  manualPriceBox: document.querySelector("#manualPriceBox"),
+  manualPrice: document.querySelector("#manualPrice"),
   result: document.querySelector("#result"),
 };
 
@@ -29,6 +31,59 @@ function isHttpUrl(value) {
 function showResult(message, type = "success") {
   els.result.className = `result ${type}`;
   els.result.textContent = message;
+}
+
+function parseBrlPrice(value) {
+  let text = String(value || "")
+    .trim()
+    .replace(/R\$/gi, "")
+    .replace(/\s+/g, "")
+    .replace(/[^0-9.,]/g, "");
+
+  if (!text) return null;
+
+  const lastComma = text.lastIndexOf(",");
+  const lastDot = text.lastIndexOf(".");
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      text = text.replace(/\./g, "").replace(",", ".");
+    } else {
+      text = text.replace(/,/g, "");
+    }
+  } else if (lastComma >= 0) {
+    text = text.replace(/\./g, "").replace(",", ".");
+  } else {
+    const dots = (text.match(/\./g) || []).length;
+    if (dots > 1) {
+      const last = text.lastIndexOf(".");
+      text =
+        text.slice(0, last).replace(/\./g, "") +
+        text.slice(last);
+    }
+  }
+
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100000000) {
+    return null;
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function revealManualPrice(message) {
+  els.manualPriceBox.classList.remove("hidden");
+  els.send.textContent = "Enviar com preço informado";
+  showResult(
+    message || "Informe o preço do anúncio para continuar.",
+    "warning",
+  );
+  setTimeout(() => els.manualPrice.focus(), 0);
+}
+
+function resetManualPrice() {
+  els.manualPriceBox.classList.add("hidden");
+  els.manualPrice.value = "";
+  els.send.textContent = "Enviar para Criabyte";
 }
 
 async function loadCurrentTab() {
@@ -203,6 +258,10 @@ els.send.addEventListener("click", async () => {
   const affiliateUrl = String(els.affiliateUrl.value || "").trim();
   const apiUrl = cleanBaseUrl(els.apiUrl.value || DEFAULT_API_URL);
   const apiKey = String(els.apiKey.value || "").trim();
+  const manualPriceRequired = !els.manualPriceBox.classList.contains("hidden");
+  const manualPrice = manualPriceRequired
+    ? parseBrlPrice(els.manualPrice.value)
+    : null;
 
   if (!isHttpUrl(productUrl)) {
     showResult("A página do produto é inválida.", "warning");
@@ -218,6 +277,11 @@ els.send.addEventListener("click", async () => {
   }
   if (!apiKey) {
     showResult("Abra Configuração e informe a chave da API.", "warning");
+    return;
+  }
+  if (manualPriceRequired && manualPrice === null) {
+    showResult("Informe um preço válido, por exemplo: 1.999,90.", "warning");
+    els.manualPrice.focus();
     return;
   }
 
@@ -237,6 +301,7 @@ els.send.addEventListener("click", async () => {
       body: JSON.stringify({
         urlProduto: productUrl,
         urlAfiliada: affiliateUrl,
+        ...(manualPrice !== null ? { precoManual: manualPrice } : {}),
       }),
     });
 
@@ -249,6 +314,17 @@ els.send.addEventListener("click", async () => {
 
     if (!response.ok) {
       const detail = data?.detail;
+      if (
+        response.status === 422 &&
+        detail?.codigo === "PRECO_NAO_IDENTIFICADO"
+      ) {
+        revealManualPrice(
+          detail?.mensagem ||
+            "Preço não identificado. Informe o valor para continuar.",
+        );
+        return;
+      }
+
       const message =
         typeof detail === "string"
           ? detail
@@ -261,6 +337,9 @@ els.send.addEventListener("click", async () => {
 
     const warning = data?.status === "REVISAO_NECESSARIA";
     showResult(resultMessage(data), warning ? "warning" : "success");
+    if (!warning) {
+      resetManualPrice();
+    }
   } catch (error) {
     showResult(
       error?.message || "Falha ao enviar a oferta para o Criabyte.",
