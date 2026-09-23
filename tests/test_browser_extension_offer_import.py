@@ -1,5 +1,9 @@
 from src.criabyte.client import CriaByteClient
-from src.extension.router import _offer_payload, _partner_from_analysis
+from src.extension.router import (
+    _analysis_product_url,
+    _offer_payload,
+    _partner_from_analysis,
+)
 
 
 def test_partner_marketplace_shopee():
@@ -94,3 +98,29 @@ def test_offer_payload_manual_price_overrides_collected_price():
         manual_price=1899.90,
     )
     assert payload["preco"] == 1899.90
+
+
+def test_ml_catalog_url_promotes_fragment_wid_to_item_id_for_analysis():
+    url = (
+        "https://www.mercadolivre.com.br/"
+        "fonte-atx-700w-real-pfc-ativo-80-plus-bronze-dm-700-dex-cor-preto/"
+        "p/MLB37817321"
+        "#polycard_client=search-desktop&wid=MLB5953835688&sid=search"
+    )
+    normalized = _analysis_product_url(url)
+    assert "item_id=MLB5953835688" in normalized
+    assert "/p/MLB37817321" in normalized
+
+
+def test_ml_query_wid_is_also_promoted_to_item_id():
+    url = (
+        "https://www.mercadolivre.com.br/fonte/p/MLB37817321"
+        "?wid=MLB5953835688"
+    )
+    normalized = _analysis_product_url(url)
+    assert "item_id=MLB5953835688" in normalized
+
+
+def test_non_ml_url_is_not_rewritten():
+    url = "https://www.example.com/produto#wid=MLB5953835688"
+    assert _analysis_product_url(url) == url
