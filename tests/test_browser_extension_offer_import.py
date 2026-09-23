@@ -112,6 +112,21 @@ def test_ml_catalog_url_promotes_fragment_wid_to_item_id_for_analysis():
     assert "/p/MLB37817321" in normalized
 
 
+def test_ml_user_product_url_promotes_fragment_wid_to_exact_item():
+    url = (
+        "https://www.mercadolivre.com.br/"
+        "fonte-atx-pc-cooler-automatica-silenciosa-bivolt-500600700/"
+        "up/MLBU5131595889"
+        "#polycard_client=search-desktop&be_origin=backend&overlay_label=not_apply"
+        "&search_layout=grid&position=5&type=product"
+        "&tracking_id=62e8d335-ed1f-4fe7-bacc-bb58cfd6195b"
+        "&wid=MLB5215649399&sid=search"
+    )
+    normalized = _analysis_product_url(url)
+    assert "item_id=MLB5215649399" in normalized
+    assert "/up/MLBU5131595889" in normalized
+
+
 def test_ml_query_wid_is_also_promoted_to_item_id():
     url = (
         "https://www.mercadolivre.com.br/fonte/p/MLB37817321"
