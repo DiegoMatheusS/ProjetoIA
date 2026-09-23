@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Criabyte - Enviar oferta",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Envia a página atual e o link afiliado para o agente do Criabyte.",
   "permissions": [
     "activeTab",
     "tabs",
     "storage",
-    "clipboardRead"
+    "clipboardRead",
+    "scripting"
   ],
   "host_permissions": [
     "https://*.criabyte.com.br/*",
