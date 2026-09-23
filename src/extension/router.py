@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field
 
 from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
-from ..extractors.dto_normalizer import (
-    normalize_hardware_payload_for_backend,
-    registration_payload_issues,
+from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
+from .payload_guard import (
+    extension_registration_issues,
+    sanitize_extension_hardware_payload,
 )
 
 
@@ -75,14 +76,7 @@ def _item_id_from_params(params: dict[str, list[str]]) -> str | None:
 
 
 def _analysis_product_url(value: str) -> str:
-    """Expõe ao scraper o anúncio exato escondido no fragmento do Mercado Livre.
-
-    Links vindos da busca podem usar uma PDP de catálogo (/p/MLB...) e guardar o
-    anúncio comercial em ``#...&wid=MLB...``. Fragmentos não são enviados ao
-    servidor e o scraper acabava conhecendo apenas o catálogo, perdendo o preço
-    do vendedor escolhido. Copiamos o ID para ``item_id`` na query somente para
-    a análise; a URL original recebida da extensão não é alterada no Chrome.
-    """
+    """Expõe ao scraper o anúncio exato escondido no fragmento do Mercado Livre."""
     text = str(value or "").strip()
     parsed = urlparse(text)
     host = (parsed.hostname or "").lower()
@@ -222,6 +216,24 @@ def _offer_payload(
     return payload
 
 
+def _review_response(
+    category: str,
+    hardware_payload: dict[str, Any],
+    issues: list[str],
+) -> dict[str, Any]:
+    return {
+        "status": "REVISAO_NECESSARIA",
+        "motivo": "A ficha técnica ainda possui campos obrigatórios não confirmados.",
+        "pendencias": list(issues),
+        "categoria": category,
+        "hardware": {
+            "nome": hardware_payload.get("nome"),
+            "marca": hardware_payload.get("marca"),
+            "modelo": hardware_payload.get("modelo"),
+        },
+    }
+
+
 def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
     analysis_url = _analysis_product_url(payload.urlProduto)
     analysis = _analyze_sync(
@@ -248,19 +260,13 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
         category,
         raw_hardware,
     )
-    issues = registration_payload_issues(category, hardware_payload)
+    hardware_payload = sanitize_extension_hardware_payload(
+        category,
+        hardware_payload,
+    )
+    issues = extension_registration_issues(category, hardware_payload)
     if issues:
-        return {
-            "status": "REVISAO_NECESSARIA",
-            "motivo": "A ficha técnica ainda possui campos obrigatórios não confirmados.",
-            "pendencias": list(issues),
-            "categoria": category,
-            "hardware": {
-                "nome": hardware_payload.get("nome"),
-                "marca": hardware_payload.get("marca"),
-                "modelo": hardware_payload.get("modelo"),
-            },
-        }
+        return _review_response(category, hardware_payload, issues)
 
     affiliate_url = _canonical_url(payload.urlAfiliada)
     if not affiliate_url:

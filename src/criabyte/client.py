@@ -19,6 +19,38 @@ def _extract_list(payload, *keys):
     return []
 
 
+def _error_detail(payload):
+    """Extrai a mensagem legível tanto do Nest puro quanto do filtro do CriaByte."""
+    if payload is None:
+        return None
+    if isinstance(payload, list):
+        parts = [str(item).strip() for item in payload if str(item).strip()]
+        return "; ".join(parts) or None
+    if not isinstance(payload, dict):
+        text = str(payload).strip()
+        return text or None
+
+    for key in ("mensagem", "message", "detail", "error"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            if parts:
+                return "; ".join(parts)
+        elif isinstance(value, dict):
+            nested = _error_detail(value)
+            if nested:
+                return nested
+        elif value not in (None, ""):
+            return str(value).strip()
+
+    detalhes = payload.get("detalhes")
+    if isinstance(detalhes, dict) and detalhes:
+        return "; ".join(
+            f"{key}: {value}" for key, value in detalhes.items()
+        )[:1000]
+    return None
+
+
 class CriaByteClient:
     """Cliente HTTP do backend real do CriaByte.
 
@@ -68,11 +100,12 @@ class CriaByteClient:
         if response.status_code >= 400:
             detail = None
             try:
-                data = response.json()
-                detail = data.get("message") if isinstance(data, dict) else data
+                detail = _error_detail(response.json())
             except ValueError:
-                detail = response.text[:500]
-            raise CriaByteApiError(f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}")
+                detail = response.text[:500].strip() or None
+            raise CriaByteApiError(
+                f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}"
+            )
 
         if not response.content:
             return None
