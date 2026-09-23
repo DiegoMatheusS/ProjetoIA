@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -50,6 +51,72 @@ def _validate_api_key(x_api_key: str | None) -> None:
     expected = os.getenv("PRODUTO_IA_API_KEY", "").strip()
     if expected and x_api_key != expected:
         raise HTTPException(status_code=401, detail="API key inválida")
+
+
+def _ml_item_id(value: Any) -> str | None:
+    match = re.search(r"\bMLB-?(\d{6,})\b", str(value or ""), re.I)
+    if not match:
+        return None
+    return f"MLB{match.group(1)}"
+
+
+def _item_id_from_params(params: dict[str, list[str]]) -> str | None:
+    for key in ("item_id", "wid"):
+        for value in params.get(key, []):
+            item_id = _ml_item_id(value)
+            if item_id:
+                return item_id
+
+    for value in params.get("pdp_filters", []):
+        match = re.search(r"item_id\s*:\s*(MLB-?\d+)", str(value), re.I)
+        if match:
+            return _ml_item_id(match.group(1))
+    return None
+
+
+def _analysis_product_url(value: str) -> str:
+    """Expõe ao scraper o anúncio exato escondido no fragmento do Mercado Livre.
+
+    Links vindos da busca podem usar uma PDP de catálogo (/p/MLB...) e guardar o
+    anúncio comercial em ``#...&wid=MLB...``. Fragmentos não são enviados ao
+    servidor e o scraper acabava conhecendo apenas o catálogo, perdendo o preço
+    do vendedor escolhido. Copiamos o ID para ``item_id`` na query somente para
+    a análise; a URL original recebida da extensão não é alterada no Chrome.
+    """
+    text = str(value or "").strip()
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if not (
+        host == "mercadolivre.com.br"
+        or host.endswith(".mercadolivre.com.br")
+        or host == "mercadolivre.com"
+        or host.endswith(".mercadolivre.com")
+        or host == "mercadolibre.com"
+        or host.endswith(".mercadolibre.com")
+    ):
+        return text
+
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query_item_id = _item_id_from_params(query)
+    if query_item_id:
+        return text
+
+    fragment = parse_qs(parsed.fragment, keep_blank_values=True)
+    fragment_item_id = _item_id_from_params(fragment)
+    if not fragment_item_id:
+        return text
+
+    query["item_id"] = [fragment_item_id]
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            urlencode(query, doseq=True),
+            parsed.fragment,
+        )
+    )
 
 
 def _canonical_url(value: str | None) -> str | None:
@@ -156,9 +223,10 @@ def _offer_payload(
 
 
 def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
+    analysis_url = _analysis_product_url(payload.urlProduto)
     analysis = _analyze_sync(
         AnalyzeRequest(
-            url=payload.urlProduto,
+            url=analysis_url,
             urlAfiliada=payload.urlAfiliada,
             categoria=payload.categoria,
             enrich=True,
