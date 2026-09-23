@@ -35,6 +35,22 @@
         <button id="pasteAffiliate" class="secondary" type="button">Colar</button>
       </div>
 
+      <section id="manualPriceBox" class="manual-price-box hidden" aria-live="polite">
+        <div class="manual-price-title">Preço do anúncio não identificado</div>
+        <div class="manual-price-help">Informe o preço abaixo para concluir sem sair da extensão.</div>
+        <label for="manualPrice">Preço do anúncio (R$)</label>
+        <div class="price-input-wrap">
+          <span class="currency-prefix">R$</span>
+          <input
+            id="manualPrice"
+            type="text"
+            inputmode="decimal"
+            autocomplete="off"
+            placeholder="Ex.: 1.999,90"
+          >
+        </div>
+      </section>
+
       <button id="send" class="primary" type="button">Enviar para Criabyte</button>
 
       <section id="result" class="result hidden" aria-live="polite"></section>

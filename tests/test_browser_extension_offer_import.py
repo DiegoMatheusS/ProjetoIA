@@ -64,3 +64,33 @@ def test_criabyte_client_adds_api_prefix_by_default():
 def test_criabyte_client_does_not_duplicate_api_prefix():
     client = CriaByteClient(base_url="https://api.criabyte.com.br/api")
     assert client.base_url == "https://api.criabyte.com.br/api/"
+
+
+def test_offer_payload_uses_manual_price_when_scraper_has_no_price():
+    analysis = {
+        "ofertaColetada": {
+            "preco": None,
+            "urlOriginal": "https://loja.example/produto",
+        }
+    }
+    payload = _offer_payload(
+        analysis,
+        affiliate_url="https://afiliado.example/x",
+        manual_price=1999.90,
+    )
+    assert payload["preco"] == 1999.90
+
+
+def test_offer_payload_manual_price_overrides_collected_price():
+    analysis = {
+        "ofertaColetada": {
+            "preco": 2099.90,
+            "urlOriginal": "https://loja.example/produto",
+        }
+    }
+    payload = _offer_payload(
+        analysis,
+        affiliate_url="https://afiliado.example/x",
+        manual_price=1899.90,
+    )
+    assert payload["preco"] == 1899.90
