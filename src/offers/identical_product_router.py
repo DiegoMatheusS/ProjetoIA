@@ -101,18 +101,28 @@ def _identity_match_marketplace_name(
     return False, None
 
 
+def _short_name_query(name: Any, max_words: int = 6) -> str:
+    """Usa só o começo identificador do título para descobrir candidatos.
+
+    Títulos de marketplace costumam anexar cor, voltagem, quantidade, slogans e
+    especificações demais. Isso torna a pesquisa externa excessivamente rígida.
+    A confirmação de identidade continua sendo feita depois por GTIN/MPN/modelo.
+    """
+    text = re.sub(r"\s+", " ", str(name or "")).strip()
+    if not text:
+        return ""
+    text = re.sub(r"[|;:,()\[\]{}]+", " ", text)
+    words = [word for word in re.split(r"\s+", text) if word]
+    return " ".join(words[:max_words]).strip()
+
+
 def _query(payload: IdenticalProductOffersRequest) -> str:
-    gtin = _digits(payload.gtin)
-    if gtin:
-        return f'"{gtin}" {payload.marca or ""}'.strip()
-    if payload.mpn:
-        return f'"{payload.mpn.strip()}" {payload.marca or ""}'.strip()
-    if payload.modelo:
-        return f'{payload.marca or ""} "{payload.modelo.strip()}"'.strip()
-    return payload.nome.strip()
+    # A busca é deliberadamente curta para aumentar recall. Identificadores
+    # fortes continuam sendo usados na etapa posterior de confirmação.
+    short_name = _short_name_query(payload.nome)
+    if short_name:
+        return short_name
 
-
-def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
     gtin = _digits(payload.gtin)
     if gtin:
         return f"{gtin} {payload.marca or ''}".strip()
@@ -121,6 +131,10 @@ def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
     if payload.modelo:
         return f"{payload.marca or ''} {payload.modelo.strip()}".strip()
     return payload.nome.strip()
+
+
+def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
+    return _query(payload)
 
 
 def _price(value: Any) -> float | None:
@@ -199,6 +213,7 @@ def _search_web_store(
             offers.append(normalized)
 
     return offers, {
+        "consulta": _query(payload),
         "candidatos": len(candidates),
         "verificados": checked,
         "encontrados": len(offers),
@@ -214,9 +229,10 @@ def _search_shopee(
     if not client.configured:
         return [], {"configurada": False, "encontrados": 0}
 
+    search_query = _marketplace_query(payload)
     try:
         response = ShopeeAffiliateAgent(client).find_products(
-            query=_marketplace_query(payload),
+            query=search_query,
             limit=max(limit * 5, 20),
         )
     except ShopeeAffiliateError as exc:
@@ -252,6 +268,7 @@ def _search_shopee(
 
     return offers, {
         "configurada": True,
+        "consulta": search_query,
         "candidatos": len(response.get("itens") or []),
         "encontrados": len(offers),
     }
@@ -319,5 +336,6 @@ def find_identical_product_offers(
             "naoAlteraProduto": True,
             "naoAlteraFichaTecnica": True,
             "confirmacaoPorIdentidadeForte": True,
+            "buscaPorNomeCurto": True,
         },
     }
