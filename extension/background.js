@@ -16,8 +16,8 @@ async function activeTabFromNormalWindow() {
         active: true,
         windowId: lastNormalWindowId,
       });
-      const url = tabs[0]?.url;
-      if (url && /^https?:/i.test(url)) return url;
+      const tab = tabs[0];
+      if (tab?.url && /^https?:/i.test(tab.url)) return tab;
     } catch {
       lastNormalWindowId = null;
     }
@@ -29,7 +29,7 @@ async function activeTabFromNormalWindow() {
   });
   const normalWindow = windows.find((item) => item.focused) || windows[0];
   const tab = normalWindow?.tabs?.find((item) => item.active);
-  return tab?.url && /^https?:/i.test(tab.url) ? tab.url : null;
+  return tab?.url && /^https?:/i.test(tab.url) ? tab : null;
 }
 
 async function findExistingPanel() {
@@ -68,19 +68,15 @@ chrome.action.onClicked.addListener(async (tab) => {
     url: chrome.runtime.getURL("popup.html"),
     type: "popup",
     width: 520,
-    height: 720,
+    height: 760,
     focused: true,
   });
   panelWindowId = created.id ?? null;
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === panelWindowId) {
-    panelWindowId = null;
-  }
-  if (windowId === lastNormalWindowId) {
-    lastNormalWindowId = null;
-  }
+  if (windowId === panelWindowId) panelWindowId = null;
+  if (windowId === lastNormalWindowId) lastNormalWindowId = null;
 });
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -91,8 +87,8 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
     const win = await chrome.windows.get(windowId);
     if (win.type === "normal") {
       lastNormalWindowId = windowId;
-      const url = await activeTabFromNormalWindow();
-      await saveProductUrl(url);
+      const tab = await activeTabFromNormalWindow();
+      await saveProductUrl(tab?.url);
     }
   } catch {
     // A janela pode ter sido fechada entre os eventos.
@@ -104,14 +100,14 @@ chrome.tabs.onActivated.addListener(async ({ windowId }) => {
     const win = await chrome.windows.get(windowId);
     if (win.type !== "normal") return;
     lastNormalWindowId = windowId;
-    const url = await activeTabFromNormalWindow();
-    await saveProductUrl(url);
+    const tab = await activeTabFromNormalWindow();
+    await saveProductUrl(tab?.url);
   } catch {
     // Ignora tabs/janelas encerradas durante a troca.
   }
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
   if (!changeInfo.url && changeInfo.status !== "complete") return;
   if (tab.windowId !== lastNormalWindowId || !tab.active) return;
   await saveProductUrl(tab.url);
@@ -121,11 +117,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "GET_CURRENT_PRODUCT_URL") return false;
 
   activeTabFromNormalWindow()
-    .then(async (url) => {
-      if (url) await saveProductUrl(url);
-      sendResponse({ url });
+    .then(async (tab) => {
+      if (tab?.url) await saveProductUrl(tab.url);
+      sendResponse({ url: tab?.url || null, tabId: tab?.id ?? null });
     })
-    .catch(() => sendResponse({ url: null }));
+    .catch(() => sendResponse({ url: null, tabId: null }));
 
   return true;
 });
