@@ -3,6 +3,7 @@ from src.offers.identical_product_router import (
     _marketplace_query,
     _query,
     _short_name_query,
+    _web_identity_queries,
 )
 
 
@@ -41,3 +42,33 @@ def test_search_query_prefers_short_product_name_even_with_identity_fields():
     )
     assert _query(payload) == "Mouse Gamer Fortrek Black Hawk RGB"
     assert _marketplace_query(payload) == "Mouse Gamer Fortrek Black Hawk RGB"
+
+
+def test_web_search_tries_strong_identity_before_short_name():
+    payload = _payload(
+        "Smartphone Samsung Galaxy S24 256GB 5G Preto",
+        marca="Samsung",
+        modelo="Galaxy S24",
+        mpn="SM-S921BZKKZTO",
+        gtin="7892509139899",
+    )
+
+    assert _web_identity_queries(payload) == [
+        "7892509139899 Samsung",
+        "Samsung SM-S921BZKKZTO",
+        "Samsung Galaxy S24",
+        "Smartphone Samsung Galaxy S24 256GB 5G",
+    ]
+
+
+def test_web_search_deduplicates_equivalent_queries():
+    payload = _payload(
+        "Kingston NV3",
+        marca="Kingston",
+        modelo="NV3",
+        mpn="NV3",
+    )
+
+    assert _web_identity_queries(payload) == [
+        "Kingston NV3",
+    ]
