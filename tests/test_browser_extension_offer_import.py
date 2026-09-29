@@ -3,6 +3,7 @@ from src.extension.router import (
     _analysis_product_url,
     _offer_payload,
     _partner_from_analysis,
+    _product_payload_for_backend,
 )
 
 
@@ -98,6 +99,55 @@ def test_offer_payload_manual_price_overrides_collected_price():
         manual_price=1899.90,
     )
     assert payload["preco"] == 1899.90
+
+
+def test_monitor_is_built_as_generic_product_payload():
+    analysis = {
+        "categoriaSlugSugerida": "monitores",
+    }
+    raw = {
+        "nome": "Monitor LG UltraGear 24",
+        "marca": "LG",
+        "modelo": "24GN60R-B",
+        "imagemUrl": "https://cdn.example/monitor.jpg",
+        "especificacaoMonitor": {
+            "tamanhoPolegadas": 24,
+            "resolucao": "1920x1080",
+            "taxaAtualizacaoHz": 144,
+            "campoInexistente": "nao-enviar",
+        },
+    }
+
+    payload = _product_payload_for_backend("MONITOR", analysis, raw)
+
+    assert payload["categoriaSlug"] == "monitores"
+    assert payload["nome"] == "Monitor LG UltraGear 24"
+    assert payload["marca"] == "LG"
+    assert payload["modelo"] == "24GN60R-B"
+    assert payload["especificacaoMonitor"]["taxaAtualizacaoHz"] == 144
+    assert "campoInexistente" not in payload["especificacaoMonitor"]
+    assert "categoria" not in payload
+
+
+def test_generic_product_without_structured_table_keeps_common_fields_only():
+    analysis = {
+        "categoriaSlugSugerida": "celulares",
+    }
+    raw = {
+        "nome": "Smartphone Teste",
+        "marca": "Marca",
+        "modelo": "X1",
+        "processadorNome": "Chip X",
+    }
+
+    payload = _product_payload_for_backend("CELULAR", analysis, raw)
+
+    assert payload == {
+        "categoriaSlug": "celulares",
+        "nome": "Smartphone Teste",
+        "marca": "Marca",
+        "modelo": "X1",
+    }
 
 
 def test_ml_catalog_url_promotes_fragment_wid_to_item_id_for_analysis():
