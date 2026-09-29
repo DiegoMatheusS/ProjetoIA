@@ -20,6 +20,7 @@ def _extract_list(payload, *keys):
 
 
 def _error_detail(payload):
+    """Extrai a mensagem legível tanto do Nest puro quanto do filtro do CriaByte."""
     if payload is None:
         return None
     if isinstance(payload, list):
@@ -28,6 +29,7 @@ def _error_detail(payload):
     if not isinstance(payload, dict):
         text = str(payload).strip()
         return text or None
+
     for key in ("mensagem", "message", "detail", "error"):
         value = payload.get(key)
         if isinstance(value, list):
@@ -40,15 +42,38 @@ def _error_detail(payload):
                 return nested
         elif value not in (None, ""):
             return str(value).strip()
+
     detalhes = payload.get("detalhes")
     if isinstance(detalhes, dict) and detalhes:
-        return "; ".join(f"{key}: {value}" for key, value in detalhes.items())[:1000]
+        return "; ".join(
+            f"{key}: {value}" for key, value in detalhes.items()
+        )[:1000]
     return None
 
 
 class CriaByteClient:
-    def __init__(self, base_url=None, session=None, session_token=None, cookie_name=None, timeout=None):
-        api_base = (base_url or os.getenv("CRIABYTE_API_URL") or "https://api.criabyte.com.br").rstrip("/")
+    """Cliente HTTP do backend real do CriaByte.
+
+    As rotas de leitura continuam servindo ao planejador da v14. As rotas de
+    escrita abaixo são usadas apenas por fluxos administrativos explícitos,
+    como a extensão de importação de ofertas. A autenticação do backend atual
+    é feita por cookie de sessão, então aceitamos um token de sessão já emitido
+    ou login administrativo por e-mail/senha via variáveis de ambiente.
+    """
+
+    def __init__(
+        self,
+        base_url=None,
+        session=None,
+        session_token=None,
+        cookie_name=None,
+        timeout=None,
+    ):
+        api_base = (
+            base_url
+            or os.getenv("CRIABYTE_API_URL")
+            or "https://api.criabyte.com.br"
+        ).rstrip("/")
         if not api_base.endswith("/api"):
             api_base = f"{api_base}/api"
         self.base_url = f"{api_base}/"
@@ -71,13 +96,17 @@ class CriaByteClient:
             response = self.session.request(method, self._url(path), timeout=self.timeout, **kwargs)
         except requests.RequestException as exc:
             raise CriaByteApiError(f"Falha ao acessar o CriaByte: {exc}") from exc
+
         if response.status_code >= 400:
             detail = None
             try:
                 detail = _error_detail(response.json())
             except ValueError:
                 detail = response.text[:500].strip() or None
-            raise CriaByteApiError(f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}")
+            raise CriaByteApiError(
+                f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}"
+            )
+
         if not response.content:
             return None
         try:
@@ -88,14 +117,18 @@ class CriaByteClient:
     def _internal_key(self, api_key=None):
         key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
         if not key:
-            raise CriaByteApiError("PRODUTO_IA_API_KEY não configurada para a integração interna.")
+            raise CriaByteApiError(
+                "PRODUTO_IA_API_KEY não configurada para a integração interna."
+            )
         return key
 
     def login(self, email=None, senha=None):
         email = email or os.getenv("CRIABYTE_ADMIN_EMAIL")
         senha = senha or os.getenv("CRIABYTE_ADMIN_PASSWORD")
         if not email or not senha:
-            raise CriaByteApiError("Sessão não configurada. Informe CRIABYTE_SESSION_TOKEN ou CRIABYTE_ADMIN_EMAIL/CRIABYTE_ADMIN_PASSWORD.")
+            raise CriaByteApiError(
+                "Sessão não configurada. Informe CRIABYTE_SESSION_TOKEN ou CRIABYTE_ADMIN_EMAIL/CRIABYTE_ADMIN_PASSWORD."
+            )
         return self._request("POST", "/auth/login", json={"email": email, "senha": senha})
 
     def ensure_authenticated(self):
@@ -151,7 +184,11 @@ class CriaByteClient:
 
     def criar_produto_de_hardware(self, hardware_id, dados=None):
         self.ensure_authenticated()
-        return self._request("POST", f"/admin/produtos/de-hardware/{int(hardware_id)}", json=dados or {})
+        return self._request(
+            "POST",
+            f"/admin/produtos/de-hardware/{int(hardware_id)}",
+            json=dados or {},
+        )
 
     def criar_oferta(self, dados):
         self.ensure_authenticated()
