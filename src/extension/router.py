@@ -31,6 +31,7 @@ class ImportAffiliateOfferRequest(BaseModel):
         gt=0,
         le=100_000_000,
     )
+    dadosManuais: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
 
 class MissingPriceError(ValueError):
@@ -59,6 +60,76 @@ _PRODUCT_FIELDS = (
     "imagemHoverUrl",
     "metadados",
 )
+
+_REQUIRED_PRODUCT_ROOT = ("nome", "marca", "modelo")
+
+_PRODUCT_CORE_SPECS: dict[str, tuple[str, ...]] = {
+    "MONITOR": (
+        "tamanhoPolegadas",
+        "resolucao",
+        "taxaAtualizacaoHz",
+        "tipoPainel",
+    ),
+    "MOUSE": ("sensor", "dpiMaximo", "conexao"),
+    "TECLADO": ("tipo", "layout", "conexao"),
+    "HEADSET": ("tipoConexao", "microfone"),
+}
+
+_FIELD_LABELS = {
+    "nome": "Nome do produto",
+    "marca": "Marca",
+    "modelo": "Modelo",
+    "especificacaoFonte.formato": "Formato da fonte",
+    "especificacaoFonte.potenciaWatts": "Potência da fonte (W)",
+    "especificacaoMonitor.tamanhoPolegadas": "Tamanho da tela (pol.)",
+    "especificacaoMonitor.resolucao": "Resolução",
+    "especificacaoMonitor.taxaAtualizacaoHz": "Taxa de atualização (Hz)",
+    "especificacaoMonitor.tipoPainel": "Tipo de painel",
+    "especificacaoMouse.sensor": "Sensor",
+    "especificacaoMouse.dpiMaximo": "DPI máximo",
+    "especificacaoMouse.conexao": "Conexão",
+    "especificacaoTeclado.tipo": "Tipo de teclado",
+    "especificacaoTeclado.layout": "Layout",
+    "especificacaoTeclado.conexao": "Conexão",
+    "especificacaoHeadset.tipoConexao": "Tipo de conexão",
+    "especificacaoHeadset.microfone": "Possui microfone",
+}
+
+_BOOLEAN_FIELD_NAMES = {
+    "hdr",
+    "adaptiveSync",
+    "gSync",
+    "freeSync",
+    "bluetooth",
+    "wireless",
+    "cabo",
+    "rgb",
+    "abnt2",
+    "usb",
+    "hotSwap",
+    "microfone",
+    "cincoG",
+    "nfc",
+    "dualSim",
+    "esim",
+}
+
+_INTEGER_HINTS = (
+    "Watts",
+    "Mhz",
+    "Hz",
+    "Gb",
+    "Mb",
+    "Mm",
+    "Nits",
+    "Gramas",
+    "Dpi",
+    "Portas",
+    "Slots",
+    "Quantidade",
+)
+
+_FLOAT_HINTS = ("Polegadas", "Ms", "Volts", "Amperes", "Percentual", "Kg", "Cm")
 
 
 def _validate_api_key(x_api_key: str | None) -> None:
@@ -233,6 +304,142 @@ def _present(value: Any) -> bool:
     return value is not None and value != "" and value != []
 
 
+def _set_nested_value(payload: dict[str, Any], path: str, value: Any) -> None:
+    parts = [part for part in path.split(".") if part]
+    if not parts or len(parts) > 2:
+        return
+    if len(parts) == 1:
+        payload[parts[0]] = value
+        return
+    parent, child = parts
+    current = payload.get(parent)
+    if not isinstance(current, dict):
+        current = {}
+        payload[parent] = current
+    current[child] = value
+
+
+def _apply_manual_fields(
+    category: str,
+    raw_payload: dict[str, Any],
+    manual_fields: dict[str, str | int | float | bool],
+) -> dict[str, Any]:
+    output = dict(raw_payload)
+    allowed = {"nome", "marca", "modelo"}
+    schema = SCHEMAS.get(category)
+    if schema:
+        spec_field = schema[1]
+        for field in schema[2] or []:
+            if spec_field:
+                allowed.add(f"{spec_field}.{field}")
+
+    for path, value in list(manual_fields.items())[:48]:
+        clean_path = str(path or "").strip()
+        if clean_path not in allowed or not _present(value):
+            continue
+        if isinstance(value, str):
+            value = value.strip()[:500]
+        _set_nested_value(output, clean_path, value)
+    return output
+
+
+def _field_type(path: str) -> str:
+    name = path.rsplit(".", 1)[-1]
+    if name in _BOOLEAN_FIELD_NAMES:
+        return "boolean"
+    if any(hint.lower() in name.lower() for hint in _INTEGER_HINTS):
+        return "integer"
+    if any(hint.lower() in name.lower() for hint in _FLOAT_HINTS):
+        return "number"
+    return "text"
+
+
+def _field_descriptor(path: str) -> dict[str, Any]:
+    descriptor: dict[str, Any] = {
+        "campo": path,
+        "label": _FIELD_LABELS.get(path, path.replace(".", " › ")),
+        "tipo": _field_type(path),
+    }
+    if path == "especificacaoFonte.formato":
+        descriptor["opcoes"] = ["ATX", "SFX", "SFX_L", "TFX", "FLEX_ATX"]
+    return descriptor
+
+
+def _issue_path(issue: str) -> str | None:
+    match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)", issue)
+    return match.group(1) if match else None
+
+
+def _missing_product_paths(
+    category: str,
+    raw_payload: dict[str, Any],
+) -> list[str]:
+    missing: list[str] = []
+    for field in _REQUIRED_PRODUCT_ROOT:
+        if not _present(raw_payload.get(field)):
+            missing.append(field)
+
+    schema = SCHEMAS.get(category)
+    core_fields = _PRODUCT_CORE_SPECS.get(category, ())
+    if schema and schema[1] and core_fields:
+        spec_field = schema[1]
+        specs = raw_payload.get(spec_field)
+        specs = specs if isinstance(specs, dict) else {}
+        for field in core_fields:
+            if not _present(specs.get(field)):
+                missing.append(f"{spec_field}.{field}")
+    return missing
+
+
+def _spec_preview(category: str, raw_payload: dict[str, Any]) -> dict[str, Any]:
+    schema = SCHEMAS.get(category)
+    if not schema or not schema[1]:
+        return {}
+    specs = raw_payload.get(schema[1])
+    if not isinstance(specs, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    for key in schema[2] or []:
+        value = specs.get(key)
+        if _present(value):
+            safe[key] = value
+        if len(safe) >= 12:
+            break
+    return safe
+
+
+def _preview_payload(
+    category: str,
+    registration_type: str,
+    raw_payload: dict[str, Any],
+    analysis: dict[str, Any],
+    partner: dict[str, Any] | None = None,
+    offer: dict[str, Any] | None = None,
+    published: bool | None = None,
+) -> dict[str, Any]:
+    collected = (
+        analysis.get("ofertaColetada")
+        if isinstance(analysis.get("ofertaColetada"), dict)
+        else {}
+    )
+    return {
+        "categoria": category,
+        "tipoCadastro": registration_type,
+        "nome": raw_payload.get("nome"),
+        "marca": raw_payload.get("marca"),
+        "modelo": raw_payload.get("modelo"),
+        "imagemUrl": raw_payload.get("imagemUrl"),
+        "preco": (offer or {}).get("preco", collected.get("preco")),
+        "precoAnterior": (offer or {}).get(
+            "precoAnterior",
+            collected.get("precoAnterior"),
+        ),
+        "parceiro": (partner or {}).get("nome"),
+        "publicado": published,
+        "especificacoes": _spec_preview(category, raw_payload),
+    }
+
+
 def _product_payload_for_backend(
     category: str,
     analysis: dict[str, Any],
@@ -277,17 +484,28 @@ def _review_response(
     category: str,
     hardware_payload: dict[str, Any],
     issues: list[str],
+    *,
+    analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    paths = [path for issue in issues if (path := _issue_path(issue))]
+    unique_paths = list(dict.fromkeys(paths))
     return {
         "status": "REVISAO_NECESSARIA",
-        "motivo": "A ficha técnica ainda possui campos obrigatórios não confirmados.",
+        "motivo": "Alguns dados não foram identificados. Preencha os campos abaixo para continuar.",
         "pendencias": list(issues),
+        "camposFaltantes": [_field_descriptor(path) for path in unique_paths],
         "categoria": category,
         "hardware": {
             "nome": hardware_payload.get("nome"),
             "marca": hardware_payload.get("marca"),
             "modelo": hardware_payload.get("modelo"),
         },
+        "previa": _preview_payload(
+            category,
+            "HARDWARE",
+            hardware_payload,
+            analysis or {},
+        ),
     }
 
 
@@ -313,6 +531,8 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
             "analise": analysis,
         }
 
+    raw_payload = _apply_manual_fields(category, raw_payload, payload.dadosManuais)
+
     registration_type = str(analysis.get("tipoCadastro") or "").strip().upper()
     if not registration_type:
         schema = SCHEMAS.get(category)
@@ -329,9 +549,32 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
         )
         issues = extension_registration_issues(category, hardware_payload)
         if issues:
-            return _review_response(category, hardware_payload, issues)
+            return _review_response(
+                category,
+                hardware_payload,
+                issues,
+                analysis=analysis,
+            )
         registration_payload = {"hardwarePayload": hardware_payload}
+        preview_source = hardware_payload
     elif registration_type == "PRODUTO":
+        missing_paths = _missing_product_paths(category, raw_payload)
+        if missing_paths:
+            return {
+                "status": "REVISAO_NECESSARIA",
+                "motivo": "Alguns dados do Produto não foram identificados. Preencha os campos abaixo para continuar.",
+                "pendencias": [f"{path} ausente" for path in missing_paths],
+                "camposFaltantes": [
+                    _field_descriptor(path) for path in missing_paths
+                ],
+                "categoria": category,
+                "previa": _preview_payload(
+                    category,
+                    registration_type,
+                    raw_payload,
+                    analysis,
+                ),
+            }
         registration_payload = {
             "produtoPayload": _product_payload_for_backend(
                 category,
@@ -339,6 +582,7 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
                 raw_payload,
             )
         }
+        preview_source = raw_payload
     else:
         return {
             "status": "REVISAO_NECESSARIA",
@@ -375,10 +619,21 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
         "oferta": offer,
     }
 
-    return CriaByteClient().importar_oferta_extensao(
+    result = CriaByteClient().importar_oferta_extensao(
         internal_payload,
         api_key=os.getenv("PRODUTO_IA_API_KEY"),
     )
+    if isinstance(result, dict):
+        result["previa"] = _preview_payload(
+            category,
+            registration_type,
+            preview_source,
+            analysis,
+            partner=partner,
+            offer=offer,
+            published=bool(result.get("publicado", True)),
+        )
+    return result
 
 
 @router.post("/importar-oferta")

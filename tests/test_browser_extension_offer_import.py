@@ -1,8 +1,11 @@
 from src.criabyte.client import CriaByteClient
 from src.extension.router import (
     _analysis_product_url,
+    _apply_manual_fields,
+    _missing_product_paths,
     _offer_payload,
     _partner_from_analysis,
+    _preview_payload,
     _product_payload_for_backend,
 )
 
@@ -114,6 +117,7 @@ def test_monitor_is_built_as_generic_product_payload():
             "tamanhoPolegadas": 24,
             "resolucao": "1920x1080",
             "taxaAtualizacaoHz": 144,
+            "tipoPainel": "IPS",
             "campoInexistente": "nao-enviar",
         },
     }
@@ -148,6 +152,72 @@ def test_generic_product_without_structured_table_keeps_common_fields_only():
         "marca": "Marca",
         "modelo": "X1",
     }
+
+
+def test_product_missing_fields_include_root_and_core_specs():
+    raw = {
+        "nome": "Monitor Teste",
+        "especificacaoMonitor": {
+            "resolucao": "1920x1080",
+        },
+    }
+
+    missing = _missing_product_paths("MONITOR", raw)
+
+    assert "marca" in missing
+    assert "modelo" in missing
+    assert "especificacaoMonitor.tamanhoPolegadas" in missing
+    assert "especificacaoMonitor.taxaAtualizacaoHz" in missing
+    assert "especificacaoMonitor.tipoPainel" in missing
+    assert "especificacaoMonitor.resolucao" not in missing
+
+
+def test_manual_fields_fill_only_allowed_paths():
+    raw = {
+        "nome": "Fonte Teste",
+        "marca": "Marca",
+        "modelo": "X",
+        "especificacaoFonte": {},
+    }
+    completed = _apply_manual_fields(
+        "FONTE",
+        raw,
+        {
+            "especificacaoFonte.formato": "ATX",
+            "especificacaoFonte.potenciaWatts": 700,
+            "campoInexistente": "ignorar",
+        },
+    )
+
+    assert completed["especificacaoFonte"]["formato"] == "ATX"
+    assert completed["especificacaoFonte"]["potenciaWatts"] == 700
+    assert "campoInexistente" not in completed
+
+
+def test_preview_contains_product_and_offer_data():
+    preview = _preview_payload(
+        "MONITOR",
+        "PRODUTO",
+        {
+            "nome": "Monitor Teste",
+            "marca": "LG",
+            "modelo": "X1",
+            "especificacaoMonitor": {
+                "tamanhoPolegadas": 24,
+                "resolucao": "1920x1080",
+            },
+        },
+        {},
+        partner={"nome": "Mercado Livre"},
+        offer={"preco": 999.9},
+        published=True,
+    )
+
+    assert preview["categoria"] == "MONITOR"
+    assert preview["preco"] == 999.9
+    assert preview["parceiro"] == "Mercado Livre"
+    assert preview["publicado"] is True
+    assert preview["especificacoes"]["resolucao"] == "1920x1080"
 
 
 def test_ml_catalog_url_promotes_fragment_wid_to_item_id_for_analysis():

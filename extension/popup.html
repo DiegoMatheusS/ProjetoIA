@@ -51,9 +51,20 @@
         </div>
       </section>
 
+      <section id="missingFieldsBox" class="missing-fields-box hidden" aria-live="polite">
+        <div class="missing-fields-title">Complete os dados que não foram encontrados</div>
+        <div class="missing-fields-help">Preencha somente o que apareceu abaixo. A extensão reaproveita todos os dados que já encontrou.</div>
+        <div id="missingFields" class="missing-fields"></div>
+      </section>
+
       <button id="send" class="primary" type="button">Enviar para Criabyte</button>
 
       <section id="result" class="result hidden" aria-live="polite"></section>
+
+      <section id="previewBox" class="preview-box hidden" aria-live="polite">
+        <div class="preview-title">Prévia do cadastro</div>
+        <div id="previewContent" class="preview-content"></div>
+      </section>
     </section>
 
     <details class="config">
