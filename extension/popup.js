@@ -72,6 +72,71 @@ function parseBrlPrice(value) {
   return Math.round(parsed * 100) / 100;
 }
 
+async function extractPriceFromCurrentTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return null;
+
+    const [execution] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const amountFromElement = (element) => {
+          if (!element) return null;
+          const fraction = element.querySelector(
+            ".andes-money-amount__fraction, [data-andes-money-amount-fraction='true']",
+          );
+          const cents = element.querySelector(
+            ".andes-money-amount__cents, [data-andes-money-amount-cents='true']",
+          );
+          const fractionDigits = String(fraction?.textContent || "").replace(/\D/g, "");
+          if (!fractionDigits) return null;
+
+          const centsDigits = String(cents?.textContent || "")
+            .replace(/\D/g, "")
+            .slice(0, 2)
+            .padEnd(2, "0");
+          const amount = Number(fractionDigits) + (centsDigits ? Number(centsDigits) / 100 : 0);
+          return Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : null;
+        };
+
+        const selectors = [
+          ".ui-pdp-price__second-line .andes-money-amount:not(.andes-money-amount--previous)",
+          ".ui-pdp-price__main-container .andes-money-amount:not(.andes-money-amount--previous)",
+          "[data-testid='price-part'] .andes-money-amount:not(.andes-money-amount--previous)",
+          ".andes-money-amount:not(.andes-money-amount--previous)",
+        ];
+
+        const visited = new Set();
+        for (const selector of selectors) {
+          for (const element of document.querySelectorAll(selector)) {
+            if (visited.has(element)) continue;
+            visited.add(element);
+
+            if (element.classList.contains("andes-money-amount--previous")) continue;
+            const context = String(element.parentElement?.innerText || "").trim();
+            if (/\b\d{1,2}\s*x\b|parcela|sem\s+juros/i.test(context)) continue;
+
+            const amount = amountFromElement(element);
+            if (amount !== null) return amount;
+          }
+        }
+
+        const fraction = document.querySelector(
+          ".andes-money-amount__fraction, [data-andes-money-amount-fraction='true']",
+        );
+        const container = fraction?.closest(".andes-money-amount") || fraction?.parentElement;
+        return amountFromElement(container);
+      },
+    });
+
+    const price = Number(execution?.result);
+    if (!Number.isFinite(price) || price <= 0 || price > 100000000) return null;
+    return Math.round(price * 100) / 100;
+  } catch {
+    return null;
+  }
+}
+
 function revealManualPrice(message) {
   els.manualPriceBox.classList.remove("hidden");
   els.send.textContent = "Enviar com preço informado";
@@ -294,6 +359,11 @@ els.send.addEventListener("click", async () => {
   showResult("Analisando produto e verificando o Criabyte...", "success");
 
   try {
+    const pagePrice = manualPrice === null
+      ? await extractPriceFromCurrentTab()
+      : null;
+    const priceToSend = manualPrice ?? pagePrice;
+
     const response = await fetch(`${apiUrl}/extensao/importar-oferta`, {
       method: "POST",
       headers: {
@@ -303,7 +373,7 @@ els.send.addEventListener("click", async () => {
       body: JSON.stringify({
         urlProduto: productUrl,
         urlAfiliada: affiliateUrl,
-        ...(manualPrice !== null ? { precoManual: manualPrice } : {}),
+        ...(priceToSend !== null ? { precoManual: priceToSend } : {}),
       }),
     });
 
