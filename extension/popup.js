@@ -12,8 +12,14 @@ const els = {
   pinAlwaysOnTop: document.querySelector("#pinAlwaysOnTop"),
   manualPriceBox: document.querySelector("#manualPriceBox"),
   manualPrice: document.querySelector("#manualPrice"),
+  missingFieldsBox: document.querySelector("#missingFieldsBox"),
+  missingFields: document.querySelector("#missingFields"),
   result: document.querySelector("#result"),
+  previewBox: document.querySelector("#previewBox"),
+  previewContent: document.querySelector("#previewContent"),
 };
+
+let pendingMissingFields = [];
 
 function cleanBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -31,6 +37,18 @@ function isHttpUrl(value) {
 function showResult(message, type = "success") {
   els.result.className = `result ${type}`;
   els.result.textContent = message;
+}
+
+function updateSendLabel() {
+  if (pendingMissingFields.length) {
+    els.send.textContent = "Completar e cadastrar";
+    return;
+  }
+  if (!els.manualPriceBox.classList.contains("hidden")) {
+    els.send.textContent = "Enviar com preço informado";
+    return;
+  }
+  els.send.textContent = "Enviar para Criabyte";
 }
 
 function parseBrlPrice(value) {
@@ -74,18 +92,224 @@ function parseBrlPrice(value) {
 
 function revealManualPrice(message) {
   els.manualPriceBox.classList.remove("hidden");
-  els.send.textContent = "Enviar com preço informado";
   showResult(
     message || "Informe o preço do anúncio para continuar.",
     "warning",
   );
+  updateSendLabel();
   setTimeout(() => els.manualPrice.focus(), 0);
 }
 
 function resetManualPrice() {
   els.manualPriceBox.classList.add("hidden");
   els.manualPrice.value = "";
-  els.send.textContent = "Enviar para Criabyte";
+  updateSendLabel();
+}
+
+function clearMissingFields() {
+  pendingMissingFields = [];
+  els.missingFields.innerHTML = "";
+  els.missingFieldsBox.classList.add("hidden");
+  updateSendLabel();
+}
+
+function makeMissingFieldControl(field) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "missing-field";
+
+  const label = document.createElement("label");
+  label.textContent = field.label || field.campo;
+  const id = `missing-${field.campo.replace(/[^a-z0-9_-]+/gi, "-")}`;
+  label.htmlFor = id;
+  wrapper.appendChild(label);
+
+  let control;
+  if (Array.isArray(field.opcoes) && field.opcoes.length) {
+    control = document.createElement("select");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Selecione";
+    control.appendChild(placeholder);
+    for (const optionValue of field.opcoes) {
+      const option = document.createElement("option");
+      option.value = String(optionValue);
+      option.textContent = String(optionValue);
+      control.appendChild(option);
+    }
+  } else if (field.tipo === "boolean") {
+    control = document.createElement("select");
+    for (const [value, text] of [["", "Selecione"], ["true", "Sim"], ["false", "Não"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      control.appendChild(option);
+    }
+  } else {
+    control = document.createElement("input");
+    if (field.tipo === "integer" || field.tipo === "number") {
+      control.type = "number";
+      control.step = field.tipo === "integer" ? "1" : "any";
+      control.inputMode = "decimal";
+    } else {
+      control.type = "text";
+      control.autocomplete = "off";
+    }
+  }
+
+  control.id = id;
+  control.dataset.field = field.campo;
+  control.dataset.valueType = field.tipo || "text";
+  wrapper.appendChild(control);
+
+  if (field.campo.includes(".")) {
+    const hint = document.createElement("div");
+    hint.className = "missing-field-hint";
+    hint.textContent = "Dado técnico necessário para concluir o cadastro.";
+    wrapper.appendChild(hint);
+  }
+
+  return wrapper;
+}
+
+function renderMissingFields(fields) {
+  const safeFields = Array.isArray(fields)
+    ? fields.filter((field) => field && field.campo)
+    : [];
+
+  pendingMissingFields = safeFields;
+  els.missingFields.innerHTML = "";
+
+  if (!safeFields.length) {
+    els.missingFieldsBox.classList.add("hidden");
+    updateSendLabel();
+    return;
+  }
+
+  for (const field of safeFields) {
+    els.missingFields.appendChild(makeMissingFieldControl(field));
+  }
+  els.missingFieldsBox.classList.remove("hidden");
+  updateSendLabel();
+
+  const first = els.missingFields.querySelector("input, select");
+  setTimeout(() => first?.focus(), 0);
+}
+
+function collectManualFields() {
+  if (!pendingMissingFields.length) return {};
+
+  const result = {};
+  for (const field of pendingMissingFields) {
+    const control = els.missingFields.querySelector(
+      `[data-field="${CSS.escape(field.campo)}"]`,
+    );
+    const raw = String(control?.value ?? "").trim();
+    if (!raw) {
+      showResult(`Preencha: ${field.label || field.campo}.`, "warning");
+      control?.focus();
+      return null;
+    }
+
+    let value = raw;
+    if (field.tipo === "boolean") {
+      value = raw === "true";
+    } else if (field.tipo === "integer") {
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed)) {
+        showResult(`${field.label || field.campo} precisa ser um número inteiro.`, "warning");
+        control?.focus();
+        return null;
+      }
+      value = parsed;
+    } else if (field.tipo === "number") {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        showResult(`${field.label || field.campo} precisa ser um número válido.`, "warning");
+        control?.focus();
+        return null;
+      }
+      value = parsed;
+    }
+
+    result[field.campo] = value;
+  }
+  return result;
+}
+
+function formatBrl(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value ?? "");
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(number);
+}
+
+function humanizeKey(value) {
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function displayValue(value) {
+  if (typeof value === "boolean") return value ? "Sim" : "Não";
+  if (Array.isArray(value)) return value.join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "");
+}
+
+function appendPreviewRow(parent, key, value) {
+  if (value === null || value === undefined || value === "") return;
+  const row = document.createElement("div");
+  row.className = "preview-row";
+
+  const keyEl = document.createElement("div");
+  keyEl.className = "preview-key";
+  keyEl.textContent = key;
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "preview-value";
+  valueEl.textContent = displayValue(value);
+
+  row.append(keyEl, valueEl);
+  parent.appendChild(row);
+}
+
+function renderPreview(preview) {
+  els.previewContent.innerHTML = "";
+  if (!preview || typeof preview !== "object") {
+    els.previewBox.classList.add("hidden");
+    return;
+  }
+
+  appendPreviewRow(els.previewContent, "Nome", preview.nome);
+  appendPreviewRow(els.previewContent, "Categoria", preview.categoria);
+  appendPreviewRow(els.previewContent, "Tipo", preview.tipoCadastro);
+  appendPreviewRow(els.previewContent, "Marca", preview.marca);
+  appendPreviewRow(els.previewContent, "Modelo", preview.modelo);
+  appendPreviewRow(els.previewContent, "Preço", preview.preco !== null && preview.preco !== undefined ? formatBrl(preview.preco) : null);
+  appendPreviewRow(els.previewContent, "Preço anterior", preview.precoAnterior !== null && preview.precoAnterior !== undefined ? formatBrl(preview.precoAnterior) : null);
+  appendPreviewRow(els.previewContent, "Parceiro", preview.parceiro);
+  if (preview.publicado !== null && preview.publicado !== undefined) {
+    appendPreviewRow(els.previewContent, "Publicado", preview.publicado ? "Sim" : "Não");
+  }
+
+  const specs = preview.especificacoes;
+  if (specs && typeof specs === "object" && Object.keys(specs).length) {
+    const block = document.createElement("div");
+    block.className = "preview-specs";
+    const title = document.createElement("div");
+    title.className = "preview-specs-title";
+    title.textContent = "Especificações encontradas";
+    block.appendChild(title);
+    for (const [key, value] of Object.entries(specs)) {
+      appendPreviewRow(block, humanizeKey(key), value);
+    }
+    els.previewContent.appendChild(block);
+  }
+
+  els.previewBox.classList.remove("hidden");
 }
 
 async function loadCurrentTab() {
@@ -216,18 +440,21 @@ async function pinAlwaysOnTop() {
 }
 
 function resultMessage(data) {
-  const hardware = data?.hardware?.nome ? ` — ${data.hardware.nome}` : "";
+  const itemName = data?.produto?.nome || data?.hardware?.nome || "";
+  const item = itemName ? ` — ${itemName}` : "";
   const partner = data?.parceiro?.nome ? ` (${data.parceiro.nome})` : "";
 
   switch (data?.status) {
     case "OFERTA_ATUALIZADA":
-      return `Oferta existente atualizada${hardware}${partner}.`;
+      return `Oferta existente atualizada${item}${partner}.`;
     case "NOVA_OFERTA_CRIADA":
-      return `Nova oferta adicionada${hardware}${partner}.`;
+      return `Nova oferta adicionada${item}${partner}.`;
+    case "PRODUTO_E_OFERTA_CRIADOS":
+      return `Produto cadastrado, publicado e oferta criada${item}${partner}.`;
     case "HARDWARE_E_OFERTA_CRIADOS":
-      return `Novo hardware cadastrado e oferta criada${hardware}${partner}. Ficou como rascunho para revisão.`;
+      return `Hardware cadastrado, produto publicado e oferta criada${item}${partner}.`;
     case "REVISAO_NECESSARIA":
-      return data?.motivo || "O produto precisa de revisão antes do cadastro.";
+      return data?.motivo || "O produto precisa de dados adicionais antes do cadastro.";
     default:
       return "Operação concluída.";
   }
@@ -236,6 +463,8 @@ function resultMessage(data) {
 els.currentTab.addEventListener("click", async () => {
   await loadCurrentTab();
   if (els.productUrl.value) {
+    clearMissingFields();
+    renderPreview(null);
     showResult("Página atualizada com a aba ativa do Chrome.", "success");
   }
 });
@@ -264,6 +493,9 @@ els.send.addEventListener("click", async () => {
   const manualPrice = manualPriceRequired
     ? parseBrlPrice(els.manualPrice.value)
     : null;
+  const manualFields = collectManualFields();
+
+  if (manualFields === null) return;
 
   if (!isHttpUrl(productUrl)) {
     showResult("A página do produto é inválida.", "warning");
@@ -304,6 +536,7 @@ els.send.addEventListener("click", async () => {
         urlProduto: productUrl,
         urlAfiliada: affiliateUrl,
         ...(manualPrice !== null ? { precoManual: manualPrice } : {}),
+        ...(Object.keys(manualFields).length ? { dadosManuais: manualFields } : {}),
       }),
     });
 
@@ -337,11 +570,18 @@ els.send.addEventListener("click", async () => {
       throw new Error(message);
     }
 
+    renderPreview(data?.previa);
+
     const warning = data?.status === "REVISAO_NECESSARIA";
-    showResult(resultMessage(data), warning ? "warning" : "success");
-    if (!warning) {
-      resetManualPrice();
+    if (warning) {
+      renderMissingFields(data?.camposFaltantes);
+      showResult(resultMessage(data), "warning");
+      return;
     }
+
+    showResult(resultMessage(data), "success");
+    clearMissingFields();
+    resetManualPrice();
   } catch (error) {
     showResult(
       error?.message || "Falha ao enviar a oferta para o Criabyte.",
@@ -349,14 +589,19 @@ els.send.addEventListener("click", async () => {
     );
   } finally {
     els.send.disabled = false;
-    els.send.textContent = els.manualPriceBox.classList.contains("hidden")
-      ? "Enviar para Criabyte"
-      : "Enviar com preço informado";
+    updateSendLabel();
   }
 });
 
 els.manualPrice?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
+    event.preventDefault();
+    els.send.click();
+  }
+});
+
+els.missingFields?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target?.tagName !== "SELECT") {
     event.preventDefault();
     els.send.click();
   }
