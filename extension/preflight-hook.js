@@ -14,17 +14,37 @@
       body = {};
     }
 
+    // Recaptura a aba no momento do envio. Isso evita reutilizar ASIN/preço de
+    // uma página anterior quando o usuário troca de produto com o popup aberto.
     try {
-      const saved = await chrome.storage.local.get(["lastProductCapture"]);
-      const capture = saved.lastProductCapture;
-      if (capture?.url === body.urlProduto && capture?.dados && typeof capture.dados === "object") {
-        body.dadosPagina = capture.dados;
+      const liveCapture = await chrome.runtime.sendMessage({
+        type: "GET_CURRENT_PRODUCT_DATA",
+      });
+      if (
+        liveCapture?.url === body.urlProduto &&
+        liveCapture?.dados &&
+        typeof liveCapture.dados === "object"
+      ) {
+        body.dadosPagina = liveCapture.dados;
+      } else {
+        const saved = await chrome.storage.local.get(["lastProductCapture"]);
+        const capture = saved.lastProductCapture;
+        if (
+          capture?.url === body.urlProduto &&
+          capture?.dados &&
+          typeof capture.dados === "object"
+        ) {
+          body.dadosPagina = capture.dados;
+        }
       }
     } catch {
       // O servidor v2 ainda consegue completar via coleta/IA sem a captura local.
     }
 
-    const v2Url = url.replace(/\/extensao\/importar-oferta$/, "/extensao/importar-oferta-v2");
+    const v2Url = url.replace(
+      /\/extensao\/importar-oferta$/,
+      "/extensao/importar-oferta-v2",
+    );
     const response = await nativeFetch(v2Url, {
       ...init,
       body: JSON.stringify(body),
@@ -46,15 +66,18 @@
       }
 
       if (data.previa && typeof data.previa === "object") {
-        const specs = data.previa.especificacoes && typeof data.previa.especificacoes === "object"
-          ? { ...data.previa.especificacoes }
-          : {};
+        const specs =
+          data.previa.especificacoes &&
+          typeof data.previa.especificacoes === "object"
+            ? { ...data.previa.especificacoes }
+            : {};
         if (data.previa.asin) specs.ASIN = data.previa.asin;
         if (data.previa.gtin) specs.GTIN = data.previa.gtin;
         if (data.previa.mpn) specs.MPN = data.previa.mpn;
-        specs.Fluxo = data.completouComIa === false
-          ? "Item já existente — somente oferta criada/atualizada"
-          : "Completar com IA";
+        specs.Fluxo =
+          data.completouComIa === false
+            ? "Item já existente — somente oferta criada/atualizada"
+            : "Completar com IA";
         data.previa.especificacoes = specs;
       }
     }
