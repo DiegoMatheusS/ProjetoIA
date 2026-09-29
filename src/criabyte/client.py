@@ -52,14 +52,7 @@ def _error_detail(payload):
 
 
 class CriaByteClient:
-    """Cliente HTTP do backend real do CriaByte.
-
-    As rotas de leitura continuam servindo ao planejador da v14. As rotas de
-    escrita abaixo são usadas apenas por fluxos administrativos explícitos,
-    como a extensão de importação de ofertas. A autenticação do backend atual
-    é feita por cookie de sessão, então aceitamos um token de sessão já emitido
-    ou login administrativo por e-mail/senha via variáveis de ambiente.
-    """
+    """Cliente HTTP do backend real do CriaByte."""
 
     def __init__(
         self,
@@ -114,6 +107,14 @@ class CriaByteClient:
         except ValueError as exc:
             raise CriaByteApiError("O CriaByte retornou uma resposta que não é JSON.") from exc
 
+    def _internal_api_key(self, api_key=None):
+        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
+        if not key:
+            raise CriaByteApiError(
+                "PRODUTO_IA_API_KEY não configurada para a integração interna."
+            )
+        return key
+
     def login(self, email=None, senha=None):
         email = email or os.getenv("CRIABYTE_ADMIN_EMAIL")
         senha = senha or os.getenv("CRIABYTE_ADMIN_PASSWORD")
@@ -149,15 +150,20 @@ class CriaByteClient:
     def listar_categorias(self):
         return _extract_list(self._request("GET", "/admin/categorias-produto"), "categorias", "items")
 
+    def localizar_item_extensao(self, dados, api_key=None):
+        return self._request(
+            "POST",
+            "/interno/produto-ia/extensao/localizar-item",
+            json=dados,
+            headers={"X-API-Key": self._internal_api_key(api_key)},
+        )
+
     def importar_oferta_extensao(self, dados, api_key=None):
-        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
-        if not key:
-            raise CriaByteApiError("PRODUTO_IA_API_KEY não configurada para a integração interna.")
         return self._request(
             "POST",
             "/interno/produto-ia/extensao/importar-oferta",
             json=dados,
-            headers={"X-API-Key": key},
+            headers={"X-API-Key": self._internal_api_key(api_key)},
         )
 
     def cadastrar_hardware_descoberto(self, payload, id_temporario=None):
