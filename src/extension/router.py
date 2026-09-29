@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
+from ..extractors.backend_schemas import CATEGORY_SLUGS, SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from .payload_guard import (
     extension_registration_issues,
@@ -46,6 +47,18 @@ _MARKETPLACE_PARTNERS: dict[str, tuple[str, str | None]] = {
     "AMAZON": ("Amazon", "amazon.com.br"),
     "ALIEXPRESS": ("AliExpress", "aliexpress.com"),
 }
+
+_PRODUCT_FIELDS = (
+    "nome",
+    "marca",
+    "modelo",
+    "descricao",
+    "mpn",
+    "gtin",
+    "imagemUrl",
+    "imagemHoverUrl",
+    "metadados",
+)
 
 
 def _validate_api_key(x_api_key: str | None) -> None:
@@ -216,6 +229,50 @@ def _offer_payload(
     return payload
 
 
+def _present(value: Any) -> bool:
+    return value is not None and value != "" and value != []
+
+
+def _product_payload_for_backend(
+    category: str,
+    analysis: dict[str, Any],
+    raw_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Monta somente campos aceitos pelo cadastro de Produto genérico."""
+    schema = SCHEMAS.get(category)
+    if not schema or schema[0] != "PRODUTO":
+        raise ValueError(f"Categoria {category} não usa o cadastro genérico de Produto.")
+
+    category_slug = str(
+        analysis.get("categoriaSlugSugerida") or CATEGORY_SLUGS.get(category) or ""
+    ).strip().lower()
+    if not category_slug:
+        raise ValueError("Categoria comercial do Produto não foi identificada.")
+
+    output: dict[str, Any] = {"categoriaSlug": category_slug}
+    for field in _PRODUCT_FIELDS:
+        value = raw_payload.get(field)
+        if _present(value):
+            output[field] = value
+
+    if not str(output.get("nome") or "").strip():
+        raise ValueError("Nome do Produto não foi identificado.")
+
+    spec_field = schema[1]
+    expected_fields = set(schema[2] or [])
+    if spec_field and isinstance(raw_payload.get(spec_field), dict):
+        raw_specs = raw_payload[spec_field]
+        safe_specs = {
+            key: value
+            for key, value in raw_specs.items()
+            if key in expected_fields and _present(value)
+        }
+        if safe_specs:
+            output[spec_field] = safe_specs
+
+    return output
+
+
 def _review_response(
     category: str,
     hardware_payload: dict[str, Any],
@@ -248,25 +305,50 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
     )
 
     category = str(analysis.get("categoriaDetectada") or "").strip().upper()
-    raw_hardware = analysis.get("payloadParcialBackend")
-    if not category or not isinstance(raw_hardware, dict):
+    raw_payload = analysis.get("payloadParcialBackend")
+    if not category or not isinstance(raw_payload, dict):
         return {
             "status": "REVISAO_NECESSARIA",
-            "motivo": "Não foi possível identificar uma categoria de Hardware suportada.",
+            "motivo": "Não foi possível identificar uma categoria suportada para cadastro.",
             "analise": analysis,
         }
 
-    hardware_payload = normalize_hardware_payload_for_backend(
-        category,
-        raw_hardware,
-    )
-    hardware_payload = sanitize_extension_hardware_payload(
-        category,
-        hardware_payload,
-    )
-    issues = extension_registration_issues(category, hardware_payload)
-    if issues:
-        return _review_response(category, hardware_payload, issues)
+    registration_type = str(analysis.get("tipoCadastro") or "").strip().upper()
+    if not registration_type:
+        schema = SCHEMAS.get(category)
+        registration_type = str(schema[0] if schema else "").upper()
+
+    if registration_type == "HARDWARE":
+        hardware_payload = normalize_hardware_payload_for_backend(
+            category,
+            raw_payload,
+        )
+        hardware_payload = sanitize_extension_hardware_payload(
+            category,
+            hardware_payload,
+        )
+        issues = extension_registration_issues(category, hardware_payload)
+        if issues:
+            return _review_response(category, hardware_payload, issues)
+        registration_payload = {"hardwarePayload": hardware_payload}
+    elif registration_type == "PRODUTO":
+        registration_payload = {
+            "produtoPayload": _product_payload_for_backend(
+                category,
+                analysis,
+                raw_payload,
+            )
+        }
+    else:
+        return {
+            "status": "REVISAO_NECESSARIA",
+            "motivo": (
+                f"A categoria {category} usa o fluxo {registration_type or 'desconhecido'}, "
+                "que ainda não é cadastrado automaticamente por esta extensão."
+            ),
+            "categoria": category,
+            "analise": analysis,
+        }
 
     affiliate_url = _canonical_url(payload.urlAfiliada)
     if not affiliate_url:
@@ -280,7 +362,7 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
     )
 
     internal_payload = {
-        "hardwarePayload": hardware_payload,
+        **registration_payload,
         "parceiro": {
             "nome": partner["nome"],
             "dominio": partner.get("dominio"),
