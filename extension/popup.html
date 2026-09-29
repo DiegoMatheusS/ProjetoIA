@@ -14,7 +14,7 @@
         <img class="brand-icon" src="icons/icon48.png" alt="">
         <div>
           <div class="brand">CRIABYTE</div>
-          <div class="subtitle">Enviar oferta afiliada</div>
+          <div class="subtitle">Cadastrar produto e oferta</div>
         </div>
       </div>
       <button id="pinAlwaysOnTop" class="pin-button" type="button" title="Manter a extensão sobre outras janelas">
@@ -29,6 +29,11 @@
         <button id="currentTab" class="secondary" type="button">Aba atual</button>
       </div>
 
+      <section id="capturedBox" class="captured-box hidden" aria-live="polite">
+        <div class="captured-title">Dados capturados da página</div>
+        <div id="capturedContent" class="captured-content"></div>
+      </section>
+
       <label for="affiliateUrl">Link afiliado</label>
       <div class="row">
         <input id="affiliateUrl" type="url" placeholder="Cole o link afiliado">
@@ -37,45 +42,46 @@
 
       <section id="manualPriceBox" class="manual-price-box hidden" aria-live="polite">
         <div class="manual-price-title">Preço do anúncio não identificado</div>
-        <div class="manual-price-help">Informe o preço abaixo para concluir sem sair da extensão.</div>
+        <div class="manual-price-help">Informe o preço abaixo para continuar.</div>
         <label for="manualPrice">Preço do anúncio (R$)</label>
         <div class="price-input-wrap">
           <span class="currency-prefix">R$</span>
-          <input
-            id="manualPrice"
-            type="text"
-            inputmode="decimal"
-            autocomplete="off"
-            placeholder="Ex.: 1.999,90"
-          >
+          <input id="manualPrice" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex.: 1.999,90">
         </div>
       </section>
 
       <section id="missingFieldsBox" class="missing-fields-box hidden" aria-live="polite">
         <div class="missing-fields-title">Complete os dados que não foram encontrados</div>
-        <div class="missing-fields-help">Preencha somente o que apareceu abaixo. A extensão reaproveita todos os dados que já encontrou.</div>
+        <div class="missing-fields-help">Preencha somente os campos abaixo. Os demais dados já encontrados serão reaproveitados.</div>
         <div id="missingFields" class="missing-fields"></div>
       </section>
 
-      <button id="send" class="primary" type="button">Enviar para Criabyte</button>
+      <section id="aiActionsBox" class="ai-actions-box hidden" aria-live="polite">
+        <div class="ai-actions-title">Completar ficha técnica</div>
+        <div class="ai-actions-help">O item não existe no Criabyte e ainda faltam dados técnicos.</div>
+        <div class="ai-actions-row">
+          <button id="completeOpenAI" class="secondary full" type="button">Completar com IA</button>
+          <button id="completeMetaAI" class="secondary full" type="button">Completar com MetaIA</button>
+        </div>
+      </section>
+
+      <button id="send" class="primary" type="button">Analisar e preparar</button>
+      <button id="confirm" class="primary confirm hidden" type="button">Confirmar cadastro</button>
 
       <section id="result" class="result hidden" aria-live="polite"></section>
 
       <section id="previewBox" class="preview-box hidden" aria-live="polite">
-        <div class="preview-title">Prévia do cadastro</div>
+        <div class="preview-title">Prévia antes de cadastrar</div>
         <div id="previewContent" class="preview-content"></div>
       </section>
     </section>
 
     <details class="config">
       <summary>Configuração</summary>
-
       <label for="apiUrl">URL da Produto IA</label>
       <input id="apiUrl" type="url">
-
       <label for="apiKey">Chave da API</label>
       <input id="apiKey" type="password" placeholder="Cole sua PRODUTO_IA_API_KEY">
-
       <button id="saveConfig" class="secondary full" type="button">Salvar configuração</button>
       <small>Esses dados ficam salvos localmente no Chrome.</small>
     </details>
