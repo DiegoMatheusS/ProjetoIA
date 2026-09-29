@@ -1,4 +1,7 @@
+import pytest
+
 from src.criabyte.client import CriaByteClient
+from src.extension import router_v2
 from src.extension.router import (
     _analysis_product_url,
     _apply_manual_fields,
@@ -8,6 +11,7 @@ from src.extension.router import (
     _preview_payload,
     _product_payload_for_backend,
 )
+from src.extension.router_v2 import ImportAffiliateOfferV2Request
 
 
 def test_partner_marketplace_shopee():
@@ -244,3 +248,153 @@ def test_ml_query_wid_is_also_promoted_to_item_id():
 def test_non_ml_url_is_not_rewritten():
     url = "https://www.example.com/produto#wid=MLB5953835688"
     assert _analysis_product_url(url) == url
+
+
+def test_v2_existing_amazon_product_skips_ai(monkeypatch):
+    captured = {}
+
+    def fail_ai(_request):
+        raise AssertionError("A IA não deveria ser chamada para item existente")
+
+    def find_existing(_self, dados, api_key=None):
+        assert dados["asin"] == "B0ABC12345"
+        assert api_key is not None or api_key is None
+        return {
+            "status": "EXISTENTE",
+            "tipo": "PRODUTO",
+            "produtoId": 70,
+            "criterio": "ASIN",
+            "item": {
+                "id": 70,
+                "nome": "Echo Dot 5ª geração",
+                "marca": "Amazon",
+                "modelo": "Echo Dot 5",
+                "asin": "B0ABC12345",
+                "publicado": True,
+            },
+        }
+
+    def import_offer(_self, dados, api_key=None):
+        captured.update(dados)
+        return {
+            "status": "ITEM_EXISTENTE_OFERTA_CRIADA",
+            "produto": {"id": 70, "nome": "Echo Dot 5ª geração"},
+            "parceiro": {"id": 3, "nome": "Amazon"},
+            "publicado": True,
+            "oferta": {"id": 91},
+        }
+
+    monkeypatch.setattr(router_v2, "_analyze_sync", fail_ai)
+    monkeypatch.setattr(CriaByteClient, "buscar_item_extensao", find_existing)
+    monkeypatch.setattr(CriaByteClient, "importar_oferta_extensao", import_offer)
+
+    result = router_v2._import_v2_sync(
+        ImportAffiliateOfferV2Request(
+            urlProduto="https://www.amazon.com.br/dp/B0ABC12345",
+            urlAfiliada="https://amzn.to/teste",
+            dadosPagina={
+                "nome": "Echo Dot 5ª geração",
+                "marca": "Amazon",
+                "modelo": "Echo Dot 5",
+                "asin": "B0ABC12345",
+                "preco": 349.90,
+            },
+        )
+    )
+
+    assert result["completouComIa"] is False
+    assert result["buscaCriabyte"]["criterio"] == "ASIN"
+    assert captured["produtoExistenteId"] == 70
+    assert captured["oferta"]["asin"] == "B0ABC12345"
+    assert captured["oferta"]["codigoMarketplace"] == "B0ABC12345"
+    assert captured["oferta"]["preco"] == 349.90
+
+
+def test_v2_not_found_uses_ai_and_keeps_page_identifiers(monkeypatch):
+    captured = {}
+    ai_calls = []
+
+    def not_found(_self, dados, api_key=None):
+        assert dados["asin"] == "B0NEW12345"
+        return {"status": "NAO_ENCONTRADO"}
+
+    def analyze(request):
+        ai_calls.append(request)
+        return {
+            "categoriaDetectada": "CELULAR",
+            "tipoCadastro": "PRODUTO",
+            "categoriaSlugSugerida": "celulares",
+            "origemColeta": {
+                "plataforma": "AMAZON",
+                "host": "amazon.com.br",
+            },
+            "ofertaColetada": {
+                "preco": 2099.90,
+                "urlOriginal": "https://www.amazon.com.br/dp/B0NEW12345",
+            },
+            "payloadParcialBackend": {
+                "nome": "Smartphone X",
+                "marca": "Marca X",
+                "modelo": "X1",
+            },
+        }
+
+    def import_offer(_self, dados, api_key=None):
+        captured.update(dados)
+        return {
+            "status": "PRODUTO_E_OFERTA_CRIADOS",
+            "produto": {"id": 88, "nome": "Smartphone X"},
+            "parceiro": {"id": 3, "nome": "Amazon"},
+            "publicado": True,
+            "oferta": {"id": 92},
+        }
+
+    monkeypatch.setattr(CriaByteClient, "buscar_item_extensao", not_found)
+    monkeypatch.setattr(CriaByteClient, "importar_oferta_extensao", import_offer)
+    monkeypatch.setattr(router_v2, "_analyze_sync", analyze)
+
+    result = router_v2._import_v2_sync(
+        ImportAffiliateOfferV2Request(
+            urlProduto="https://www.amazon.com.br/dp/B0NEW12345",
+            urlAfiliada="https://amzn.to/novo",
+            dadosPagina={
+                "nome": "Smartphone X",
+                "marca": "Marca X",
+                "modelo": "X1",
+                "gtin": "7891234567890",
+                "asin": "B0NEW12345",
+                "preco": 1999.90,
+            },
+        )
+    )
+
+    assert len(ai_calls) == 1
+    assert result["completouComIa"] is True
+    assert result["buscaCriabyte"]["status"] == "NAO_ENCONTRADO"
+    assert captured["produtoPayload"]["asin"] == "B0NEW12345"
+    assert captured["produtoPayload"]["gtin"] == "7891234567890"
+    assert captured["oferta"]["asin"] == "B0NEW12345"
+    assert captured["oferta"]["preco"] == 1999.90
+
+
+def test_v2_existing_item_requires_manual_price_when_page_has_none(monkeypatch):
+    monkeypatch.setattr(
+        CriaByteClient,
+        "buscar_item_extensao",
+        lambda _self, _dados, api_key=None: {
+            "status": "EXISTENTE",
+            "tipo": "PRODUTO",
+            "produtoId": 70,
+            "criterio": "ASIN",
+            "item": {"id": 70, "nome": "Echo Dot"},
+        },
+    )
+
+    with pytest.raises(router_v2.MissingPriceError):
+        router_v2._import_v2_sync(
+            ImportAffiliateOfferV2Request(
+                urlProduto="https://www.amazon.com.br/dp/B0ABC12345",
+                urlAfiliada="https://amzn.to/teste",
+                dadosPagina={"asin": "B0ABC12345"},
+            )
+        )

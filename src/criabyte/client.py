@@ -114,6 +114,14 @@ class CriaByteClient:
         except ValueError as exc:
             raise CriaByteApiError("O CriaByte retornou uma resposta que não é JSON.") from exc
 
+    def _internal_key(self, api_key=None):
+        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
+        if not key:
+            raise CriaByteApiError(
+                "PRODUTO_IA_API_KEY não configurada para a integração interna."
+            )
+        return key
+
     def login(self, email=None, senha=None):
         email = email or os.getenv("CRIABYTE_ADMIN_EMAIL")
         senha = senha or os.getenv("CRIABYTE_ADMIN_PASSWORD")
@@ -149,10 +157,17 @@ class CriaByteClient:
     def listar_categorias(self):
         return _extract_list(self._request("GET", "/admin/categorias-produto"), "categorias", "items")
 
+    def buscar_item_extensao(self, dados, api_key=None):
+        key = self._internal_key(api_key)
+        return self._request(
+            "POST",
+            "/interno/produto-ia/extensao/buscar-item",
+            json=dados,
+            headers={"X-API-Key": key},
+        )
+
     def importar_oferta_extensao(self, dados, api_key=None):
-        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
-        if not key:
-            raise CriaByteApiError("PRODUTO_IA_API_KEY não configurada para a integração interna.")
+        key = self._internal_key(api_key)
         return self._request(
             "POST",
             "/interno/produto-ia/extensao/importar-oferta",
