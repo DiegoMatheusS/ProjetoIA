@@ -102,12 +102,7 @@ def _identity_match_marketplace_name(
 
 
 def _short_name_query(name: Any, max_words: int = 6) -> str:
-    """Usa só o começo identificador do título para descobrir candidatos.
-
-    Títulos de marketplace costumam anexar cor, voltagem, quantidade, slogans e
-    especificações demais. Isso torna a pesquisa externa excessivamente rígida.
-    A confirmação de identidade continua sendo feita depois por GTIN/MPN/modelo.
-    """
+    """Usa só o começo identificador do título para descobrir candidatos."""
     text = re.sub(r"\s+", " ", str(name or "")).strip()
     if not text:
         return ""
@@ -117,8 +112,7 @@ def _short_name_query(name: Any, max_words: int = 6) -> str:
 
 
 def _query(payload: IdenticalProductOffersRequest) -> str:
-    # A busca é deliberadamente curta para aumentar recall. Identificadores
-    # fortes continuam sendo usados na etapa posterior de confirmação.
+    # Shopee continua usando a consulta curta, que tem bom recall na Affiliate API.
     short_name = _short_name_query(payload.nome)
     if short_name:
         return short_name
@@ -131,6 +125,40 @@ def _query(payload: IdenticalProductOffersRequest) -> str:
     if payload.modelo:
         return f"{payload.marca or ''} {payload.modelo.strip()}".strip()
     return payload.nome.strip()
+
+
+def _web_identity_queries(payload: IdenticalProductOffersRequest) -> list[str]:
+    """Consultas em ordem de precisão para Mercado Livre e Magazine Luiza.
+
+    Busca externa por um título longo costuma falhar. Para essas lojas tentamos
+    primeiro os identificadores fortes e depois relaxamos para nome curto. A
+    aceitação do resultado continua exigindo GTIN, MPN+marca ou modelo+marca.
+    """
+    candidates: list[str] = []
+    brand = str(payload.marca or "").strip()
+    gtin = _digits(payload.gtin)
+    mpn = str(payload.mpn or "").strip()
+    model = str(payload.modelo or "").strip()
+    short_name = _short_name_query(payload.nome)
+
+    if gtin:
+        candidates.append(f"{gtin} {brand}".strip())
+    if mpn:
+        candidates.append(f"{brand} {mpn}".strip())
+    if model:
+        candidates.append(f"{brand} {model}".strip())
+    if short_name:
+        candidates.append(short_name)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for query in candidates:
+        key = re.sub(r"\s+", " ", query).strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(query)
+    return unique or [payload.nome.strip()]
 
 
 def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
@@ -181,7 +209,27 @@ def _search_web_store(
     limit: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     resolver = WebSearchResolver()
-    candidates = resolver.results(_query(payload), domains, limit=max(limit * 3, 6))
+    queries = _web_identity_queries(payload)
+    candidates: list[dict[str, Any]] = []
+    seen_candidates: set[str] = set()
+    search_statuses: list[str] = []
+
+    # GTIN/MPN/modelo são tentados separadamente. Isso melhora muito a descoberta
+    # no Mercado Livre e no Magalu sem afrouxar a regra de produto idêntico.
+    for query in queries:
+        batch = resolver.results(query, domains, limit=max(limit * 3, 6))
+        if resolver.last_status:
+            search_statuses.append(str(resolver.last_status))
+        for candidate in batch:
+            url = str(candidate.get("url") or "").split("#", 1)[0].rstrip("/").strip()
+            key = url.casefold()
+            if not url or key in seen_candidates:
+                continue
+            seen_candidates.add(key)
+            candidates.append(candidate)
+        if len(candidates) >= max(limit * 5, 12):
+            break
+
     offers: list[dict[str, Any]] = []
     checked = 0
 
@@ -212,12 +260,22 @@ def _search_web_store(
         if normalized:
             offers.append(normalized)
 
+    if "ENCONTRADO" in search_statuses:
+        overall_status = "ENCONTRADO"
+    elif "BLOQUEADO" in search_statuses:
+        overall_status = "BLOQUEADO"
+    elif "FALHA_TEMPORARIA" in search_statuses:
+        overall_status = "FALHA_TEMPORARIA"
+    else:
+        overall_status = search_statuses[-1] if search_statuses else resolver.last_status
+
     return offers, {
         "consulta": _query(payload),
+        "consultasTentadas": queries,
         "candidatos": len(candidates),
         "verificados": checked,
         "encontrados": len(offers),
-        "statusBusca": resolver.last_status,
+        "statusBusca": overall_status,
     }
 
 
@@ -337,5 +395,6 @@ def find_identical_product_offers(
             "naoAlteraFichaTecnica": True,
             "confirmacaoPorIdentidadeForte": True,
             "buscaPorNomeCurto": True,
+            "buscaPorIdentificadoresFortes": True,
         },
     }
