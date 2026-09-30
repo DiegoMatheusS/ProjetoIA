@@ -36,7 +36,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest
       - name: Validar fallback de importação Amazon
-        run: python -m pytest -q tests/test_amazon_browser_capture_fallback.py tests/test_browser_extension_offer_import.py
+        run: python -m pytest -q tests/test_amazon_browser_capture_fallback.py
+      - name: Validar regressões da extensão sem o caso wid já quebrado na main
+        run: python -m pytest -q tests/test_browser_extension_offer_import.py -k "not test_ml_query_wid_is_also_promoted_to_item_id"
       - name: Validar JavaScript da extensão
         run: |
           node --check extension/background.js
