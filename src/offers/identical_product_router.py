@@ -48,13 +48,29 @@ def _brand_matches(expected: str | None, brand: Any, title: Any) -> bool:
 
 
 def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, Any]) -> tuple[bool, str | None]:
+    """Confirma identidade sem descartar anúncios que omitem campos separados.
+
+    GTIN confirmado é prioritário. Na ausência de GTIN confirmado, MPN e modelo
+    explícitos divergentes vetam a oferta; o título só serve como fallback quando
+    o scraper não conseguiu extrair esses campos, nunca para sobrepor conflitos.
+    """
     expected_gtin = _digits(payload.gtin)
     found_gtin = _digits(raw.get("gtin"))
-    if expected_gtin and found_gtin and expected_gtin == found_gtin:
-        return True, "GTIN"
+    if expected_gtin and found_gtin:
+        if expected_gtin == found_gtin:
+            return True, "GTIN"
+        return False, None
 
     expected_mpn = _norm(payload.mpn)
     found_mpn = _norm(raw.get("mpn"))
+    if expected_mpn and found_mpn and expected_mpn != found_mpn:
+        return False, None
+
+    expected_model = _norm(payload.modelo)
+    found_model = _norm(raw.get("model"))
+    if expected_model and found_model and expected_model != found_model:
+        return False, None
+
     if (
         expected_mpn
         and found_mpn
@@ -63,8 +79,6 @@ def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, A
     ):
         return True, "MPN_MARCA"
 
-    expected_model = _norm(payload.modelo)
-    found_model = _norm(raw.get("model"))
     title = _norm(raw.get("title"))
     if (
         expected_model
@@ -72,8 +86,12 @@ def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, A
         and _brand_matches(payload.marca, raw.get("brand"), raw.get("title"))
         and (found_model == expected_model or expected_model in title)
     ):
-        return True, "MARCA_MODELO"
+        return True, "MARCA_MODELO" if found_model == expected_model else "MARCA_MODELO_TITULO"
 
+    # Em alguns anúncios do Mercado Livre e Magalu o MPN/GTIN está apenas
+    # no título, apesar de a API/página não trazer o atributo estruturado.
+    if not found_mpn and not found_model:
+        return _identity_match_marketplace_name(payload, raw.get("title"))
     return False, None
 
 
@@ -117,12 +135,9 @@ def _short_name_query(name: Any, max_words: int = 6) -> str:
 
 
 def _query(payload: IdenticalProductOffersRequest) -> str:
-    # A busca é deliberadamente curta para aumentar recall. Identificadores
-    # fortes continuam sendo usados na etapa posterior de confirmação.
     short_name = _short_name_query(payload.nome)
     if short_name:
         return short_name
-
     gtin = _digits(payload.gtin)
     if gtin:
         return f"{gtin} {payload.marca or ''}".strip()
@@ -155,7 +170,6 @@ def _normalize_web_offer(
     url = str(raw.get("url_final") or raw.get("url_original") or requested_url or "").strip()
     if price is None or not url:
         return None
-
     return {
         "parceiro": "Mercado Livre" if store == "MERCADO_LIVRE" else "Magazine Luiza",
         "marketplace": store,
@@ -184,6 +198,9 @@ def _search_web_store(
     candidates = resolver.results(_query(payload), domains, limit=max(limit * 3, 6))
     offers: list[dict[str, Any]] = []
     checked = 0
+    failed_collection = 0
+    rejected_identity = 0
+    missing_price = 0
 
     for candidate in candidates:
         if len(offers) >= limit:
@@ -201,22 +218,30 @@ def _search_web_store(
                     continue
                 raw = MagazineScraper().collect(url, no_browser=False)
         except Exception:
+            failed_collection += 1
             continue
         checked += 1
         if not isinstance(raw, dict) or not raw.get("ok"):
+            failed_collection += 1
             continue
         matched, criterion = _identity_match_raw(payload, raw)
         if not matched or not criterion:
+            rejected_identity += 1
             continue
         normalized = _normalize_web_offer(store, raw, criterion, url)
         if normalized:
             offers.append(normalized)
+        else:
+            missing_price += 1
 
     return offers, {
         "consulta": _query(payload),
         "candidatos": len(candidates),
         "verificados": checked,
         "encontrados": len(offers),
+        "falhasColeta": failed_collection,
+        "rejeitadosPorIdentidade": rejected_identity,
+        "semPreco": missing_price,
         "statusBusca": resolver.last_status,
     }
 
@@ -228,7 +253,6 @@ def _search_shopee(
     client = ShopeeAffiliateClient()
     if not client.configured:
         return [], {"configurada": False, "encontrados": 0}
-
     search_query = _marketplace_query(payload)
     try:
         response = ShopeeAffiliateAgent(client).find_products(
@@ -237,7 +261,6 @@ def _search_shopee(
         )
     except ShopeeAffiliateError as exc:
         return [], {"configurada": True, "erro": str(exc), "encontrados": 0}
-
     offers: list[dict[str, Any]] = []
     for item in response.get("itens") or []:
         if len(offers) >= limit:
@@ -265,7 +288,6 @@ def _search_shopee(
             "apiOficial": True,
             "fonte": "SHOPEE_AFFILIATE_API",
         })
-
     return offers, {
         "configurada": True,
         "consulta": search_query,
@@ -280,13 +302,11 @@ def find_identical_product_offers(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
-
     if not any((_digits(payload.gtin), str(payload.mpn or "").strip(), str(payload.modelo or "").strip())):
         raise HTTPException(
             status_code=422,
             detail="O Produto precisa ter GTIN/EAN, MPN ou modelo para confirmar correspondência idêntica.",
         )
-
     limit = max(1, min(5, int(payload.limitePorLoja)))
     mercado_livre, ml_diag = _search_web_store(
         payload,
@@ -301,7 +321,6 @@ def find_identical_product_offers(
         limit,
     )
     shopee, shopee_diag = _search_shopee(payload, limit)
-
     unique: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for offer in [*mercado_livre, *magalu, *shopee]:
@@ -313,7 +332,6 @@ def find_identical_product_offers(
             continue
         seen.add(key)
         unique.append(offer)
-
     return {
         "modo": "BUSCA_PRODUTO_IDENTICO",
         "consulta": _query(payload),
