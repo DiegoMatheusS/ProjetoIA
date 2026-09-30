@@ -1964,7 +1964,7 @@ def extract_notebook(mapping, text):
     if os_name and os_version and os_version.casefold() not in os_name.casefold():
         os_name = f"{os_name} {os_version}"
     if not os_name:
-        os_name = first_match(text, r"(?:sistema\s+operacional(?:\s+instalado)?|operating\s+system(?:\s+installed)?|SO)\s*[:\-]\s*([^.;|\n]+)")
+        os_name = first_match(text, r"(?:sistema\s+operacional(?:\s+instalado)?|operating\s+system(?:\s+installed)?|SO)\s*[:\-]\s*([^;|\n]+?)(?=\.(?!\d)|[;|\n]|$)")
     if not os_name:
         for match in re.finditer(r"\b(?:Windows\s*(?:10|11)(?:\s*(?:Home|Pro|Professional|S))?|FreeDOS|DOS|Linux(?:\s+(?:Ubuntu|Debian|Mint|Gutta))?|Ubuntu(?:\s+\d{2}\.\d{2})?|Chrome\s*OS|macOS(?:\s+[A-Za-z]+)?)\b", text or "", re.I):
             preceding = (text or "")[max(0, match.start() - 35):match.start()]

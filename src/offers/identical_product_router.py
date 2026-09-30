@@ -86,6 +86,9 @@ def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, A
         return False, None
     if _variant_conflict(payload, raw.get("title")):
         return False, None
+    matched_title, title_criterion = _identity_match_marketplace_name(payload, raw.get("title"))
+    if matched_title and title_criterion in {"GTIN_TITULO", "MPN_MARCA_TITULO"}:
+        return True, title_criterion
     if expected_model and len(expected_model) >= 4 and _brand_matches(payload.marca, raw.get("brand"), raw.get("title")):
         if found_model == expected_model or _exact_phrase(payload.modelo, raw.get("title")):
             return True, "MARCA_MODELO"
