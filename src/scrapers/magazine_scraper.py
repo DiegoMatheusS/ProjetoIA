@@ -452,9 +452,13 @@ class MagazineScraper:
 
         def add(name, value):
             name = clean_text(name)
-            if isinstance(value, (dict, list)):
-                return
-            value = clean_text(value)
+            if isinstance(value, list):
+                value = ", ".join(str(item.get("value") or item.get("name") or "") if isinstance(item, dict) else str(item) for item in value)
+            if isinstance(value, dict):
+                value = value.get("value") or value.get("name")
+            if isinstance(value, bool):
+                value = "Sim" if value else "Não"
+            value = clean_text(str(value)) if value is not None else None
             if not name or not value or len(name) > 160 or len(value) > 1200:
                 return
             key = (name.casefold(), value.casefold())
@@ -481,7 +485,7 @@ class MagazineScraper:
                     if "value" in value else
                     value.get("value_name")
                     if "value_name" in value else
-                    value.get("text")
+                    value.get("text") if "text" in value else value.get("values")
                 )
                 if name is not None and candidate is not None:
                     add(name, candidate)
@@ -490,6 +494,8 @@ class MagazineScraper:
                 child_path = f"{path}.{key}" if path else str(key)
                 if isinstance(child, (dict, list)):
                     walk(child, child_path)
+                elif in_technical_context and not any(k in value for k in ("name", "label", "title", "key")):
+                    add(key, child)
 
         for obj in objects:
             walk(obj)
@@ -712,11 +718,10 @@ class MagazineScraper:
         page_description = self._description_section(text)
         description = generic.get("description")
         if description and re.search(r"<[^>]+>", description):
-            description = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
-            description = clean_text(description)
+            description = BeautifulSoup(description, "html.parser").get_text("\n", strip=True)
         if page_description:
             if description and page_description.casefold() not in description.casefold():
-                description = clean_text(f"{description} {page_description}")
+                description = f"{description}\n{page_description}".strip()
             else:
                 description = page_description or description
 

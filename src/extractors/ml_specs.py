@@ -1931,10 +1931,19 @@ def extract_phone(mapping,text):
     set_if(specs,"tipoTela",attr(mapping,"DISPLAY_TYPE","Tipo de tela"))
     set_if(specs,"cameraPrincipalMp",number(attr(mapping,"MAIN_CAMERA_RESOLUTION","Câmera principal")))
     set_if(specs,"cameraFrontalMp",number(attr(mapping,"FRONT_CAMERA_RESOLUTION","Câmera frontal")))
-    set_if(specs,"bateriaMah",integer(attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria")))
+    battery = attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria", "Bateria") or first_match(text, r"(\d[\d., ]*)\s*mAh\b")
+    if battery:
+        battery = re.sub(r"(?<=\d)[., ](?=\d{3}(?:\D|$))", "", str(battery))
+        set_if(specs,"bateriaMah",integer(battery))
     set_if(specs,"carregamentoWatts",integer(attr(mapping,"FAST_CHARGING_POWER","Potência de carregamento")))
     if re.search(r"\b5G\b",text or "",re.I): specs["cincoG"]=True
-    if re.search(r"\bNFC\b",text or "",re.I): specs["nfc"]=True
+    nfc = boolean(attr(mapping, "WITH_NFC", "NFC", "Com NFC", "Possui NFC"))
+    if nfc is None:
+        if re.search(r"(?:sem|n[aã]o\s+(?:possui|tem|suporta))\s+NFC|NFC\s*[:=-]\s*(?:n[aã]o|false)", text or "", re.I):
+            nfc = False
+        elif re.search(r"(?:com|possui|suporta)\s+NFC|NFC\s*[:=-]\s*(?:sim|true)", text or "", re.I):
+            nfc = True
+    set_if(specs, "nfc", nfc)
     set_if(specs,"sistemaOperacional",attr(mapping,"OPERATING_SYSTEM","Sistema operacional"))
     set_if(specs,"pesoGramas",number(attr(mapping,"WEIGHT","Peso")))
     set_if(specs,"cor",attr(mapping,"COLOR","Cor"))
@@ -1965,8 +1974,16 @@ def extract_pc_montado(mapping,text):
     ]
     components=[]
     for category,pattern in component_patterns:
-        value=first_match(text,pattern)
+        aliases = {
+            "PROCESSADOR": ("PROCESSOR_MODEL", "Processador", "CPU"),
+            "PLACA_MAE": ("MOTHERBOARD_MODEL", "Placa mãe", "Motherboard"),
+            "MEMORIA_RAM": ("Memória RAM", "RAM"), "PLACA_VIDEO": ("GPU_MODEL", "Placa de vídeo", "GPU"),
+            "ARMAZENAMENTO": ("Armazenamento", "SSD", "HDD"), "FONTE": ("Fonte", "PSU"),
+            "GABINETE": ("Gabinete",), "COOLER": ("Cooler",),
+        }
+        value=attr(mapping, *aliases[category]) or first_match(text,pattern)
         if value:
+            value = re.split(r"\s+(?:Processador|CPU|Placa[- ]m[aã]e|Mem[oó]ria\s+RAM|RAM|Placa\s+de\s+v[ií]deo|GPU|Armazenamento|SSD|HDD|Fonte|PSU|Gabinete|Cooler)\s*:", value, maxsplit=1, flags=re.I)[0].strip()
             components.append({"categoria":category,"nome":value,"quantidade":1})
     if components:
         specs["componentes"]=components

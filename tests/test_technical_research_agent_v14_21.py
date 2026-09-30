@@ -139,7 +139,7 @@ def test_agent_builds_plan_runs_rounds_and_returns_same_enrichment_contract(monk
     assert payload["especificacaoPlacaMae"]["chipset"] == "B550"
     assert info["camposPreenchidos"] == ["chipset"]
     assert info["agentePesquisa"]["ativo"] is True
-    assert info["agentePesquisa"]["versao"] == 3
+    assert info["agentePesquisa"]["versao"] == 7
     assert info["agentePesquisa"]["plano"]["fontesPlanejadas"][0] == "FABRICANTE_OFICIAL"
     assert len(info["agentePesquisa"]["rodadas"]) >= 1
     assert info["agentePesquisa"]["consultasEspecificasExecutadas"] >= 1
@@ -174,8 +174,8 @@ def test_agent_failure_does_not_block_openai_meta_prompt_flow(monkeypatch):
         lambda _name: FakeOpenAI(),
     )
     monkeypatch.setattr(
-        "src.technical_ai.service.collect_cited_sources",
-        lambda *_args, **_kwargs: None,
+        "src.technical_ai.iterative_research.collect_cited_sources",
+        lambda *_args, **_kwargs: {},
     )
 
     out = enrich_hardware_with_external_ai(

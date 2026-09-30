@@ -141,5 +141,5 @@ def test_collect_cited_sources_returns_field_level_official_evidence(monkeypatch
     )
 
     assert verified["chipset"]["fonte"] == "FABRICANTE_OFICIAL"
-    assert verified["chipset"]["valor"] == "B550"
-    assert local_info["evidenciaPorCampo"]["chipset"]["valor"] == "B550"
+    assert verified["chipset"]["valor"] == "AMD B550"
+    assert local_info["evidenciaPorCampo"]["chipset"]["valor"] == "AMD B550"
