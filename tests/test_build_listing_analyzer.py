@@ -46,6 +46,24 @@ def test_processor_suffix_must_match():
     assert cpu["hardwareId"] is None
 
 
+def test_generic_ram_does_not_borrow_motherboard_brand():
+    result = analyze_listing(
+        "Pc gamer", "Placa-mãe ASUS B550M\nMemória RAM: 16 GB DDR4\nSSD: 500 GB",
+        [{"id": 20, "categoria": "MEMORIA_RAM", "marca": "ASUS", "modelo": "16 GB DDR4", "nome": "RAM ASUS"}],
+    )
+    ram = next(c for c in result["componentesDetectados"] if c["categoria"] == "MEMORIA_RAM")
+    assert ram["hardwareId"] is None
+
+
+def test_generic_ram_does_not_borrow_brand_in_unstructured_line():
+    result = analyze_listing(
+        "Oferta", "Placa-mãe ASUS B550M acompanha Memória RAM 16 GB DDR4",
+        [{"id": 20, "categoria": "MEMORIA_RAM", "marca": "ASUS", "modelo": "16 GB DDR4", "nome": "RAM ASUS"}],
+    )
+    ram = next(c for c in result["componentesDetectados"] if c["categoria"] == "MEMORIA_RAM")
+    assert ram["hardwareId"] is None
+
+
 def test_unstructured_multicomponent_listing_requires_review():
     result = analyze_listing("Super oferta", "Processador Ryzen 5 5600, placa-mãe B550 e memória DDR4")
     assert result["confirmacaoObrigatoria"] is True
