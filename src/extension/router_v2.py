@@ -13,6 +13,7 @@ from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
+from .amazon_fallback import hydrate_amazon_analysis
 from .payload_guard import (
     extension_registration_issues,
     sanitize_extension_hardware_payload,
@@ -250,13 +251,21 @@ def _import_new_with_ai(
             noBrowser=False,
         )
     )
+    # Quando a Amazon bloqueia o datacenter, aproveitar o produto lido no
+    # navegador do administrador ANTES de classificar/enriquecer a ficha.
+    analysis = hydrate_amazon_analysis(
+        analysis,
+        url=payload.urlProduto,
+        capture=payload.dadosPagina,
+        forced_category=payload.categoria,
+    )
 
     category = str(analysis.get("categoriaDetectada") or "").strip().upper()
     raw_payload = analysis.get("payloadParcialBackend")
     if not category or not isinstance(raw_payload, dict):
         return {
             "status": "REVISAO_NECESSARIA",
-            "motivo": "Não foi possível identificar uma categoria suportada para cadastro.",
+            "motivo": "Não foi possível identificar uma categoria suportada para cadastro. Confira o título capturado na aba do produto.",
             "analise": analysis,
             "buscaCriabyte": {"status": preflight_status},
         }
@@ -327,9 +336,6 @@ def _import_new_with_ai(
 
     affiliate_url = _affiliate_url(payload)
     partner = _partner_from_analysis(analysis, payload.urlProduto)
-
-    # O preço lido pela extensão tem prioridade; o coletor do ProjetoIA continua
-    # funcionando como fallback quando a página não expõe o valor diretamente.
     manual_or_page_price = (
         payload.precoManual
         if payload.precoManual is not None
@@ -400,9 +406,8 @@ def _import_v2_sync(payload: ImportAffiliateOfferV2Request) -> dict[str, Any]:
     if status == "EXISTENTE":
         return _import_existing(payload, preflight)
 
-    # NAO_ENCONTRADO, AMBIGUO e DADOS_INSUFICIENTES seguem para o mesmo motor
-    # de enriquecimento usado hoje pelo ProjetoIA. Em caso de ambiguidade, a IA
-    # não autoriza vínculo automático; ela reconstrói a prévia para revisão.
+    # Correspondência ambígua continua exigindo conferência: nunca cria um
+    # vínculo automático apenas porque a IA identificou o mesmo processador.
     return _import_new_with_ai(payload, status)
 
 
