@@ -21,8 +21,8 @@ class AnalyzeListingRequest(BaseModel):
 @router.post("/classificar-pc-kit")
 def classify_build_listing(payload: AnalyzeListingRequest, x_api_key: str | None = Header(default=None)):
     expected = os.getenv("PRODUTO_IA_API_KEY", "").strip()
-    if expected and x_api_key != expected:
-        raise HTTPException(status_code=401, detail="API key inválida")
+    if not expected or x_api_key != expected:
+        raise HTTPException(status_code=401, detail="API key inválida ou não configurada")
     try:
         return analyze_listing(payload.titulo, payload.descricao, [c.model_dump() for c in payload.catalogo])
     except ValueError as exc:
