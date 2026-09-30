@@ -80,29 +80,60 @@ function extractProductDataFromPage() {
     }
   }
 
+  const amazon = /(^|\.)amazon\.(?:com\.br|com)$/i.test(location.hostname);
+  const amazonTableValue = (...labels) => {
+    if (!amazon) return null;
+    const wanted = labels.map((label) => label.toLowerCase());
+    const rows = document.querySelectorAll(
+      "#productDetails_techSpec_section_1 tr, #productDetails_detailBullets_sections1 tr, #detailBullets_feature_div li",
+    );
+    for (const row of rows) {
+      const key = clean(row.querySelector("th, .a-text-bold")?.textContent)?.replace(/[:：]+$/, "").toLowerCase();
+      if (!key || !wanted.some((label) => key === label)) continue;
+      const value = clean(row.querySelector("td")?.textContent) || clean(row.textContent?.replace(row.querySelector("th, .a-text-bold")?.textContent || "", ""));
+      if (value) return value;
+    }
+    return null;
+  };
+
   const brandValue = product?.brand;
+  const amazonByline = amazon ? clean(document.querySelector("#bylineInfo")?.textContent) : null;
   const brand = clean(
     typeof brandValue === "object" && brandValue !== null
       ? brandValue.name
       : brandValue,
-  ) || itemprop("brand") || meta('meta[property="product:brand"]', 'meta[name="brand"]');
+  ) || itemprop("brand") || amazonTableValue("marca", "brand", "fabricante") ||
+    (amazonByline ? amazonByline.replace(/^(?:visite a loja (?:da?|do) |marca:\s*|brand:\s*)/i, "").trim() : null) ||
+    meta('meta[property="product:brand"]', 'meta[name="brand"]');
 
   const gtin = clean(
     product?.gtin || product?.gtin14 || product?.gtin13 || product?.gtin12 || product?.gtin8,
   ) || itemprop("gtin", "gtin14", "gtin13", "gtin12", "gtin8") ||
+    amazonTableValue("ean", "gtin", "código de barras") ||
     meta('meta[name="gtin"]', 'meta[property="product:gtin"]');
 
   const model = clean(product?.model) || itemprop("model") ||
+    amazonTableValue("número do modelo", "número do modelo do item", "modelo", "model number") ||
     meta('meta[name="model"]', 'meta[property="product:model"]');
   const mpn = clean(product?.mpn) || itemprop("mpn") ||
+    amazonTableValue("número da peça", "referência do fabricante", "manufacturer part number", "mpn") ||
     meta('meta[name="mpn"]', 'meta[property="product:mpn"]');
 
-  const name = clean(product?.name) || meta('meta[property="og:title"]', 'meta[name="twitter:title"]') ||
+  const name = (amazon ? clean(document.querySelector("#productTitle")?.textContent) : null) ||
+    clean(product?.name) || meta('meta[property="og:title"]', 'meta[name="twitter:title"]') ||
     clean(document.querySelector("h1")?.textContent) || clean(document.title);
 
   let offer = product?.offers;
   if (Array.isArray(offer)) offer = offer[0];
-  const rawPrice = clean(offer?.price) || itemprop("price") ||
+  const amazonPrice = amazon ? clean(
+    document.querySelector(
+      "#corePriceDisplay_desktop_feature_div .priceToPay .a-offscreen, " +
+      "#corePrice_feature_div .priceToPay .a-offscreen, " +
+      "#apex_desktop .priceToPay .a-offscreen, " +
+      "#price_inside_buybox, #priceblock_ourprice, #priceblock_dealprice",
+    )?.textContent,
+  ) : null;
+  const rawPrice = amazonPrice || clean(offer?.price) || itemprop("price") ||
     meta('meta[property="product:price:amount"]', 'meta[itemprop="price"]');
   let preco = null;
   if (rawPrice) {
@@ -116,9 +147,11 @@ function extractProductDataFromPage() {
     if (Number.isFinite(parsed) && parsed > 0) preco = Math.round(parsed * 100) / 100;
   }
 
-  const pathMatch = location.pathname.match(/\/(?:dp|gp\/product|product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+  const pathMatch = location.pathname.match(/\/(?:dp|gp\/(?:aw\/d|product)|product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
   const queryAsin = new URL(location.href).searchParams.get("asin");
-  const domAsin = document.querySelector("[data-asin]")?.getAttribute("data-asin");
+  const domAsin = amazon
+    ? document.querySelector("input#ASIN, input[name='ASIN'], input#twister-plus-asin")?.value || document.querySelector("#ASIN")?.getAttribute("value")
+    : document.querySelector("[data-asin]")?.getAttribute("data-asin");
   const asinCandidate = clean(pathMatch?.[1] || queryAsin || domAsin);
   const asin = asinCandidate && /^[A-Z0-9]{10}$/i.test(asinCandidate)
     ? asinCandidate.toUpperCase()
