@@ -248,15 +248,20 @@ class MercadoLivreScraper:
 
     @staticmethod
     def _attribute_value(attr):
-        value = clean_text(attr.get("value_name"))
-        if value:
-            return value
-        values = attr.get("values") or []
-        for row in values:
-            value = clean_text(row.get("name") or row.get("value_name"))
-            if value:
-                return value
-        return None
+        def render(row):
+            value = row.get("name") or row.get("value_name")
+            if value is not None and value != "":
+                return clean_text(str(value))
+            structure = row.get("struct") or row.get("value_struct") or {}
+            if structure.get("number") is not None:
+                return f"{structure['number']} {structure.get('unit') or ''}".strip()
+            return None
+        direct = attr.get("value_name")
+        if direct is not None and direct != "":
+            return clean_text(str(direct))
+        values = [render(row) for row in attr.get("values") or [] if isinstance(row, dict)]
+        values = list(dict.fromkeys(v for v in values if v))
+        return ", ".join(values) if values else render({"value_struct": attr.get("value_struct")})
 
     @classmethod
     def _attributes_text(cls, attributes):
@@ -280,7 +285,7 @@ class MercadoLivreScraper:
                     # valor válido vence; listas seguintes apenas preenchem ausências.
                     normalized = key.casefold()
                     if normalized not in merged or not cls._attribute_value(merged[normalized]):
-                        merged[normalized] = attr
+                        merged[normalized] = {**attr, "value_name": cls._attribute_value(attr)}
                 else:
                     anonymous.append(attr)
         return list(merged.values()) + anonymous
@@ -732,7 +737,7 @@ class MercadoLivreScraper:
                 logger.warning(f"Surfsky prioritário do Mercado Livre falhou: {exc}")
 
         api_errors = []
-        item = sale_price = prices = catalog = catalog_items = catalog_offer = None
+        item = sale_price = prices = catalog = catalog_items = catalog_offer = item_description = None
 
         if item_id:
             item, err = self._api_get(
@@ -760,6 +765,11 @@ class MercadoLivreScraper:
                     api_errors.append(err)
 
             if item:
+                item_description, description_error = self._api_get(
+                    f"/items/{item_id}/description", allow_public_fallback=True,
+                )
+                if description_error:
+                    api_errors.append(description_error)
                 catalog_product_id = clean_text(item.get("catalog_product_id")) or catalog_product_id
 
         if catalog_product_id:
@@ -798,7 +808,7 @@ class MercadoLivreScraper:
         if item or catalog or catalog_offer:
             catalog_attrs = (catalog or {}).get("attributes") or []
             item_attrs = (item or {}).get("attributes") or []
-            attrs = self._merge_attributes(catalog_attrs, item_attrs)
+            attrs = self._merge_attributes(item_attrs, catalog_attrs)
 
             pictures = (catalog or {}).get("pictures") or (item or {}).get("pictures") or []
             picture = pictures[0] if pictures else {}
@@ -859,7 +869,7 @@ class MercadoLivreScraper:
                 "model": model,
                 "mpn": mpn,
                 "gtin": gtin,
-                "description": self._catalog_description(catalog),
+                "description": str((item_description or {}).get("plain_text") or (item_description or {}).get("text") or "").strip() or self._catalog_description(catalog),
                 "image_url": image,
                 "price": price,
                 "previous_price": previous,

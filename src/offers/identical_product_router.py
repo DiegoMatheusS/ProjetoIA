@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 import re
 from typing import Any
 
@@ -47,75 +48,65 @@ def _brand_matches(expected: str | None, brand: Any, title: Any) -> bool:
     return bool(wanted and (_norm(brand) == wanted or wanted in _norm(title)))
 
 
+def _tokens(value: Any) -> str:
+    return " ".join(re.findall(r"[a-z]+|[0-9]+", str(value or "").casefold()))
+
+
+def _exact_phrase(value: Any, title: Any) -> bool:
+    needle, haystack = _tokens(value), _tokens(title)
+    return bool(needle and f" {needle} " in f" {haystack} ")
+
+
+def _variant_conflict(payload: IdenticalProductOffersRequest, title: Any) -> bool:
+    expected = f"{payload.nome} {payload.modelo or ''}"
+    variants = r"\b(?:ti|super|xt|xtx|pro|plus|ultra|max|lite|mini)\b"
+    if set(re.findall(variants, str(title or '').casefold())) != set(re.findall(variants, expected.casefold())):
+        return True
+    for pattern in (r"\b\d+\s*(?:gb|tb)\b", r"\b(?:110|127|220)\s*v\b"):
+        found = {_norm(v) for v in re.findall(pattern, str(title or ''), re.I)}
+        wanted = {_norm(v) for v in re.findall(pattern, expected, re.I)}
+        if wanted and found != wanted:
+            return True
+    return False
+
+
+
 def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, Any]) -> tuple[bool, str | None]:
-    """Confirma identidade sem descartar anúncios que omitem campos separados.
-
-    GTIN confirmado é prioritário. Na ausência de GTIN confirmado, MPN e modelo
-    explícitos divergentes vetam a oferta; o título só serve como fallback quando
-    o scraper não conseguiu extrair esses campos, nunca para sobrepor conflitos.
-    """
-    expected_gtin = _digits(payload.gtin)
-    found_gtin = _digits(raw.get("gtin"))
-    if expected_gtin and found_gtin:
-        if expected_gtin == found_gtin:
-            return True, "GTIN"
+    gtin, found_gtin = _digits(payload.gtin), _digits(raw.get("gtin"))
+    mpn, found_mpn = _norm(payload.mpn), _norm(raw.get("mpn"))
+    # A conflicting explicit identifier must never fall back to a similar title.
+    if (gtin and found_gtin and gtin != found_gtin) or (mpn and found_mpn and mpn != found_mpn):
         return False, None
-
-    expected_mpn = _norm(payload.mpn)
-    found_mpn = _norm(raw.get("mpn"))
-    if expected_mpn and found_mpn and expected_mpn != found_mpn:
-        return False, None
-
-    expected_model = _norm(payload.modelo)
-    found_model = _norm(raw.get("model"))
-    if expected_model and found_model and expected_model != found_model:
-        return False, None
-
-    if (
-        expected_mpn
-        and found_mpn
-        and expected_mpn == found_mpn
-        and _brand_matches(payload.marca, raw.get("brand"), raw.get("title"))
-    ):
+    if gtin and found_gtin:
+        return True, "GTIN"
+    if mpn and found_mpn and _brand_matches(payload.marca, raw.get("brand"), raw.get("title")):
         return True, "MPN_MARCA"
-
-    title = _norm(raw.get("title"))
-    if (
-        expected_model
-        and len(expected_model) >= 4
-        and _brand_matches(payload.marca, raw.get("brand"), raw.get("title"))
-        and (found_model == expected_model or expected_model in title)
-    ):
-        return True, "MARCA_MODELO" if found_model == expected_model else "MARCA_MODELO_TITULO"
-
-    # Em alguns anúncios do Mercado Livre e Magalu o MPN/GTIN está apenas
-    # no título, apesar de a API/página não trazer o atributo estruturado.
-    if not found_mpn and not found_model:
-        return _identity_match_marketplace_name(payload, raw.get("title"))
+    expected_model, found_model = _norm(payload.modelo), _norm(raw.get("model"))
+    if found_model and expected_model and found_model != expected_model:
+        return False, None
+    if _variant_conflict(payload, raw.get("title")):
+        return False, None
+    matched_title, title_criterion = _identity_match_marketplace_name(payload, raw.get("title"))
+    if matched_title and title_criterion in {"GTIN_TITULO", "MPN_MARCA_TITULO"}:
+        return True, title_criterion
+    if expected_model and len(expected_model) >= 4 and _brand_matches(payload.marca, raw.get("brand"), raw.get("title")):
+        if found_model == expected_model or _exact_phrase(payload.modelo, raw.get("title")):
+            return True, "MARCA_MODELO"
     return False, None
 
 
-def _identity_match_marketplace_name(
-    payload: IdenticalProductOffersRequest,
-    title: Any,
-) -> tuple[bool, str | None]:
-    normalized_title = _norm(title)
-    if not normalized_title:
+def _identity_match_marketplace_name(payload: IdenticalProductOffersRequest, title: Any) -> tuple[bool, str | None]:
+    if not title or _variant_conflict(payload, title):
         return False, None
-
     gtin = _digits(payload.gtin)
-    if gtin and len(gtin) >= 8 and gtin in _digits(title):
+    if gtin and len(gtin) >= 8 and re.search(r"(?<!\d)" + re.escape(gtin) + r"(?!\d)", str(title)):
         return True, "GTIN_TITULO"
-
-    mpn = _norm(payload.mpn)
-    brand = _norm(payload.marca)
-    if mpn and len(mpn) >= 5 and mpn in normalized_title and (not brand or brand in normalized_title):
+    if not _brand_matches(payload.marca, None, title):
+        return False, None
+    if payload.mpn and len(_norm(payload.mpn)) >= 5 and _exact_phrase(payload.mpn, title):
         return True, "MPN_MARCA_TITULO"
-
-    model = _norm(payload.modelo)
-    if model and len(model) >= 4 and model in normalized_title and (not brand or brand in normalized_title):
+    if payload.modelo and len(_norm(payload.modelo)) >= 4 and _exact_phrase(payload.modelo, title):
         return True, "MARCA_MODELO_TITULO"
-
     return False, None
 
 
@@ -308,19 +299,23 @@ def find_identical_product_offers(
             detail="O Produto precisa ter GTIN/EAN, MPN ou modelo para confirmar correspondência idêntica.",
         )
     limit = max(1, min(5, int(payload.limitePorLoja)))
-    mercado_livre, ml_diag = _search_web_store(
-        payload,
-        "MERCADO_LIVRE",
-        ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"],
-        limit,
-    )
-    magalu, magalu_diag = _search_web_store(
-        payload,
-        "MAGALU",
-        ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"],
-        limit,
-    )
-    shopee, shopee_diag = _search_shopee(payload, limit)
+    def search_safely(fn, *args):
+        try:
+            return fn(*args)
+        except Exception:
+            # A store outage must not discard confirmed offers from other stores.
+            return [], {"statusBusca": "ERRO", "erro": "Não foi possível consultar esta loja agora.", "encontrados": 0}
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        ml_task = pool.submit(search_safely, _search_web_store, payload, "MERCADO_LIVRE",
+                              ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"], limit)
+        magalu_task = pool.submit(search_safely, _search_web_store, payload, "MAGALU",
+                                  ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"], limit)
+        shopee_task = pool.submit(search_safely, _search_shopee, payload, limit)
+        mercado_livre, ml_diag = ml_task.result()
+        magalu, magalu_diag = magalu_task.result()
+        shopee, shopee_diag = shopee_task.result()
+
     unique: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for offer in [*mercado_livre, *magalu, *shopee]:

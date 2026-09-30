@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -83,7 +84,7 @@ def _format_spec_value(key, value):
     return text
 
 
-def _build_spec_description(raw, specs, max_items=18, max_length=1200):
+def _build_spec_description(raw, specs, max_items=18, max_length=450):
     """Cria descrição curta a partir da ficha técnica, nunca do texto bruto da página."""
     parts = []
     seen = set()
@@ -100,7 +101,9 @@ def _build_spec_description(raw, specs, max_items=18, max_length=1200):
         parts.append(f"{label}: {value}")
 
     add("marca", raw.get("brand"))
-    add("modelo", raw.get("model"))
+    model = raw.get("model")
+    if model and len(str(model)) <= 100 and str(model).casefold() != str(raw.get("title") or "").casefold():
+        add("modelo", model)
     for key, value in (specs or {}).items():
         if len(parts) >= max_items:
             break
@@ -225,6 +228,13 @@ def build_result(raw, forced_category=None):
     # desconhecidos no payload. As especificações continuam em
     # especificacoesEncontradas para revisão do ADMIN.
     if category == "PC_MONTADO":
+        # Commercial PCs/kits retain the seller's description, including generic
+        # parts and accessories; the short technical summary loses that context.
+        description = str(raw.get("description") or "").strip()
+        if description:
+            if re.search(r"<[^>]+>", description):
+                description = BeautifulSoup(description, "html.parser").get_text("\n", strip=True)
+            payload["descricao"] = description[:4000]
         for key in ("finalidade", "resolucaoRecomendada"):
             if specs.get(key) not in (None, "", []):
                 payload[key] = specs[key]

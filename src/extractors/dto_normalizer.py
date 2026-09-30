@@ -507,6 +507,7 @@ def _iso_date(value: Any):
 
 
 BOOL_FIELDS = {
+    "NOTEBOOK": {"gpuIntegrada", "gpuDedicada", "upgradeRam", "upgradeArmazenamento", "touch", "ethernet", "leitorCartao", "webcam", "tecladoIluminado", "tecladoNumerico", "leitorDigital"},
     "PROCESSADOR": {"possuiVideoIntegrado", "suportaEcc", "coolerIncluso", "multiplicadorDesbloqueado", "suporteOverclock"},
     "PLACA_MAE": {"suportaXmp", "suportaExpo", "suportaEcc", "suportaMemoriaRegistrada", "wifi", "bluetooth", "biosFlashback"},
     "MEMORIA_RAM": {"ecc", "registrada", "suportaXmp", "suportaExpo", "rgb"},
@@ -517,6 +518,7 @@ BOOL_FIELDS = {
 }
 
 INT_FIELDS = {
+    "NOTEBOOK": {"nucleos", "threads", "clockBaseMhz", "clockTurboMhz", "tdpWatts", "vramGb", "tgpWatts", "ramInstaladaGb", "frequenciaMhz", "ramSoldadaGb", "slotsRamTotal", "slotsRamLivres", "ramMaximaGb", "armazenamentoGb", "slotsM2Total", "slotsM2Livres", "resolucaoLargura", "resolucaoAltura", "taxaAtualizacaoHz", "brilhoNits", "potenciaCarregadorWatts", "usbA", "usbC", "thunderbolt", "hdmi", "displayPort"},
     "PROCESSADOR": {"litografiaNm", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "lanesPcie"},
     "PLACA_MAE": {"slotsMemoria", "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb", "portasSata"},
     "MEMORIA_RAM": {"capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz", "frequenciaJedecMhz", "latenciaCl"},
@@ -529,6 +531,7 @@ INT_FIELDS = {
 }
 
 FLOAT_FIELDS = {
+    "NOTEBOOK": {"tamanhoTelaPolegadas", "bateriaWh", "autonomiaInformadaHoras", "pesoKg", "larguraMm", "alturaMm", "profundidadeMm"},
     "PROCESSADOR": {"cacheL2Mb", "cacheL3Mb", "temperaturaMaximaC"},
     "MEMORIA_RAM": {"tensaoVolts", "alturaMm", "consumoWatts"},
     "PLACA_VIDEO": {"comprimentoMm", "alturaMm", "espessuraMm", "slotsOcupados"},
@@ -546,6 +549,7 @@ INT_LIST_FIELDS = {
 
 
 MHZ_FIELDS = {
+    "NOTEBOOK": {"clockBaseMhz", "clockTurboMhz", "frequenciaMhz"},
     "PROCESSADOR": {"frequenciaBaseMhz", "frequenciaTurboMhz", "frequenciaMemoriaMaximaMhz"},
     "PLACA_MAE": set(),
     "MEMORIA_RAM": {"frequenciaMhz", "frequenciaJedecMhz"},
@@ -553,6 +557,7 @@ MHZ_FIELDS = {
 }
 
 GB_FIELDS = {
+    "NOTEBOOK": {"vramGb", "ramInstaladaGb", "ramSoldadaGb", "ramMaximaGb", "armazenamentoGb"},
     "PROCESSADOR": {"capacidadeMemoriaMaximaGb"},
     "PLACA_MAE": {"capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb"},
     "MEMORIA_RAM": {"capacidadePorModuloGb"},
@@ -563,6 +568,7 @@ GB_FIELDS = {
 MB_FIELDS = {"PROCESSADOR": {"cacheL2Mb", "cacheL3Mb"}}
 
 MM_FIELDS = {
+    "NOTEBOOK": {"larguraMm", "alturaMm", "profundidadeMm"},
     "MEMORIA_RAM": {"alturaMm"},
     "PLACA_VIDEO": {"comprimentoMm", "alturaMm", "espessuraMm"},
     "ARMAZENAMENTO": {"alturaMm", "larguraMm", "profundidadeMm", "espessuraMm"},
@@ -573,6 +579,7 @@ MM_FIELDS = {
 }
 
 WATT_FIELDS = {
+    "NOTEBOOK": {"tdpWatts", "tgpWatts", "potenciaCarregadorWatts"},
     "PROCESSADOR": {"tdpWatts"},
     "MEMORIA_RAM": {"consumoWatts"},
     "PLACA_VIDEO": {"consumoWatts", "potenciaFonteRecomendadaWatts"},
@@ -614,6 +621,13 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
     """
     category = str(category or "").upper()
     normalized = dict(specs or {})
+    if category == "NOTEBOOK":
+        for field, value in list(normalized.items()):
+            if isinstance(value, str) and value.strip().casefold() in {
+                "não informado", "nao informado", "não encontrado", "nao encontrado",
+                "unknown", "not found", "n/a", "null", "undefined", "—",
+            }:
+                normalized[field] = None
 
     for field in BOOL_FIELDS.get(category, set()):
         if field in normalized and normalized[field] is not None:
