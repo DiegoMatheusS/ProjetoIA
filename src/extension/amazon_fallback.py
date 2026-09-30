@@ -1,7 +1,7 @@
-"""Fallback da extensão Amazon usando apenas os dados lidos da aba do admin.
+"""Fallback da extensão Amazon usando dados lidos da aba do administrador.
 
-A Amazon pode devolver uma página vazia/bloqueada ao navegador do servidor.
-Isso não deve descartar o título e os identificadores obtidos no Chrome.
+A Amazon pode devolver uma página bloqueada ao servidor. A captura local
+preserva a identidade do produto, mas não substitui confirmação da ficha técnica.
 """
 from __future__ import annotations
 
@@ -13,6 +13,40 @@ from ..main import build_result
 from ..technical_ai.auto import auto_enrich_link_result
 
 
+# Aplicados apenas quando a análise REMOTA falha e a categoria veio da aba.
+# Não aceitar publicação automática de hardware sem sequer uma ficha mínima.
+_MINIMUM_AMAZON_HARDWARE_SPECS = {
+    "PROCESSADOR": ("socket", "nucleos"),
+    "PLACA_MAE": ("socket", "chipset"),
+    "MEMORIA_RAM": ("tipo", "capacidadePorModuloGb"),
+    "PLACA_VIDEO": ("gpu", "memoriaVideoGb"),
+    "ARMAZENAMENTO": ("tipo", "capacidadeGb"),
+    "FONTE": ("formato", "potenciaWatts"),
+    "GABINETE": ("tamanho",),
+    "COOLER": ("tipo",),
+    "VENTOINHA": ("tamanhoMm",),
+}
+
+
+def amazon_browser_minimum_issues(category: str, payload: dict[str, Any]) -> list[str]:
+    schema = SCHEMAS.get(str(category or "").upper())
+    if not schema or schema[0] != "HARDWARE" or not schema[1]:
+        return []
+    spec_field = schema[1]
+    specs = payload.get(spec_field)
+    specs = specs if isinstance(specs, dict) else {}
+    issues = []
+    for field in _MINIMUM_AMAZON_HARDWARE_SPECS.get(category, ()):
+        value = specs.get(field)
+        if value is None or value == "" or value == [] or (
+            isinstance(value, str) and value.strip().casefold() in {
+                "n/a", "não informado", "nao informado", "desconhecido", "unknown",
+            }
+        ):
+            issues.append(f"{spec_field}.{field} não confirmado")
+    return issues
+
+
 def hydrate_amazon_analysis(
     analysis: dict[str, Any],
     *,
@@ -22,8 +56,8 @@ def hydrate_amazon_analysis(
 ) -> dict[str, Any]:
     """Substitui análise inconclusiva pela captura da aba, sem inventar specs.
 
-    A análise remota completa continua prioritária. O fallback só ocorre para
-    páginas Amazon, quando o coletor não identificou a categoria ou o nome.
+    Uma análise remota completa continua prioritária. Só usar captura local
+    quando a categoria ou o nome da coleta remota estiverem ausentes.
     """
     host = (urlparse(url).hostname or "").lower().removeprefix("www.")
     if not any(host == domain or host.endswith(f".{domain}") for domain in ("amazon.com.br", "amazon.com")):
@@ -41,7 +75,6 @@ def hydrate_amazon_analysis(
         return analysis
 
     asin = str(getattr(capture, "asin", None) or "").strip().upper()
-    page_price = getattr(capture, "preco", None)
     page_raw = {
         "ok": True,
         "blocked": False,
@@ -53,7 +86,7 @@ def hydrate_amazon_analysis(
         "model": getattr(capture, "modelo", None),
         "mpn": getattr(capture, "mpn", None),
         "gtin": getattr(capture, "gtin", None),
-        "price": page_price,
+        "price": getattr(capture, "preco", None),
         "currency": "BRL",
         "marketplace_product_code": asin or getattr(capture, "codigoMarketplace", None),
         "attributes": [],
@@ -65,13 +98,11 @@ def hydrate_amazon_analysis(
     if category not in SCHEMAS:
         return analysis
 
-    # Se a coleta remota já encontrou atributos úteis da MESMA categoria,
-    # preservá-los. Não transferir specs de uma categoria potencialmente errada.
+    # Reaproveitar atributos remotos úteis apenas da MESMA categoria.
     if current_category == category:
-        original_spec = SCHEMAS[category][1]
-        if original_spec and isinstance(current_payload.get(original_spec), dict):
-            local_payload = local["payloadParcialBackend"]
-            local_payload[original_spec] = dict(current_payload[original_spec])
+        spec_field = SCHEMAS[category][1]
+        if spec_field and isinstance(current_payload.get(spec_field), dict):
+            local["payloadParcialBackend"][spec_field] = dict(current_payload[spec_field])
         for key in ("descricao", "imagemUrl"):
             if current_payload.get(key) and not local["payloadParcialBackend"].get(key):
                 local["payloadParcialBackend"][key] = current_payload[key]
@@ -86,6 +117,6 @@ def hydrate_amazon_analysis(
     local["origemColeta"]["capturaLocal"] = True
     local["origemColeta"]["fonte"] = "EXTENSAO_ABA_LOCAL_AMAZON"
     local["fallbackCapturaAmazon"] = True
-    # A IA recebe o NOME REAL antes de pesquisar especificações; erro/timeout
-    # no provedor não descarta título, categoria ou preço já capturados.
+    # IA recebe o título REAL antes da consulta; falha/timeout do provider não
+    # descarta título, categoria, ASIN nem preço capturados.
     return auto_enrich_link_result(local)
