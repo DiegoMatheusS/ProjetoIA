@@ -13,7 +13,7 @@ from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
-from .amazon_fallback import hydrate_amazon_analysis
+from .amazon_fallback import amazon_browser_minimum_issues, hydrate_amazon_analysis
 from .payload_guard import (
     extension_registration_issues,
     sanitize_extension_hardware_payload,
@@ -251,8 +251,6 @@ def _import_new_with_ai(
             noBrowser=False,
         )
     )
-    # Quando a Amazon bloqueia o datacenter, aproveitar o produto lido no
-    # navegador do administrador ANTES de classificar/enriquecer a ficha.
     analysis = hydrate_amazon_analysis(
         analysis,
         url=payload.urlProduto,
@@ -282,6 +280,9 @@ def _import_new_with_ai(
         hardware_payload = normalize_hardware_payload_for_backend(category, raw_payload)
         hardware_payload = sanitize_extension_hardware_payload(category, hardware_payload)
         issues = extension_registration_issues(category, hardware_payload)
+        if analysis.get("fallbackCapturaAmazon"):
+            issues.extend(amazon_browser_minimum_issues(category, hardware_payload))
+        issues = list(dict.fromkeys(issues))
         if issues:
             response = _review_response(
                 category,
@@ -319,7 +320,6 @@ def _import_new_with_ai(
         registration_payload = {"produtoPayload": product_payload}
         preview_source = raw_payload
     else:
-        # Mantém o comportamento conhecido para fluxos especializados, como Notebook/Build.
         legacy = _import_sync(
             ImportAffiliateOfferRequest(
                 urlProduto=payload.urlProduto,
@@ -406,8 +406,6 @@ def _import_v2_sync(payload: ImportAffiliateOfferV2Request) -> dict[str, Any]:
     if status == "EXISTENTE":
         return _import_existing(payload, preflight)
 
-    # Correspondência ambígua continua exigindo conferência: nunca cria um
-    # vínculo automático apenas porque a IA identificou o mesmo processador.
     return _import_new_with_ai(payload, status)
 
 
