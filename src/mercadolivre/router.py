@@ -50,8 +50,6 @@ def _request_url(payload: MercadoLivreProductRequest) -> tuple[str, str | None]:
     if not item_id:
         raise HTTPException(status_code=422, detail="Informe uma URL do Mercado Livre ou itemId MLB.")
 
-    # A URL é usada apenas como referência pelo coletor; o itemId extraído dela
-    # direciona a consulta exata à API oficial.
     return f"https://produto.mercadolivre.com.br/MLB-{item_id[3:]}", item_id
 
 
@@ -66,13 +64,35 @@ def _discount_percent(current: Any, previous: Any) -> float | None:
     return round(((previous_value - current_value) / previous_value) * 100, 2)
 
 
+def _technical_attributes(raw: dict[str, Any]) -> list[dict[str, str]]:
+    """Retém atributos verdadeiramente coletados em vez de perder a ficha da API."""
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    raw_rows = raw.get("product_attributes") or raw.get("attributes") or []
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("nome") or row.get("name") or row.get("id") or "").strip()
+        value = row.get("valor") or row.get("value_name") or row.get("value")
+        if not name or value is None or isinstance(value, (dict, list)):
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        key = (name.casefold(), text.casefold())
+        if key not in seen:
+            seen.add(key)
+            result.append({"nome": name[:180], "valor": text[:1500]})
+    return result[:300]
+
+
 def _normalize_result(raw: dict[str, Any], requested_url: str, requested_item_id: str | None) -> dict[str, Any]:
     price = raw.get("price")
     previous = raw.get("previous_price")
     discount = _discount_percent(price, previous)
     source = str(raw.get("source") or "MERCADO_LIVRE")
     item_id = raw.get("item_id") or requested_item_id
-
+    attributes = _technical_attributes(raw)
     return {
         "fonte": source,
         "marketplace": "MERCADO_LIVRE",
@@ -82,6 +102,14 @@ def _normalize_result(raw: dict[str, Any], requested_url: str, requested_item_id
         "catalogProductId": raw.get("catalog_product_id"),
         "codigoMarketplace": raw.get("marketplace_product_code") or item_id,
         "nome": raw.get("title"),
+        "marca": raw.get("brand"),
+        "modelo": raw.get("model"),
+        "mpn": raw.get("mpn"),
+        "gtin": raw.get("gtin"),
+        "descricao": raw.get("description"),
+        "atributos": attributes,
+        "totalAtributos": len(attributes),
+        "variantesSelecionadas": raw.get("selected_variants") or [],
         "urlOriginal": requested_url,
         "urlFinal": raw.get("url_final") or requested_url,
         "imagemUrl": raw.get("image_url"),
@@ -95,6 +123,8 @@ def _normalize_result(raw: dict[str, Any], requested_url: str, requested_item_id
         "categoriaId": raw.get("category_id"),
         "origemPreco": raw.get("price_source"),
         "apiErrors": raw.get("api_errors") or [],
+        "apiDebug": raw.get("api_debug") or [],
+        "tentativasColeta": raw.get("collection_attempts") or [],
         "requiresLocalCapture": bool(raw.get("requires_local_capture")),
     }
 
@@ -121,7 +151,6 @@ def mercadolivre_agent_product(
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
     url, item_id = _request_url(payload)
-
     scraper = MercadoLivreScraper()
     raw = scraper.collect(url, no_browser=not payload.permitirFallback)
     normalized = _normalize_result(raw, url, item_id)
