@@ -46,6 +46,7 @@ def complete_specs(category, specs):
 
 # Category-specific fallback order; _provider_rank always promotes the manufacturer.
 PROVIDER_PRIORITY = {
+    "NOTEBOOK": ["FABRICANTE_OFICIAL", "ICECAT", "GEIZHALS"],
     "PROCESSADOR": ["CPU_MONKEY", "CPU_WORLD", "WIKICHIP", "FABRICANTE_OFICIAL", "GEIZHALS", "ICECAT", "PC_KOMBO"],
     "PLACA_VIDEO": ["TECHPOWERUP", "GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "WIKICHIP", "PC_KOMBO"],
     "PLACA_MAE": ["GEIZHALS", "FABRICANTE_OFICIAL", "ICECAT", "PC_KOMBO"],
@@ -72,6 +73,10 @@ def _provider_rank(category, provider):
 # v14.20: cobertura técnica ponderada por categoria. Campos que definem
 # compatibilidade/identidade funcional pesam mais que metadados raros.
 COVERAGE_WEIGHT_TIERS = {
+    "NOTEBOOK": {
+        "essenciais": ["processadorNome", "ramInstaladaGb", "armazenamentoGb", "tamanhoTelaPolegadas", "sistemaOperacional", "wifi", "webcam"],
+        "importantes": ["gpuNome", "tipoMemoria", "resolucaoLargura", "resolucaoAltura", "bateriaWh", "pesoKg", "bluetooth", "resolucaoWebcam"],
+    },
     "PROCESSADOR": {
         "essenciais": ["socket", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "cacheL3Mb", "tiposMemoriaSuportados", "versaoPcie"],
         "importantes": ["arquitetura", "litografiaNm", "cacheL2Mb", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "possuiVideoIntegrado", "modeloVideoIntegrado"],

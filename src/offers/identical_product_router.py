@@ -123,12 +123,9 @@ def _short_name_query(name: Any, max_words: int = 6) -> str:
 
 
 def _query(payload: IdenticalProductOffersRequest) -> str:
-    # A busca é deliberadamente curta para aumentar recall. Identificadores
-    # fortes continuam sendo usados na etapa posterior de confirmação.
     short_name = _short_name_query(payload.nome)
     if short_name:
         return short_name
-
     gtin = _digits(payload.gtin)
     if gtin:
         return f"{gtin} {payload.marca or ''}".strip()
@@ -161,7 +158,6 @@ def _normalize_web_offer(
     url = str(raw.get("url_final") or raw.get("url_original") or requested_url or "").strip()
     if price is None or not url:
         return None
-
     return {
         "parceiro": "Mercado Livre" if store == "MERCADO_LIVRE" else "Magazine Luiza",
         "marketplace": store,
@@ -190,6 +186,9 @@ def _search_web_store(
     candidates = resolver.results(_query(payload), domains, limit=max(limit * 3, 6))
     offers: list[dict[str, Any]] = []
     checked = 0
+    failed_collection = 0
+    rejected_identity = 0
+    missing_price = 0
 
     for candidate in candidates:
         if len(offers) >= limit:
@@ -207,22 +206,30 @@ def _search_web_store(
                     continue
                 raw = MagazineScraper().collect(url, no_browser=False)
         except Exception:
+            failed_collection += 1
             continue
         checked += 1
         if not isinstance(raw, dict) or not raw.get("ok"):
+            failed_collection += 1
             continue
         matched, criterion = _identity_match_raw(payload, raw)
         if not matched or not criterion:
+            rejected_identity += 1
             continue
         normalized = _normalize_web_offer(store, raw, criterion, url)
         if normalized:
             offers.append(normalized)
+        else:
+            missing_price += 1
 
     return offers, {
         "consulta": _query(payload),
         "candidatos": len(candidates),
         "verificados": checked,
         "encontrados": len(offers),
+        "falhasColeta": failed_collection,
+        "rejeitadosPorIdentidade": rejected_identity,
+        "semPreco": missing_price,
         "statusBusca": resolver.last_status,
     }
 
@@ -234,7 +241,6 @@ def _search_shopee(
     client = ShopeeAffiliateClient()
     if not client.configured:
         return [], {"configurada": False, "encontrados": 0}
-
     search_query = _marketplace_query(payload)
     try:
         response = ShopeeAffiliateAgent(client).find_products(
@@ -243,7 +249,6 @@ def _search_shopee(
         )
     except ShopeeAffiliateError as exc:
         return [], {"configurada": True, "erro": str(exc), "encontrados": 0}
-
     offers: list[dict[str, Any]] = []
     for item in response.get("itens") or []:
         if len(offers) >= limit:
@@ -271,7 +276,6 @@ def _search_shopee(
             "apiOficial": True,
             "fonte": "SHOPEE_AFFILIATE_API",
         })
-
     return offers, {
         "configurada": True,
         "consulta": search_query,
@@ -286,13 +290,11 @@ def find_identical_product_offers(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
-
     if not any((_digits(payload.gtin), str(payload.mpn or "").strip(), str(payload.modelo or "").strip())):
         raise HTTPException(
             status_code=422,
             detail="O Produto precisa ter GTIN/EAN, MPN ou modelo para confirmar correspondência idêntica.",
         )
-
     limit = max(1, min(5, int(payload.limitePorLoja)))
     def search_safely(fn, *args):
         try:
@@ -322,7 +324,6 @@ def find_identical_product_offers(
             continue
         seen.add(key)
         unique.append(offer)
-
     return {
         "modo": "BUSCA_PRODUTO_IDENTICO",
         "consulta": _query(payload),
