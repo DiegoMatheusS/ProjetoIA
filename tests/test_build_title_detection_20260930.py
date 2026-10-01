@@ -7,7 +7,9 @@ def test_pc_computador_com_cpu_ssd_ram_no_titulo_sem_descricao():
         '',
     )
     assert resultado['tipoSugerido'] == 'PC_MONTADO'
-    assert resultado['componentesDetectados'] == []
+    categorias = {item['categoria'] for item in resultado['componentesDetectados']}
+    assert 'PROCESSADOR' in categorias
+    assert 'ARMAZENAMENTO' in categorias
     assert resultado['descricaoOriginal'] == ''
 
 
