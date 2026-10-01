@@ -68,3 +68,34 @@ def test_unstructured_multicomponent_listing_requires_review():
     result = analyze_listing("Super oferta", "Processador Ryzen 5 5600, placa-mãe B550 e memória DDR4")
     assert result["confirmacaoObrigatoria"] is True
     assert result["tipoSugerido"] in {"KIT_UPGRADE", "INDEFINIDO"}
+
+
+def test_complete_pc_title_detects_components_and_links_existing_hardware():
+    result = analyze_listing(
+        "PC Gamer AMD Ryzen 5 5600G ASUS B550M 16GB RAM Kingston NV2 SSD 1TB Gigabyte RTX 4060",
+        "Computador completo montado e pronto para uso.",
+        [
+            {"id": 101, "categoria": "PROCESSADOR", "marca": "AMD", "modelo": "Ryzen 5 5600G", "nome": "AMD Ryzen 5 5600G"},
+            {"id": 102, "categoria": "PLACA_MAE", "marca": "ASUS", "modelo": "B550M", "nome": "ASUS B550M"},
+            {"id": 103, "categoria": "ARMAZENAMENTO", "marca": "Kingston", "modelo": "NV2", "nome": "Kingston NV2"},
+            {"id": 104, "categoria": "PLACA_VIDEO", "marca": "Gigabyte", "modelo": "RTX 4060", "nome": "Gigabyte RTX 4060"},
+        ],
+    )
+    assert result["tipoSugerido"] == "PC_MONTADO"
+    detected = {item["categoria"]: item for item in result["componentesDetectados"]}
+    assert detected["PROCESSADOR"]["hardwareId"] == 101
+    assert detected["PLACA_MAE"]["hardwareId"] == 102
+    assert detected["ARMAZENAMENTO"]["hardwareId"] == 103
+    assert detected["PLACA_VIDEO"]["hardwareId"] == 104
+    assert "MEMORIA_RAM" in detected
+
+
+def test_title_only_pc_does_not_become_individual_processor():
+    result = analyze_listing(
+        "Computador Ryzen 7 5700G 16GB RAM SSD 480GB",
+        "",
+        [{"id": 201, "categoria": "PROCESSADOR", "marca": "AMD", "modelo": "Ryzen 7 5700G", "nome": "AMD Ryzen 7 5700G"}],
+    )
+    assert result["tipoSugerido"] == "PC_MONTADO"
+    cpu = next(c for c in result["componentesDetectados"] if c["categoria"] == "PROCESSADOR")
+    assert cpu["hardwareId"] == 201
