@@ -6,8 +6,9 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .agent import ShopeeAffiliateAgent
+from .agent import ShopeeAffiliateAgent, is_shopee_url
 from .client import ShopeeAffiliateClient, ShopeeAffiliateError
+from ..scrapers.generic_scraper import GenericScraper
 
 
 router = APIRouter(prefix="/shopee", tags=["Shopee Affiliate"])
@@ -15,6 +16,8 @@ router = APIRouter(prefix="/shopee", tags=["Shopee Affiliate"])
 
 class ShopeeProductRequest(BaseModel):
     url: str = Field(min_length=8, max_length=4096)
+    detalharPagina: bool = False
+    noBrowser: bool = False
 
 
 class ShopeeProductSearchRequest(BaseModel):
@@ -59,6 +62,49 @@ def _translate_error(exc: ShopeeAffiliateError) -> HTTPException:
     if "10020" in message or "Invalid Signature" in message:
         status = 502
     return HTTPException(status_code=status, detail=message)
+
+
+def _page_details(url: str, *, no_browser: bool) -> dict[str, Any]:
+    """Coleta somente os detalhes ausentes da Affiliate API.
+
+    Preço, link afiliado e identificação continuam vindo da API oficial. A página
+    é usada pelo fluxo administrativo para obter descrição e ficha textual que a
+    Affiliate API não fornece.
+    """
+    if not is_shopee_url(url):
+        raise HTTPException(status_code=422, detail="URL não pertence à Shopee Brasil.")
+
+    try:
+        raw = GenericScraper().collect(url, no_browser=no_browser)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "fonte": "SHOPEE_PAGINA_DETALHE",
+            "erro": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not isinstance(raw, dict):
+        return {"ok": False, "fonte": "SHOPEE_PAGINA_DETALHE", "erro": "RESPOSTA_INVALIDA"}
+
+    return {
+        "ok": bool(raw.get("ok")),
+        "fonte": raw.get("source") or "SHOPEE_PAGINA_DETALHE",
+        "titulo": raw.get("title"),
+        "descricao": raw.get("description"),
+        "marca": raw.get("brand"),
+        "modelo": raw.get("model"),
+        "mpn": raw.get("mpn"),
+        "gtin": raw.get("gtin"),
+        "imagemUrl": raw.get("image_url"),
+        "atributos": raw.get("attributes") or [],
+        "atributosTexto": raw.get("attributes_text") or "",
+        "atributosProduto": raw.get("product_attributes") or [],
+        "variantesSelecionadas": raw.get("selected_variants") or [],
+        "bloqueado": bool(raw.get("blocked")),
+        "requerCapturaLocal": bool(raw.get("requires_local_capture")),
+        "erro": raw.get("error"),
+        "tentativas": raw.get("collection_attempts") or [],
+    }
 
 
 @router.get("/status")
@@ -113,11 +159,15 @@ def shopee_agent_product(
                 status_code=422,
                 detail="Não foi possível identificar shopId/itemId ou localizar o anúncio na Shopee Affiliate API.",
             )
-        return {
+        resposta: dict[str, Any] = {
             "agente": "SHOPEE_AFFILIATE",
             "modo": "API_OFICIAL",
             "item": item,
         }
+        if payload.detalharPagina:
+            resposta["detalhesPagina"] = _page_details(payload.url, no_browser=payload.noBrowser)
+            resposta["modo"] = "API_OFICIAL_COM_DETALHES_DA_PAGINA"
+        return resposta
     except ShopeeAffiliateError as exc:
         raise _translate_error(exc) from exc
 
