@@ -519,6 +519,7 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
             enrich=True,
             criabytePlan=False,
             noBrowser=False,
+            detalharPagina=True,
         )
     )
 

@@ -84,6 +84,7 @@ class ExternalTechnicalProvider:
             "mpn": parsed.get("mpn"),
             "gtin": parsed.get("gtin"),
             "image_url": parsed.get("image_url"),
+            "description": parsed.get("description"),
             "attributes": parsed.get("attributes") or [],
             "context_text": page_text,
         }
@@ -110,18 +111,31 @@ class ExternalTechnicalProvider:
         return parsed
 
     def fetch_candidate(self, url, identity):
+        started = time.monotonic()
+        page_collection = bool(getattr(self, "page_collection_enabled", False))
         params = {"identity": identity, "browser": self.allow_browser_fallback, "version": 2}
+        if page_collection:
+            params.update({"version": 3, "pageCollection": True, "noBrowser": self.page_collection_no_browser,
+                           "pageBudget": self.page_collection_budget_seconds})
         cached = self.cache.get(url, params=params, namespace="technical-pages-v2", ttl_seconds=86400)
         if cached and time.time() < cached.get("expires", 0):
             result = dict(cached["result"])
             result["cacheHit"] = True
             return result
+        self._collection_page = None
         result = self._fetch_candidate_uncached(url, identity)
+        if page_collection:
+            from .page_collection import complement_candidate_page
+            deadline = min(started + self.page_collection_budget_seconds,
+                           getattr(self, "page_collection_deadline", None) or float("inf"))
+            result = complement_candidate_page(self, url, identity, result, deadline)
         result["diagnostico"] = source_diagnostic(result)
         result["cacheHit"] = False
         ttl = 3600 if result.get("ok") and result.get("attributes") else 120
         if result["diagnostico"] == "FALHA_TEMPORARIA":
             ttl = 15
+        if page_collection:
+            ttl = min(ttl, 300)
         self.cache.set(url, {"expires": time.time() + ttl, "result": result}, params=params, namespace="technical-pages-v2")
         return result
 
@@ -187,7 +201,9 @@ class ExternalTechnicalProvider:
                     return {"ok": False, "url": final, "erro": "REDIRECIONAMENTO_FORA_DA_FONTE"}
                 if "application/pdf" in str(getattr(response, "headers", {}).get("Content-Type", "")) or urlparse(final).path.lower().endswith(".pdf"):
                     return self._parse_pdf(final, response, identity)
-                parsed = self._parse_candidate_html(url, final, response.text, identity)
+                html = response.text
+                self._collection_page = {"html": html, "final_url": final}
+                parsed = self._parse_candidate_html(url, final, html, identity)
                 if parsed.get("ok"):
                     parsed["modoColeta"] = "HTTP"
                     return parsed

@@ -1,3 +1,14 @@
+## v14.21.2 — coleta de páginas nos quatro fluxos
+
+- **Extensão:** os cadastros de novos itens, nas rotas v1 e v2, ativam `detalharPagina`. A captura local e o caminho comercial de itens já existentes continuam sendo aproveitados.
+- **Chat:** o backend deve enviar a mesma opção em `/admin/chatbot/analisar-cadastro`, tanto para Produto quanto Hardware. A confirmação do cadastro permanece no fluxo existente.
+- **Descobrir Ofertas:** a pesquisa inicial usa a API da Shopee; ao analisar/cadastrar um resultado, o importador já solicita a coleta detalhada.
+- **Descobrir Hardwares:** o detalhamento dos candidatos ativa a coleta complementar nos provedores técnicos. Reaproveita o HTML recebido, completa descrição/imagem/ficha quando há lacunas e mantém a identidade da fonte. Os campos coletados em páginas adicionais conservam sua URL de evidência.
+
+Na busca de Hardwares em lote, a coleta complementar usa apenas o tempo restante de um orçamento contado desde o início da leitura primária: duas vezes `DISCOVERY_DETAIL_SOURCE_TIMEOUT_SECONDS`, limitado a 12s (8s por padrão). A leitura primária conserva seus timeouts existentes; esse orçamento limita as tentativas adicionais. A coleta complementar também respeita o tempo restante da busca e desliga o Chromium local no lote. No detalhe individual, respeita `noBrowser` e `PAGE_COLLECTION_BUDGET_SECONDS`. PDFs e APIs estruturadas mantêm seus parsers; nenhum preço ou oferta entra no cadastro de Hardware. O cache diferencia o orçamento do lote e do detalhe.
+
+Publique ProjetoIA e backend para completar a extensão/chat. Não há migração de banco ou mudança obrigatória no pacote da extensão. A lógica de coleta por link segue abaixo.
+
 ## v14.21.1 — scraping e crawling limitado por link
 
 `POST /analisar` aceita `detalharPagina: true`. Na importação administrativa, o backend ativa essa opção para ler descrição, imagem, identificadores e ficha técnica em JSON-LD, microdados e HTML visível. Se a ficha estiver incompleta, o Chromium tenta renderizar o conteúdo dinâmico e abrir abas de descrição/especificações.
