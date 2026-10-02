@@ -303,19 +303,26 @@ class GenericScraper:
             "error": None if title else "PAGINA_SEM_DADOS_DE_PRODUTO",
         }
 
-    def collect(self, url, no_browser=False, crawl=False):
-        budget = max(5, min(45, float(os.getenv("PAGE_COLLECTION_BUDGET_SECONDS", "30"))))
+    def collect(self, url, no_browser=False, crawl=False, *, budget_seconds=None, initial_page=None):
+        budget = (max(0.25, min(45, float(budget_seconds))) if budget_seconds is not None
+                  else max(5, min(45, float(os.getenv("PAGE_COLLECTION_BUDGET_SECONDS", "30")))))
         self._deadline = time.monotonic() + budget
-        params = {"no_browser": no_browser, "crawl": crawl}
-        cached = self.cache.get(url, params=params, namespace="product-pages-v3", ttl_seconds=300)
+        params = {"no_browser": no_browser, "crawl": crawl,
+                  "budgetClass": "short" if budget <= 12 else "full"}
+        cached = self.cache.get(url, params=params, namespace="product-pages-v4", ttl_seconds=300)
         if cached:
             return {**cached, "cache_hit": True}
         attempts, html, result = [], "", None
-        response, error = self._http_get(url)
+        response, error = None, None
+        if initial_page:
+            html = initial_page.get("html") or ""
+            result = self._parse_html(url, initial_page.get("final_url") or url, html)
+        else:
+            response, error = self._http_get(url)
         if response is not None:
             html = response.text
             result = self._parse_html(url, response.url, response.text)
-        attempts.append({"modo": "HTTP_GENERICO", "url": url,
+        attempts.append({"modo": "HTML_REAPROVEITADO" if initial_page else "HTTP_GENERICO", "url": url,
                          "bloqueado": bool((result or {}).get("blocked")), "erro": type(error).__name__ if error else (result or {}).get("error")})
         needs_browser = not (result or {}).get("ok") or (crawl and (not result.get("description") or not result.get("attributes")))
         if needs_browser and not no_browser and time.monotonic() + 3 < self._deadline:
@@ -349,5 +356,5 @@ class GenericScraper:
         result["page_scraping_attempted"] = bool(crawl)
         result["cache_hit"] = False
         if result.get("ok") and not result.get("blocked"):
-            self.cache.set(url, result, params=params, namespace="product-pages-v3")
+            self.cache.set(url, result, params=params, namespace="product-pages-v4")
         return result

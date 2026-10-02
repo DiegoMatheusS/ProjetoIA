@@ -249,6 +249,7 @@ def _import_new_with_ai(
             enrich=True,
             criabytePlan=False,
             noBrowser=False,
+            detalharPagina=True,
         )
     )
     analysis = hydrate_amazon_analysis(

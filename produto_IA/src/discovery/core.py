@@ -14,6 +14,7 @@ from ..enrichment.core import TechnicalEnricher, technical_coverage, technical_m
 from ..enrichment.quality import evidence_for_specs, validate_specs
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
+    ExternalTechnicalProvider,
     ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
     CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
 )
@@ -234,7 +235,7 @@ class HardwareDiscoveryService:
             },
         }
 
-    def _detail_candidate(self, candidate: DiscoveryCandidate, categoria: str, enrich: bool, no_browser: bool = False, bulk_mode: bool = False):
+    def _detail_candidate(self, candidate: DiscoveryCandidate, categoria: str, enrich: bool, no_browser: bool = False, bulk_mode: bool = False, page_deadline: float | None = None):
         inferred = infer_identity(candidate.nome, categoria, candidate.marca)
         provider = _provider_for_candidate(candidate)
         detail = {"ok": False, "fonte": candidate.fonte, "url": candidate.url, "erro": "SEM_PROVEDOR"}
@@ -267,6 +268,14 @@ class HardwareDiscoveryService:
                 provider.allow_browser_fallback = False
                 if getattr(provider, "resolver", None) is not None:
                     provider.resolver.allow_browser_fallback = False
+            if isinstance(provider, ExternalTechnicalProvider):
+                provider.page_collection_enabled = True
+                provider.page_collection_no_browser = bool(no_browser) or bool(bulk_mode)
+                provider.page_collection_budget_seconds = (
+                    min(12, max(1, self.detail_source_timeout * 2)) if bulk_mode
+                    else float(os.getenv("PAGE_COLLECTION_BUDGET_SECONDS", "30"))
+                )
+                provider.page_collection_deadline = page_deadline
             try:
                 detail = provider.fetch_candidate(candidate.url, inferred)
                 detail.setdefault("fonte", candidate.fonte)
@@ -298,7 +307,7 @@ class HardwareDiscoveryService:
             "nome": nome,
             "marca": identity.get("marca"),
             "modelo": identity.get("modelo"),
-            "descricao": None,
+            "descricao": detail.get("description"),
             "mpn": identity.get("mpn"),
             "gtin": identity.get("gtin"),
             "imagemUrl": detail.get("image_url"),
@@ -440,6 +449,7 @@ class HardwareDiscoveryService:
             "fontePrincipal": candidate.fonte,
             "detalhesColetados": bool(detail.get("ok")),
             "erroDetalhamento": detail.get("erro"),
+            "coletaPagina": detail.get("coletaPagina") or {},
             "preco": None,
         }
 
@@ -510,7 +520,7 @@ class HardwareDiscoveryService:
                     batch = page_candidates[batch_start:batch_start + workers]
                     futures = {
                         executor.submit(
-                            self._detail_candidate, candidate, categoria, bool(enriquecer), no_browser, True
+                            self._detail_candidate, candidate, categoria, bool(enriquecer), no_browser, True, started + self.request_budget
                         ): batch_start + offset
                         for offset, candidate in enumerate(batch)
                     }

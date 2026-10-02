@@ -57,18 +57,18 @@ def evidence_for_specs(category, source, specs):
     """Re-extract each row to associate an actual supporting passage with its field."""
     evidence = {}
     rows = source.get("attributes") or []
-    passages = [( [row], f"{row.get('name', '')}: {row.get('value_name', '')}")
+    passages = [( [row], f"{row.get('name', '')}: {row.get('value_name', '')}", row.get("source_url") or source.get("url"))
                 for row in rows[:250] if isinstance(row, dict)]
     context = str(source.get("context_text") or "")[:40000]
     # Line evidence also supports text-only datasheets, without copying an entire page.
-    passages.extend(([], line.strip()) for line in context.splitlines()[:400] if line.strip())
-    for attrs, passage in passages:
+    passages.extend(([], line.strip(), source.get("url")) for line in context.splitlines()[:400] if line.strip())
+    for attrs, passage, passage_url in passages:
         if not passage or len(passage) > 1200:
             continue
         found = normalize_specs_for_backend(category, extract_specs(category, attrs, context_text=passage))
         for field, value in specs.items():
             if value not in (None, "", []) and field not in evidence and found.get(field) == value:
-                evidence[field] = {"fonte": source.get("fonte"), "url": source.get("url"),
+                evidence[field] = {"fonte": source.get("fonte"), "url": passage_url,
                                    "trecho": passage, "valor": value, "metodo": "EXTRACAO_DETERMINISTICA"}
     return evidence
 

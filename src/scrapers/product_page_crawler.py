@@ -134,6 +134,8 @@ class ProductPageCrawler:
             if candidate.get("blocked") or not same_product(seed, candidate):
                 report["erros"].append({"url": address, "motivo": "PRODUTO_NAO_CONFIRMADO"})
                 continue
+            candidate["attributes"] = [{**row, "source_url": response.url}
+                                       for row in candidate.get("attributes") or []]
             result = merge_page_details(result, candidate)
             result["crawl"] = report
             report["urlsAproveitadas"].append(response.url)

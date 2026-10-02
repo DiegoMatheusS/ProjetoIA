@@ -27,7 +27,7 @@ def test_v14_20_1_details_candidates_in_parallel(monkeypatch):
     service.detail_workers = 6
     service.request_budget = 5
 
-    def fake_detail(candidate, categoria, enrich, no_browser=False, bulk_mode=False):
+    def fake_detail(candidate, categoria, enrich, no_browser=False, bulk_mode=False, page_deadline=None):
         time.sleep(0.12)
         return {
             "payloadHardware": {"nome": candidate.nome, "categoria": categoria, "especificacaoMemoriaRam": {}},
