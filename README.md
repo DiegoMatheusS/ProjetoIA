@@ -1,3 +1,13 @@
+## v14.21.1 — scraping e crawling limitado por link
+
+`POST /analisar` aceita `detalharPagina: true`. Na importação administrativa, o backend ativa essa opção para ler descrição, imagem, identificadores e ficha técnica em JSON-LD, microdados e HTML visível. Se a ficha estiver incompleta, o Chromium tenta renderizar o conteúdo dinâmico e abrir abas de descrição/especificações.
+
+A coleta pode seguir até duas páginas extras de detalhes na mesma origem, em um único nível, respeitando `robots.txt` e confirmando o produto por canonical, identificadores ou título. Páginas de busca, recomendações e checkout são excluídas. Na Shopee, preço e link afiliado continuam vindo da API oficial; a página só complementa os dados do produto. Bloqueios não viram nome/descrição e preservam o resultado parcial para revisão ou captura local.
+
+Configuração opcional: `PAGE_COLLECTION_BUDGET_SECONDS=30` (5–45 segundos), `PAGE_CRAWL_MAX_EXTRA_PAGES=2` (0–3). O HTML é limitado a 2 MiB por resposta; há até cinco saltos de redirecionamento, validação de endereço público a cada salto e cache de cinco minutos. O orçamento de coleta limita as tentativas de HTTP/navegação; DNS e inicialização do navegador dependem do ambiente. `noBrowser: true` desliga a renderização. A consulta comercial padrão continua sem o crawling complementar. Nenhuma nova chave de API é necessária para o coletor local; o Chromium deve estar instalado, como nos Dockerfiles existentes.
+
+Publique primeiro o ProjetoIA e depois o backend. As fontes da raiz e de `produto_IA` incluem a mesma implementação. O frontend aproveita o contrato existente de prévia/preenchimento.
+
 ## Atualização v14.20.15 SAFE
 
 - Consulta comercial de preço (`/analisar` com `categoria=null` e `enrich=false`) não chama mais Gemini.

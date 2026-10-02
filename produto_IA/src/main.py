@@ -157,6 +157,8 @@ def build_result(raw, forced_category=None):
             "cacheAtivo": True,
             "cacheUsadoNestaExecucao": bool(raw.get("cache_hit")),
             "capturaLocalImportada": bool(raw.get("local_capture")),
+            "scrapingComplementarExecutado": bool(raw.get("page_scraping_attempted")),
+            "crawlingLimitado": raw.get("crawl") or {},
         },
         "marketplace": {
             "plataforma": (

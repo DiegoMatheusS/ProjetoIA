@@ -12,6 +12,7 @@ from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
+from .scrapers.link_page_details import complement_link_page
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
 from .extractors.backend_schemas import SCHEMAS
@@ -62,6 +63,7 @@ class AnalyzeRequest(BaseModel):
     enrich: bool = False
     criabytePlan: bool = False
     noBrowser: bool = False
+    detalharPagina: bool = False
 
 
 class CaptureAnalyzeRequest(BaseModel):
@@ -398,15 +400,19 @@ def _validate_url(url: str) -> str:
 
 def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     url = _validate_url(payload.url)
+    page_options = {"crawl": True} if payload.detalharPagina else {}
 
     if MercadoLivreScraper.is_mercadolivre(url):
         raw = MercadoLivreScraper().collect(url, no_browser=payload.noBrowser)
     elif MagazineScraper.is_magazine(url):
         raw = MagazineScraper().collect(url, no_browser=payload.noBrowser)
     else:
-        raw = GenericScraper().collect(url, no_browser=payload.noBrowser)
+        raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)
+
+    if payload.detalharPagina:
+        raw = complement_link_page(raw, url, no_browser=payload.noBrowser)
 
     result = build_result(raw, payload.categoria)
 

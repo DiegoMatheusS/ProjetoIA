@@ -75,7 +75,7 @@ def _page_details(url: str, *, no_browser: bool) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="URL não pertence à Shopee Brasil.")
 
     try:
-        raw = GenericScraper().collect(url, no_browser=no_browser)
+        raw = GenericScraper().collect(url, no_browser=no_browser, crawl=True)
     except Exception as exc:
         return {
             "ok": False,
