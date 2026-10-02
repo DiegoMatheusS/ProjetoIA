@@ -365,7 +365,14 @@ class BrowserScraper:
                 "browserless": True,
             }
 
-    def fetch(self, url: str):
+    def fetch(self, url: str, *, public_only=False, product_details=False):
+        from ..utils.public_http import validate_public_url
+        import re
+        import time
+
+        if public_only:
+            validate_public_url(url)
+        deadline = time.monotonic() + self.timeout_ms / 1000
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=self.headless)
             context = browser.new_context(
@@ -373,22 +380,56 @@ class BrowserScraper:
                 timezone_id="America/Sao_Paulo",
                 viewport={"width": 1365, "height": 900},
                 color_scheme="light",
+                service_workers="block" if public_only else "allow",
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/152.0.0.0 Safari/537.36"
                 ),
             )
+            if public_only:
+                def public_route(route):
+                    try:
+                        if route.request.resource_type in {"image", "media", "font"}:
+                            route.abort()
+                            return
+                        validate_public_url(route.request.url)
+                    except (ValueError, OSError):
+                        route.abort()
+                        return
+                    route.continue_()
+
+                context.route("**/*", public_route)
+                if hasattr(context, "route_web_socket"):
+                    context.route_web_socket("**/*", lambda websocket: websocket.close())
             page = context.new_page()
             try:
                 self.rate_limiter.wait(url)
                 logger.info(f"Abrindo navegador: {url}")
-                page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                page.wait_for_timeout(2500)
+                remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+                page.goto(url, wait_until="domcontentloaded", timeout=remaining_ms)
+                page.wait_for_timeout(min(2500, max(0, int((deadline - time.monotonic()) * 1000) - 1000)))
+                if product_details:
+                    label = re.compile(r"^(?:descri[cç][aã]o(?: do produto)?|description|especifica[cç][oõ]es(?: t[eé]cnicas)?|specifications|ficha t[eé]cnica|caracter[ií]sticas)$", re.I)
+                    # Somente abas/botões de descrição e ficha, nunca compra/login.
+                    for role in ("tab", "button"):
+                        for control in page.get_by_role(role, name=label).all()[:3]:
+                            if time.monotonic() + 1 >= deadline:
+                                break
+                            try:
+                                if control.is_visible():
+                                    control.click(timeout=600)
+                            except PlaywrightTimeoutError:
+                                pass
+                    if time.monotonic() + 1 < deadline:
+                        page.evaluate("window.scrollBy(0, Math.min(document.body.scrollHeight, 1200))")
+                        page.wait_for_timeout(500)
                 final_url = page.url
+                if public_only:
+                    validate_public_url(final_url)
                 title = page.title()
                 html = page.content()
-                body_text = page.locator("body").inner_text(timeout=5000)
+                body_text = page.locator("body").inner_text(timeout=max(1, min(5000, int((deadline - time.monotonic()) * 1000))))
                 sample = f"{title}\n{body_text[:5000]}".casefold()
                 blocked = (
                     "account-verification" in final_url.lower()
@@ -396,8 +437,10 @@ class BrowserScraper:
                     or "acessou nosso site de uma forma um pouco diferente do comum" in sample
                     or "para sua segurança precisamos de uma verificação rápida" in sample
                     or "para sua seguranca precisamos de uma verificacao rapida" in sample
-                    or "verificação" in sample
-                    or "verificacao" in sample
+                    or "verify you are human" in sample
+                    or "verificação de segurança" in title.casefold()
+                    or "verificacao de seguranca" in title.casefold()
+                    or "captcha" in title.casefold()
                     or "não é possível acessar a página" in sample
                     or "nao e possivel acessar a pagina" in sample
                     or "this site can't be reached" in sample

@@ -12,6 +12,7 @@ from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
+from .scrapers.link_page_details import complement_link_page
 from .shopee.agent import ShopeeAffiliateAgent, is_shopee_url
 from .shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
@@ -65,6 +66,7 @@ class AnalyzeRequest(BaseModel):
     enrich: bool = False
     criabytePlan: bool = False
     noBrowser: bool = False
+    detalharPagina: bool = False
 
 
 class CaptureAnalyzeRequest(BaseModel):
@@ -460,13 +462,14 @@ def _shopee_api_raw(url: str) -> tuple[dict[str, Any] | None, list[str]]:
 def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     url = _validate_url(payload.url)
     affiliate_url = _validate_url(payload.urlAfiliada) if payload.urlAfiliada else None
+    page_options = {"crawl": True} if payload.detalharPagina else {}
 
     if MercadoLivreScraper.is_mercadolivre(url):
         raw = MercadoLivreScraper().collect(url, no_browser=payload.noBrowser)
     elif is_shopee_url(url):
         raw, shopee_errors = _shopee_api_raw(url)
         if raw is None:
-            raw = GenericScraper().collect(url, no_browser=payload.noBrowser)
+            raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options)
             raw.setdefault("source", "SHOPEE_PAGINA_FALLBACK")
             raw.setdefault("api_used", False)
             raw["api_errors"] = [*(raw.get("api_errors") or []), *shopee_errors]
@@ -477,9 +480,12 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     elif MagazineScraper.is_magazine(url):
         raw = MagazineScraper().collect(url, no_browser=payload.noBrowser)
     else:
-        raw = GenericScraper().collect(url, no_browser=payload.noBrowser)
+        raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)
+
+    if payload.detalharPagina:
+        raw = complement_link_page(raw, url, no_browser=payload.noBrowser)
 
     if affiliate_url:
         raw["affiliate_url"] = affiliate_url

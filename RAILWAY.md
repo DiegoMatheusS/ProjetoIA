@@ -2,6 +2,8 @@
 
 `POST /analisar` com `categoria: null` e `enrich: false` permanece exclusivamente no fluxo comercial e não chama Gemini. Para enriquecimento técnico por link, informe categoria de Hardware ou `enrich: true`.
 
+Na v14.21.1, a importação administrativa envia `detalharPagina: true` para coletar descrição/ficha em HTML e, se necessário, Chromium. Configure opcionalmente `PAGE_COLLECTION_BUDGET_SECONDS=30` e `PAGE_CRAWL_MAX_EXTRA_PAGES=2`. O crawling complementar segue somente detalhes do produto na mesma origem e respeita `robots.txt`; páginas bloqueadas continuam como resultado parcial/captura local. Publique o ProjetoIA antes do backend que ativa essa opção. O coletor usa o Chromium instalado nos Dockerfiles e não exige outra chave de API.
+
 # v14.20.10 — booleanos desconhecidos não saem como null
 
 - PROCESSADOR: booleanos sem informação confirmada são omitidos do payload final em vez de enviados como `null`.

@@ -7,20 +7,24 @@ import requests
 from bs4 import BeautifulSoup
 
 from ..utils.normalizers import clean_text, to_float
-from ..utils.rate_limiter import PoliteRateLimiter
+from ..utils.rate_limiter import JsonDiskCache, PoliteRateLimiter
+from ..utils.public_http import get_public_page
+from .product_page_crawler import ProductPageCrawler, merge_page_details, same_product
 
 
 class GenericScraper:
     """Coletor conservador para uma URL individual de loja.
 
-    Prioriza JSON-LD e pares rótulo/valor visíveis. Não faz paginação, busca em massa
-    nem baixa imagens; guarda apenas a URL da imagem.
+    Prioriza JSON-LD, descrição e ficha visíveis. Na importação administrativa
+    pode seguir até duas páginas de detalhe do mesmo produto; guarda URLs de imagens.
     """
 
     def __init__(self):
         self.timeout = int(os.getenv("TIMEOUT", "20"))
         self.max_retries = max(0, int(os.getenv("HTTP_MAX_RETRIES", "2")))
         self.rate_limiter = PoliteRateLimiter()
+        self.cache = JsonDiskCache()
+        self._deadline = None
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": (
@@ -136,6 +140,9 @@ class GenericScraper:
             )[:40]
             for container in containers:
                 for node in container.find_all(["li", "p", "div"], recursive=True)[:300]:
+                    children = node.find_all(["span", "div", "strong", "b"], recursive=False)
+                    if len(children) == 2 and not any(child.find(["div", "li", "p"]) for child in children):
+                        add(children[0].get_text(" ", strip=True), children[1].get_text(" ", strip=True))
                     line = clean_text(node.get_text(" ", strip=True))
                     if not line or ":" not in line or len(line) > 1200:
                         continue
@@ -149,35 +156,40 @@ class GenericScraper:
 
         return pairs[:250]
 
-    def _http_get(self, url):
+    def _http_get(self, url, same_origin=None):
         last_error = None
+        deadline = self._deadline or time.monotonic() + min(30, self.timeout)
         for attempt in range(self.max_retries + 1):
             try:
-                self.rate_limiter.wait(url)
-                response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
-                if response.status_code == 429 and attempt < self.max_retries:
-                    retry_after = response.headers.get("Retry-After")
-                    try:
-                        delay = min(60.0, max(3.0, float(retry_after)))
-                    except (TypeError, ValueError):
-                        delay = min(20.0, 3.0 * (2 ** attempt))
-                    time.sleep(delay)
-                    continue
-                if response.status_code in (500, 502, 503, 504) and attempt < self.max_retries:
-                    time.sleep(min(12.0, 2.5 * (2 ** attempt)))
-                    continue
-                response.raise_for_status()
+                response = get_public_page(self.session, url, timeout=self.timeout,
+                    deadline=deadline, rate_limiter=self.rate_limiter, same_origin=same_origin)
                 return response, None
-            except requests.RequestException as exc:
+            except (requests.RequestException, ValueError, OSError, TimeoutError) as exc:
                 last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(min(12.0, 2.5 * (2 ** attempt)))
-                    continue
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if isinstance(exc, ValueError) or (status and status not in {429, 500, 502, 503, 504}):
+                    break
+                remaining = deadline - time.monotonic()
+                if attempt >= self.max_retries or remaining < 3:
+                    break
+                time.sleep(min(2.5 * (2 ** attempt), 5, remaining))
         return None, last_error
 
     def _parse_html(self, url, final_url, html, source="HTTP_GENERICO", blocked=False):
         soup = BeautifulSoup(html, "html.parser")
+        for node in soup.select("nav, footer, aside, [class*='related'], [class*='recommend']"):
+            node.decompose()
         product = self._product_json_ld(soup)
+        heading = soup.select_one("h1, title")
+        heading_text = clean_text(heading.get_text(" ", strip=True)) if heading else ""
+        blocked = blocked or (not product and any(marker in (heading_text or "").casefold() for marker in (
+            "captcha", "access denied", "acesso negado", "robot check", "verify you are human",
+            "verifique se", "verificação de segurança", "verificacao de seguranca",
+        )))
+        if blocked:
+            return {"ok": False, "source": source, "api_used": False, "url_original": url,
+                    "url_final": final_url, "blocked": True, "requires_local_capture": True,
+                    "error": "PAGINA_BLOQUEADA", "attributes": [], "attributes_text": ""}
         offers = product.get("offers") if isinstance(product, dict) else None
         if isinstance(offers, list):
             valid = [offer for offer in offers if isinstance(offer, dict)]
@@ -201,16 +213,24 @@ class GenericScraper:
             soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]'
         )
         if not title:
-            h1 = soup.select_one("h1")
+            h1 = soup.select_one('[itemprop="name"], h1')
             title = clean_text(h1.get_text(" ", strip=True)) if h1 else None
 
         image = clean_text(image) or self._meta(soup, 'meta[property="og:image"]', 'meta[name="twitter:image"]')
+        if not image:
+            element = soup.select_one('[itemprop="image"]')
+            if element:
+                image = clean_text(element.get("content") or element.get("src") or element.get("data-src"))
         if image:
             image = urljoin(final_url, image)
 
         price = to_float(offers.get("price")) or to_float(self._meta(
             soup, 'meta[property="product:price:amount"]', 'meta[property="og:price:amount"]'
         ))
+        if price is None:
+            element = soup.select_one('[itemprop="price"]')
+            if element:
+                price = to_float(element.get("content") or element.get_text(" ", strip=True))
         previous = None  # highPrice is an offer range, not a historical price.
 
         availability = clean_text(offers.get("availability"))
@@ -237,9 +257,18 @@ class GenericScraper:
         model = clean_text(product.get("model") if isinstance(product, dict) else None) or by_name.get("modelo") or by_name.get("model")
         mpn = clean_text(product.get("mpn") if isinstance(product, dict) else None) or by_name.get("mpn") or by_name.get("part number")
 
-        description = clean_text(product.get("description") if isinstance(product, dict) else None) or self._meta(
-            soup, 'meta[name="description"]', 'meta[property="og:description"]'
-        )
+        descriptions = []
+        if clean_text(product.get("description")):
+            descriptions.append(BeautifulSoup(str(product["description"]), "html.parser").get_text(" ", strip=True))
+        for element in soup.select('[itemprop="description"], #description, #descricao, #product-description, '
+                '[data-testid="product-description"], [data-testid="description"], '
+                '[class*="product-description"], [class*="description__content"]')[:20]:
+            for node in element.select("script, style"):
+                node.decompose()
+            if text := clean_text(element.get_text(" ", strip=True)):
+                descriptions.append(text)
+        description = max(descriptions, key=len) if descriptions else self._meta(soup, 'meta[name="description"]', 'meta[property="og:description"]')
+        description = description[:12000] if description else None
 
         gtin = None
         if isinstance(product, dict):
@@ -258,6 +287,8 @@ class GenericScraper:
             "mpn": mpn,
             "gtin": clean_text(gtin),
             "description": description,
+            "canonical_url": urljoin(final_url, soup.select_one('link[rel="canonical"]').get("href"))
+                if soup.select_one('link[rel="canonical"][href]') else None,
             "image_url": image,
             "price": price,
             "previous_price": previous,
@@ -272,42 +303,51 @@ class GenericScraper:
             "error": None if title else "PAGINA_SEM_DADOS_DE_PRODUTO",
         }
 
-    def collect(self, url, no_browser=False):
+    def collect(self, url, no_browser=False, crawl=False):
+        budget = max(5, min(45, float(os.getenv("PAGE_COLLECTION_BUDGET_SECONDS", "30"))))
+        self._deadline = time.monotonic() + budget
+        params = {"no_browser": no_browser, "crawl": crawl}
+        cached = self.cache.get(url, params=params, namespace="product-pages-v3", ttl_seconds=300)
+        if cached:
+            return {**cached, "cache_hit": True}
+        attempts, html, result = [], "", None
         response, error = self._http_get(url)
         if response is not None:
+            html = response.text
             result = self._parse_html(url, response.url, response.text)
-            if result.get("title"):
-                return result
-
-        if no_browser:
-            return {
-                "ok": False,
-                "source": "HTTP_GENERICO",
-                "api_used": False,
-                "url_original": url,
-                "url_final": url,
-                "error": f"ERRO_HTTP_GENERICO: {error}" if error else "PAGINA_SEM_DADOS_DE_PRODUTO",
-            }
-
-        # Um único fallback de navegador; sem navegação adicional nem paginação.
-        try:
-            from .browser_scraper import BrowserScraper
-            browser = BrowserScraper().fetch(url)
-            if browser.get("error"):
-                raise RuntimeError(browser["error"])
-            return self._parse_html(
-                url,
-                browser.get("final_url") or url,
-                browser.get("html") or "",
-                source="NAVEGADOR_GENERICO",
-                blocked=bool(browser.get("blocked")),
-            )
-        except Exception as exc:
-            return {
-                "ok": False,
-                "source": "NAVEGADOR_GENERICO",
-                "api_used": False,
-                "url_original": url,
-                "url_final": url,
-                "error": f"ERRO_FALLBACK_NAVEGADOR: {exc}",
-            }
+        attempts.append({"modo": "HTTP_GENERICO", "url": url,
+                         "bloqueado": bool((result or {}).get("blocked")), "erro": type(error).__name__ if error else (result or {}).get("error")})
+        needs_browser = not (result or {}).get("ok") or (crawl and (not result.get("description") or not result.get("attributes")))
+        if needs_browser and not no_browser and time.monotonic() + 3 < self._deadline:
+            try:
+                from .browser_scraper import BrowserScraper
+                collector = BrowserScraper()
+                collector.timeout_ms = min(collector.timeout_ms, int((self._deadline - time.monotonic() - 3) * 1000))
+                browser = collector.fetch(url, public_only=True, product_details=crawl)
+                parsed = self._parse_html(url, browser.get("final_url") or url,
+                    browser.get("html") or "", source="NAVEGADOR_GENERICO", blocked=bool(browser.get("blocked")))
+                attempts.append({"modo": "NAVEGADOR_GENERICO", "url": browser.get("final_url") or url,
+                                 "bloqueado": bool(parsed.get("blocked")), "erro": browser.get("error") or parsed.get("error")})
+                if not browser.get("error") and parsed.get("ok") and (not (result or {}).get("ok") or same_product(result, parsed)):
+                    result = merge_page_details(result, parsed) if (result or {}).get("ok") else parsed
+                    html = browser.get("html") or html
+                elif parsed.get("blocked"):
+                    if not result or not result.get("ok"):
+                        result = parsed
+                    else:
+                        result["requires_local_capture"] = True
+            except Exception as exc:
+                attempts.append({"modo": "NAVEGADOR_GENERICO", "url": url, "bloqueado": False, "erro": type(exc).__name__})
+        if not result:
+            result = {"ok": False, "source": "HTTP_GENERICO", "api_used": False, "url_original": url,
+                      "url_final": url, "error": type(error).__name__ if error else "PAGINA_SEM_DADOS_DE_PRODUTO"}
+        if crawl and result.get("ok"):
+            crawler = ProductPageCrawler(self._http_get, self._parse_html, self._deadline,
+                max_pages=int(os.getenv("PAGE_CRAWL_MAX_EXTRA_PAGES", "2")))
+            result = crawler.collect(result, html)
+        result["collection_attempts"] = attempts
+        result["page_scraping_attempted"] = bool(crawl)
+        result["cache_hit"] = False
+        if result.get("ok") and not result.get("blocked"):
+            self.cache.set(url, result, params=params, namespace="product-pages-v3")
+        return result

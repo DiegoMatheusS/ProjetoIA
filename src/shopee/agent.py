@@ -3,9 +3,8 @@ from __future__ import annotations
 import math
 import re
 from typing import Any
-from urllib.parse import urlparse
-
 from .client import ShopeeAffiliateClient
+from ..utils.product_links import extract_shopee_ids, is_shopee_url
 
 
 def _tokens(text: str) -> set[str]:
@@ -14,29 +13,6 @@ def _tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-z0-9]+", str(text or "").casefold())
         if len(token) >= 2
     }
-
-
-def is_shopee_url(url: str) -> bool:
-    host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
-    return host == "shopee.com.br" or host.endswith(".shopee.com.br")
-
-
-def extract_shopee_ids(url: str) -> tuple[int | None, int | None]:
-    """Extrai shopId/itemId das formas públicas mais comuns de URL da Shopee BR."""
-    if not is_shopee_url(url):
-        return None, None
-    parsed = urlparse(str(url or ""))
-    path = parsed.path or ""
-
-    match = re.search(r"/product/(\d+)/(\d+)(?:/|$)", path, re.I)
-    if not match:
-        match = re.search(r"(?:^|[-/])i\.(\d+)\.(\d+)(?:[/?#.-]|$)", path, re.I)
-    if not match:
-        match = re.search(r"/(\d+)/(\d+)(?:/|$)", path)
-
-    if not match:
-        return None, None
-    return int(match.group(1)), int(match.group(2))
 
 
 class ShopeeAffiliateAgent:
