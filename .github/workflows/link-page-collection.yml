@@ -12,6 +12,7 @@ on:
       - 'src/discovery/**'
       - 'src/enrichment/**'
       - 'produto_IA/src/**'
+      - 'tests/test_structured_page_collection.py'
       - 'tests/test_link_page_collection.py'
       - 'tests/test_all_search_page_collection.py'
       - '.github/workflows/link-page-collection.yml'
@@ -41,7 +42,7 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt pytest
       - name: Validar coleta e isolamento comercial
-        run: python -m pytest -q tests/test_all_search_page_collection.py tests/test_link_page_collection.py tests/test_generic_scraper.py tests/test_shopee_page_details.py tests/test_technical_ai_commercial_isolation_v14_20_15.py tests/test_discovery_v14_20_1_parallel.py
+        run: python -m pytest -q tests/test_all_search_page_collection.py tests/test_link_page_collection.py tests/test_generic_scraper.py tests/test_structured_page_collection.py tests/test_shopee_page_details.py tests/test_technical_ai_commercial_isolation_v14_20_15.py tests/test_discovery_v14_20_1_parallel.py
       - name: Validar fontes de implantação
         run: |
           for source in version.py scrapers/generic_scraper.py scrapers/product_page_crawler.py scrapers/link_page_details.py enrichment/page_collection.py utils/public_http.py utils/product_links.py; do
@@ -50,4 +51,4 @@ jobs:
           python -m compileall -q src produto_IA/src
       - name: Validar coleta na implantação legada
         working-directory: produto_IA
-        run: python -m pytest -q -c /dev/null --import-mode=importlib ../tests/test_all_search_page_collection.py ../tests/test_link_page_collection.py -k 'not extension_new_registration and not api_keeps_official_price and not commercial_api_does_not_run'
+        run: python -m pytest -q -c /dev/null --import-mode=importlib ../tests/test_structured_page_collection.py ../tests/test_all_search_page_collection.py ../tests/test_link_page_collection.py -k 'not extension_new_registration and not api_keeps_official_price and not commercial_api_does_not_run'

@@ -695,3 +695,18 @@ IA_TECNICA_AUTO_WORKERS=4
 Instale as dependências de `requirements.txt` ao publicar. Não há migração de banco nem chave nova obrigatória. Os contratos de payload existentes são preservados; os diagnósticos são campos adicionais. A cópia `produto_IA/` contém as mesmas alterações.
 
 Validação: `python -m pytest tests -q`. Os testes usam documentos/HTTP simulados e um PDF textual gerado para validar extração, variantes, evidências, conflitos, cache e limites; não comprovam disponibilidade de fabricantes ou aumento de cobertura em produção.
+
+### Coleta estruturada de páginas — outubro/2026
+
+O coletor genérico agora resolve referências `@id` entre scripts JSON-LD (marca,
+imagem, oferta e ficha técnica), com limite de profundidade para ciclos. Aceita
+`@type` com URL do Schema.org e elimina produtos estruturados duplicados. Quando
+não há produto JSON-LD identificável, lê microdados de um único escopo `Product`,
+incluindo marca, descrição, GTIN, MPN, oferta, disponibilidade e `additionalProperty`.
+Escopos aninhados não sobrescrevem o nome do produto; múltiplos produtos ambíguos
+não são combinados. Preços em `priceSpecification` são reconhecidos, zero é
+preservado e `price_source` distingue JSON-LD, microdados e metatags.
+
+A melhoria se aplica aos fluxos que já usam `GenericScraper`, sem nova chave ou
+migração. O cache de páginas usa namespace v5 para não reutilizar extrações antigas.
+Testes: `python -m pytest -q tests/test_structured_page_collection.py`.
