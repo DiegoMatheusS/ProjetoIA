@@ -37,26 +37,68 @@ class GenericScraper:
 
     @staticmethod
     def _product_json_ld(soup):
-        products = []
+        products, nodes, documents = [], {}, []
+
+        def kind_is(value, expected):
+            kinds = value if isinstance(value, list) else [value]
+            return any(isinstance(kind, str) and kind.rstrip("/").rsplit("/", 1)[-1] == expected for kind in kinds)
+
+        def index(value, depth=0):
+            if depth > 16:
+                return
+            if isinstance(value, list):
+                for item in value:
+                    index(item, depth + 1)
+            elif isinstance(value, dict):
+                if isinstance(value.get("@id"), str):
+                    previous = nodes.get(value["@id"], {})
+                    nodes[value["@id"]] = {**previous, **value}
+                for item in value.values():
+                    if isinstance(item, (dict, list)):
+                        index(item, depth + 1)
+
+        def resolve(value, seen=frozenset(), depth=0):
+            if depth > 12:
+                return None
+            if isinstance(value, list):
+                return [resolve(item, seen, depth + 1) for item in value]
+            if not isinstance(value, dict):
+                return value
+            identifier = value.get("@id")
+            if isinstance(identifier, str):
+                if identifier in seen:
+                    return {key: item for key, item in value.items() if not isinstance(item, (dict, list))}
+                seen = seen | {identifier}
+                value = {**nodes.get(identifier, {}), **value}
+            return {key: resolve(item, seen, depth + 1) for key, item in value.items()}
+
         def find_products(value, depth=0):
-            if depth > 10:
+            if depth > 16:
                 return
             if isinstance(value, list):
                 for item in value:
                     find_products(item, depth + 1)
             elif isinstance(value, dict):
-                kind = value.get("@type")
-                if kind == "Product" or (isinstance(kind, list) and "Product" in kind):
-                    products.append(value)
+                identifier = value.get("@id")
+                if isinstance(identifier, str):
+                    value = {**nodes.get(identifier, {}), **value}
+                if kind_is(value.get("@type"), "Product"):
+                    product = resolve(value)
+                    if product not in products:
+                        products.append(product)
                     return
-                for key in ("@graph", "mainEntity"):
+                for key in ("@graph", "mainEntity", "mainEntityOfPage"):
                     find_products(value.get(key), depth + 1)
 
         for script in soup.select('script[type="application/ld+json"]'):
             try:
-                find_products(json.loads(script.string or script.get_text()))
-            except (ValueError, TypeError):
+                document = json.loads(script.string or script.get_text())
+                documents.append(document)
+                index(document)
+            except (ValueError, TypeError, RecursionError):
                 continue
+        for document in documents:
+            find_products(document)
         canonical = soup.select_one('link[rel="canonical"]')
         if len(products) > 1 and canonical and canonical.get("href"):
             target = urlparse(canonical["href"])
@@ -70,6 +112,37 @@ class GenericScraper:
                     matches.append(product)
             products = matches
         return products[0] if len(products) == 1 else {}
+
+    @staticmethod
+    def _product_microdata(soup):
+        scopes = soup.select('[itemscope][itemtype]')
+        products = [node for node in scopes if any(
+            value.rstrip("/").rsplit("/", 1)[-1] == "Product"
+            for value in node.get("itemtype", "").split())]
+        if len(products) != 1:
+            return {}
+        root = products[0]
+
+        def read(scope, depth=0):
+            if depth > 12:
+                return {}
+            result = {}
+            for node in scope.select('[itemprop]')[:500]:
+                if node.find_parent(attrs={"itemscope": True}) is not scope:
+                    continue
+                value = read(node, depth + 1) if node.has_attr("itemscope") else (
+                    node.get("content") or node.get("src") or node.get("href") or
+                    node.get("datetime") or node.get_text(" ", strip=True))
+                for key in node.get("itemprop", "").split():
+                    if key in result:
+                        if not isinstance(result[key], list):
+                            result[key] = [result[key]]
+                        result[key].append(value)
+                    else:
+                        result[key] = value
+            return result
+
+        return read(root)
 
     @staticmethod
     def _meta(soup, *selectors):
@@ -180,6 +253,9 @@ class GenericScraper:
         for node in soup.select("nav, footer, aside, [class*='related'], [class*='recommend']"):
             node.decompose()
         product = self._product_json_ld(soup)
+        structured_source = "JSON_LD" if product else "MICRODATA"
+        if not product:
+            product = self._product_microdata(soup)
         heading = soup.select_one("h1, title")
         heading_text = clean_text(heading.get_text(" ", strip=True)) if heading else ""
         blocked = blocked or (not product and any(marker in (heading_text or "").casefold() for marker in (
@@ -224,13 +300,24 @@ class GenericScraper:
         if image:
             image = urljoin(final_url, image)
 
-        price = to_float(offers.get("price")) or to_float(self._meta(
-            soup, 'meta[property="product:price:amount"]', 'meta[property="og:price:amount"]'
-        ))
+        price_spec = offers.get("priceSpecification")
+        if not isinstance(price_spec, dict):
+            price_spec = {}
+        price = to_float(offers.get("price"))
+        price_source = structured_source if price is not None else None
+        if price is None:
+            price = to_float(price_spec.get("price"))
+            price_source = structured_source if price is not None else None
+        if price is None:
+            price = to_float(self._meta(
+                soup, 'meta[property="product:price:amount"]', 'meta[property="og:price:amount"]'
+            ))
+            price_source = "META" if price is not None else None
         if price is None:
             element = soup.select_one('[itemprop="price"]')
             if element:
                 price = to_float(element.get("content") or element.get_text(" ", strip=True))
+                price_source = "MICRODATA" if price is not None else None
         previous = None  # highPrice is an offer range, not a historical price.
 
         availability = clean_text(offers.get("availability"))
@@ -292,7 +379,7 @@ class GenericScraper:
             "image_url": image,
             "price": price,
             "previous_price": previous,
-            "price_source": "JSON_LD" if price is not None else None,
+            "price_source": price_source,
             "currency": clean_text(offers.get("priceCurrency")) or "BRL",
             "available": available,
             "seller_id": None,
@@ -309,7 +396,7 @@ class GenericScraper:
         self._deadline = time.monotonic() + budget
         params = {"no_browser": no_browser, "crawl": crawl,
                   "budgetClass": "short" if budget <= 12 else "full"}
-        cached = self.cache.get(url, params=params, namespace="product-pages-v4", ttl_seconds=300)
+        cached = self.cache.get(url, params=params, namespace="product-pages-v5", ttl_seconds=300)
         if cached:
             return {**cached, "cache_hit": True}
         attempts, html, result = [], "", None
@@ -356,5 +443,5 @@ class GenericScraper:
         result["page_scraping_attempted"] = bool(crawl)
         result["cache_hit"] = False
         if result.get("ok") and not result.get("blocked"):
-            self.cache.set(url, result, params=params, namespace="product-pages-v4")
+            self.cache.set(url, result, params=params, namespace="product-pages-v5")
         return result
