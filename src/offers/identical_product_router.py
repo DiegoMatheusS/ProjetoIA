@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
+import math
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 import re
 from typing import Any
 
@@ -9,10 +11,9 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from ..enrichment.search import WebSearchResolver
-from ..scrapers.magazine_scraper import MagazineScraper
-from ..scrapers.mercadolivre_scraper import MercadoLivreScraper
 from ..shopee.agent import ShopeeAffiliateAgent
 from ..shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
+from .store_candidates import StoreCandidates, is_product_url
 
 
 router = APIRouter(prefix="/ofertas", tags=["Ofertas idênticas"])
@@ -143,12 +144,22 @@ def _marketplace_query(payload: IdenticalProductOffersRequest) -> str:
     return _query(payload)
 
 
+def _identity_queries(payload: IdenticalProductOffersRequest) -> list[str]:
+    # Preserve the complete SKU/model even when it occurs after the sixth word.
+    queries = [f"{payload.marca or ''} {value}".strip()
+               for value in (payload.mpn, payload.modelo) if str(value or '').strip()]
+    if _digits(payload.gtin):
+        queries.append(_digits(payload.gtin))
+    queries.append(_query(payload))
+    return list(dict.fromkeys(queries))
+
+
 def _price(value: Any) -> float | None:
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return round(number, 2) if number > 0 else None
+    return round(number, 2) if math.isfinite(number) and number > 0 else None
 
 
 def _normalize_web_offer(
@@ -159,7 +170,8 @@ def _normalize_web_offer(
 ) -> dict[str, Any] | None:
     price = _price(raw.get("price"))
     url = str(raw.get("url_final") or raw.get("url_original") or requested_url or "").strip()
-    if price is None or not url:
+    if (price is None or not is_product_url(store, url) or raw.get("available") is False
+            or str(raw.get("currency") or "BRL").upper() != "BRL"):
         return None
     return {
         "parceiro": "Mercado Livre" if store == "MERCADO_LIVRE" else "Magazine Luiza",
@@ -184,64 +196,109 @@ def _search_web_store(
     store: str,
     domains: list[str],
     limit: int,
+    deadline: float | None = None,
+    progress: dict | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    deadline = deadline or time.monotonic() + 60
+    progress = progress if progress is not None else {}
     resolver = WebSearchResolver()
-    candidates = resolver.results(_query(payload), domains, limit=max(limit * 3, 6))
+    resolver.timeout = 6
+    resolver.deadline = deadline
+    resolver.allow_browser_fallback = False
+    discovery = StoreCandidates(store, deadline)
     offers: list[dict[str, Any]] = []
-    checked = 0
-    failed_collection = 0
-    rejected_identity = 0
-    missing_price = 0
+    seen: set[str] = set()
+    detail_count = 0
+    diagnostics = {"consulta": _query(payload), "consultas": _identity_queries(payload),
+                   "candidatos": 0, "verificados": 0, "encontrados": 0,
+                   "falhasColeta": 0, "rejeitadosPorIdentidade": 0, "semPreco": 0,
+                   "statusBusca": "NAO_ENCONTRADO", "tentativas": []}
 
-    for candidate in candidates:
-        if len(offers) >= limit:
-            break
-        url = str(candidate.get("url") or "").strip()
-        if not url:
-            continue
-        try:
-            if store == "MERCADO_LIVRE":
-                if not MercadoLivreScraper.is_mercadolivre(url):
+    def publish():
+        progress.update(ofertas=list(offers), diagnostico={**diagnostics, "tentativas": list(diagnostics["tentativas"])})
+
+    def process(candidates, source, query, status):
+        nonlocal detail_count
+        diagnostics["tentativas"].append({"fonte": source, "consulta": query, "status": status, "candidatos": len(candidates)})
+        for candidate in candidates:
+            if len(offers) >= limit or time.monotonic() >= deadline:
+                break
+            url = str(candidate.get("url") or "").strip()
+            key = url.split("#", 1)[0].rstrip("/")
+            if not is_product_url(store, url) or key in seen:
+                continue
+            seen.add(key)
+            diagnostics["candidatos"] += 1
+            raw = candidate.get("raw")
+            if not isinstance(raw, dict):
+                if detail_count >= 6:
                     continue
-                raw = MercadoLivreScraper().collect(url, no_browser=False)
+                detail_count += 1
+                try:
+                    raw = discovery.collect(url)
+                except Exception:
+                    raw = {"ok": False}
+            if not isinstance(raw, dict):
+                raw = {"ok": False}
+            diagnostics["verificados"] += 1
+            if not raw.get("ok"):
+                diagnostics["falhasColeta"] += 1
+                if raw.get("blocked"):
+                    diagnostics["tentativas"].append({"fonte": "COLETA", "status": "BLOQUEADO", "candidatos": 1})
             else:
-                if not MagazineScraper.is_product_url(url):
-                    continue
-                raw = MagazineScraper().collect(url, no_browser=False)
-        except Exception:
-            failed_collection += 1
-            continue
-        checked += 1
-        if not isinstance(raw, dict) or not raw.get("ok"):
-            failed_collection += 1
-            continue
-        matched, criterion = _identity_match_raw(payload, raw)
-        if not matched or not criterion:
-            rejected_identity += 1
-            continue
-        normalized = _normalize_web_offer(store, raw, criterion, url)
-        if normalized:
-            offers.append(normalized)
-        else:
-            missing_price += 1
+                matched, criterion = _identity_match_raw(payload, raw)
+                if not matched or not criterion:
+                    diagnostics["rejeitadosPorIdentidade"] += 1
+                else:
+                    normalized = _normalize_web_offer(store, raw, criterion, url)
+                    if normalized:
+                        offers.append(normalized)
+                    else:
+                        diagnostics["semPreco"] += 1
+            diagnostics["encontrados"] = len(offers)
+            publish()
+        publish()
 
-    return offers, {
-        "consulta": _query(payload),
-        "candidatos": len(candidates),
-        "verificados": checked,
-        "encontrados": len(offers),
-        "falhasColeta": failed_collection,
-        "rejeitadosPorIdentidade": rejected_identity,
-        "semPreco": missing_price,
-        "statusBusca": resolver.last_status,
-    }
+    publish()
+    queries = _identity_queries(payload)
+    if store == "MERCADO_LIVRE":
+        for query in queries[:2]:
+            if len(offers) >= limit or time.monotonic() >= deadline:
+                break
+            candidates, status = discovery.api_results(query, limit)
+            process(candidates, "API_MERCADO_LIVRE", query, status)
+            if status in {"NAO_CONFIGURADA", "BLOQUEADO", "FALHA_TEMPORARIA"}:
+                break
+    if len(offers) < limit and time.monotonic() < deadline:
+        candidates, status = discovery.listing_results(queries[0], max(limit * 2, 6))
+        process(candidates, "BUSCA_DA_LOJA", queries[0], status)
+    for query in list(dict.fromkeys([_query(payload), *queries]))[:3]:
+        if len(offers) >= limit or detail_count >= 6 or time.monotonic() >= deadline:
+            break
+        candidates = resolver.results(query, domains, limit=max(limit * 2, 6))
+        process(candidates, "BUSCA_WEB", query, resolver.last_status)
+
+    statuses = {attempt.get("status") for attempt in diagnostics["tentativas"]}
+    diagnostics["statusBusca"] = (
+        "TEMPO_LIMITE" if time.monotonic() >= deadline else
+        "ENCONTRADO" if offers else
+        "BLOQUEADO" if "BLOQUEADO" in statuses else
+        "FALHA_TEMPORARIA" if "FALHA_TEMPORARIA" in statuses else
+        "ENCONTRADO" if diagnostics["candidatos"] else "NAO_ENCONTRADO"
+    )
+    publish()
+    return offers, diagnostics
 
 
 def _search_shopee(
     payload: IdenticalProductOffersRequest,
     limit: int,
+    deadline: float | None = None,
+    progress: dict | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     client = ShopeeAffiliateClient()
+    if deadline is not None:
+        client.timeout_seconds = min(client.timeout_seconds, max(1, deadline - time.monotonic()))
     if not client.configured:
         return [], {"configurada": False, "encontrados": 0}
     search_query = _marketplace_query(payload)
@@ -304,17 +361,38 @@ def find_identical_product_offers(
             return fn(*args)
         except Exception:
             # A store outage must not discard confirmed offers from other stores.
-            return [], {"statusBusca": "ERRO", "erro": "Não foi possível consultar esta loja agora.", "encontrados": 0}
+            partial = args[-1] if args and isinstance(args[-1], dict) else {}
+            partial_offers = list(partial.get("ofertas") or [])
+            return partial_offers, {**(partial.get("diagnostico") or {}), "statusBusca": "ERRO",
+                "erro": "Não foi possível consultar esta loja agora.", "encontrados": len(partial_offers)}
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        ml_task = pool.submit(search_safely, _search_web_store, payload, "MERCADO_LIVRE",
-                              ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"], limit)
-        magalu_task = pool.submit(search_safely, _search_web_store, payload, "MAGALU",
-                                  ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"], limit)
-        shopee_task = pool.submit(search_safely, _search_shopee, payload, limit)
-        mercado_livre, ml_diag = ml_task.result()
-        magalu, magalu_diag = magalu_task.result()
-        shopee, shopee_diag = shopee_task.result()
+    # Return partial results before the backend's 90s timeout, including offers
+    # already confirmed by a store that has not completed all its candidates.
+    budget = min(70, max(1, float(os.getenv("IDENTICAL_OFFERS_TIMEOUT_SECONDS", "60"))))
+    deadline = time.monotonic() + budget
+    pool = ThreadPoolExecutor(max_workers=3)
+    progress = {key: {} for key in ("mercadoLivre", "magalu", "shopee")}
+    tasks = {
+        "mercadoLivre": pool.submit(search_safely, _search_web_store, payload, "MERCADO_LIVRE",
+            ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"], limit, deadline, progress["mercadoLivre"]),
+        "magalu": pool.submit(search_safely, _search_web_store, payload, "MAGALU",
+            ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"], limit, deadline, progress["magalu"]),
+        "shopee": pool.submit(search_safely, _search_shopee, payload, limit, deadline, progress["shopee"]),
+    }
+    wait(tasks.values(), timeout=max(0, deadline - time.monotonic()))
+    results = {}
+    for key, task in tasks.items():
+        if task.done():
+            results[key] = task.result()
+        else:
+            partial = progress[key]
+            partial_offers = list(partial.get("ofertas") or [])
+            results[key] = partial_offers, {**(partial.get("diagnostico") or {}),
+                "statusBusca": "TEMPO_LIMITE", "encontrados": len(partial_offers)}
+    pool.shutdown(wait=False, cancel_futures=True)
+    mercado_livre, ml_diag = results["mercadoLivre"]
+    magalu, magalu_diag = results["magalu"]
+    shopee, shopee_diag = results["shopee"]
 
     unique: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()

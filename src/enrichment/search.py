@@ -1,3 +1,5 @@
+import base64
+import binascii
 import os
 import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
@@ -27,6 +29,7 @@ class WebSearchResolver:
         self.allow_browser_fallback = True
         self.cache = JsonDiskCache()
         self.last_status = None
+        self.deadline = None
         self.rate_limiter = PoliteRateLimiter(
             min_delay=float(os.getenv("ENRICHMENT_SEARCH_MIN_DELAY_SECONDS", "2.0")),
             jitter=float(os.getenv("ENRICHMENT_SEARCH_JITTER_SECONDS", "0.8")),
@@ -38,10 +41,21 @@ class WebSearchResolver:
             return None
         if href.startswith("//"):
             href = "https:" + href
+        elif href.startswith("/ck/a?"):
+            href = "https://www.bing.com" + href
         parsed = urlparse(href)
-        if "duckduckgo.com" in (parsed.hostname or ""):
+        host = (parsed.hostname or "").casefold()
+        if host == "duckduckgo.com" or host.endswith(".duckduckgo.com"):
             uddg = (parse_qs(parsed.query).get("uddg") or [None])[0]
-            return unquote(uddg) if uddg else None
+            href = unquote(uddg) if uddg else ""
+        elif (host == "bing.com" or host.endswith(".bing.com")) and parsed.path == "/ck/a":
+            target = (parse_qs(parsed.query).get("u") or [""])[0]
+            try:
+                href = (base64.urlsafe_b64decode(target[2:] + "=" * (-len(target[2:]) % 4)).decode("utf-8")
+                        if target.startswith("a1") else target)
+            except (ValueError, binascii.Error, UnicodeDecodeError):
+                return None
+        parsed = urlparse(href)
         return href if parsed.scheme in {"http", "https"} else None
 
     def _candidates_from_html(self, html, domains, limit=10):
@@ -71,8 +85,8 @@ class WebSearchResolver:
         return candidates[0]["url"] if candidates else None
 
     def results(self, query, allowed_domains, limit=10):
-        params = {"domains": sorted(allowed_domains), "browser": self.allow_browser_fallback}
-        cached = self.cache.get(query, params=params, namespace="technical-search-v2", ttl_seconds=1800)
+        params = {"domains": sorted(allowed_domains), "browser": self.allow_browser_fallback, "limit": limit}
+        cached = self.cache.get(query, params=params, namespace="technical-search-v3", ttl_seconds=1800)
         if cached and time.time() < cached.get("expires", 0):
             self.last_status = cached["status"]
             return cached["items"][:limit]
@@ -82,14 +96,14 @@ class WebSearchResolver:
             self.last_status = "ENCONTRADO"
         self.cache.set(query, {"items": items, "status": self.last_status,
                               "expires": time.time() + (1800 if items else 30)},
-                       params=params, namespace="technical-search-v2")
+                       params=params, namespace="technical-search-v3")
         return items[:limit]
 
     def _results_uncached(self, query, allowed_domains, limit=10):
         if not query or not allowed_domains:
             return []
         domains = [d.casefold().removeprefix("www.") for d in allowed_domains]
-        q = f"{query} " + " OR ".join(f"site:{d}" for d in domains)
+        q = f"{query} (" + " OR ".join(f"site:{d}" for d in domains) + ")"
         search_urls = [
             "https://html.duckduckgo.com/html/?q=" + quote_plus(q),
             "https://www.bing.com/search?q=" + quote_plus(q),
@@ -111,7 +125,11 @@ class WebSearchResolver:
         for url in search_urls:
             try:
                 self.rate_limiter.wait(url)
-                response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+                remaining = self.deadline - time.monotonic() if self.deadline else self.timeout
+                if remaining <= 0:
+                    self.last_status = "TEMPO_LIMITE"
+                    break
+                response = self.session.get(url, timeout=min(self.timeout, remaining), allow_redirects=True)
                 if response.status_code in {403, 429}:
                     self.last_status = "BLOQUEADO"
                     continue
