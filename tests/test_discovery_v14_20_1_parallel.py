@@ -8,7 +8,7 @@ class FakeCatalog:
     allow_browser_fallback = True
     resolver = None
 
-    def discover(self, categoria, marca=None, consulta=None, fontes=None, limit=20):
+    def discover(self, categoria, marca=None, consulta=None, fontes=None, limit=20, deadline=None):
         items = [
             DiscoveryCandidate(
                 nome=f"Corsair Vengeance DDR5 6000 2x16 GB {i}",

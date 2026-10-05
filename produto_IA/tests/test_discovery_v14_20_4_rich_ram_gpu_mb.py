@@ -96,6 +96,7 @@ def test_v14_20_4_gpu_reference_merge_completes_pc_kombo_candidate_without_per_i
 
 def test_v14_20_4_gpu_discover_merges_reference_catalog_even_when_pc_kombo_fills_limit(monkeypatch):
     catalog = DiscoverySourceCatalog()
+    monkeypatch.setattr(catalog, "_search_source", lambda *a, **k: ([], None))
     pc_items = [
         DiscoveryCandidate(
             nome="Sapphire Pulse Radeon RX 6600 Gaming",

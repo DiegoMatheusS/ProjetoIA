@@ -1,3 +1,15 @@
+## v14.22.0 — descoberta ampliada e continuação após cadastro
+
+A descoberta consulta as fontes de apoio mesmo quando o primeiro catálogo preenche o lote e intercala os candidatos das fontes antes de limitar a lista. As GPUs de referência do TechPowerUp também participam da descoberta, além de enriquecer placas do PC-Kombo.
+
+`POST /descobrir-hardwares` aceita até 100 itens por página e `hardwaresCadastrados` (`nome`, `marca`, `modelo`). Os modelos conhecidos são excluídos antes da paginação e do detalhamento. Após cadastrar um lote, reinicie a busca na página 1 para consultar o conjunto atualizado de candidatos novos. O backend ainda valida duplicidade por MPN/GTIN no cadastro.
+
+O teto de coleta passou de 200 para 2.000 candidatos por consulta (`DISCOVERY_MAX_CANDIDATES`, opcional, 300–10.000). O Pangoly pode percorrer até 20 páginas (`DISCOVERY_MAX_CATALOG_PAGES`, 4–100), encerrando quando a listagem acaba ou se repete. Marca e `consulta` permitem procurar um modelo/família fora da janela da busca geral. Os limites não garantem um catálogo mundial completo: fontes bloqueadas, orçamento e teto são informados por `buscaParcial`, `fontesConsultadas` e `limiteBuscaAtingido`.
+
+As fontes dividem o orçamento de coleta. Fallback cloud não inicia quando o tempo disponível é inferior ao necessário para inicializar o navegador. O enriquecimento e suas regras de evidência permanecem no fluxo existente.
+
+Publique ProjetoIA, backend e frontend, nessa ordem. Não há migração de banco. As duas raízes do ProjetoIA incluem a alteração, com o catálogo de ventoinhas do Pangoly também sincronizado na segunda raiz.
+
 ## Atualização v14.20.15 SAFE
 
 - Consulta comercial de preço (`/analisar` com `categoria=null` e `enrich=false`) não chama mais Gemini.

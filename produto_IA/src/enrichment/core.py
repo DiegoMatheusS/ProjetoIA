@@ -5,7 +5,7 @@ import time
 from .quality import validate_specs, evidence_for_specs, source_diagnostic
 from .identity import build_identity, identity_is_strong
 from .providers import (
-    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
+    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, PangolyProvider, GeizhalsProvider,
     CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED
@@ -221,6 +221,7 @@ class TechnicalEnricher:
             WikiChipProvider(),
             TechPowerUpProvider(),
             PCKomboProvider(),
+            PangolyProvider(),
             GeizhalsProvider(),
         ]
 

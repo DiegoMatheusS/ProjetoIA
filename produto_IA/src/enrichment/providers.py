@@ -458,8 +458,14 @@ class PCKomboProvider(ExternalTechnicalProvider):
     domains = ("pc-kombo.com",)
     categories = {
         "PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO",
-        "FONTE", "GABINETE", "COOLER", "VENTOINHA", "MONITOR",
+        "FONTE", "GABINETE", "COOLER", "MONITOR",
     }
+
+
+class PangolyProvider(ExternalTechnicalProvider):
+    name = "PANGOLY"
+    domains = ("pangoly.com",)
+    categories = {"VENTOINHA"}
 
 
 class CPUWorldProvider(ExternalTechnicalProvider):
