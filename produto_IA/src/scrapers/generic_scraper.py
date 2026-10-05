@@ -10,6 +10,7 @@ from ..utils.normalizers import clean_text, to_float
 from ..utils.rate_limiter import JsonDiskCache, PoliteRateLimiter
 from ..utils.public_http import get_public_page
 from .product_page_crawler import ProductPageCrawler, merge_page_details, same_product
+from .storefront_html import storefront_fields
 
 
 class GenericScraper:
@@ -266,6 +267,7 @@ class GenericScraper:
             return {"ok": False, "source": source, "api_used": False, "url_original": url,
                     "url_final": final_url, "blocked": True, "requires_local_capture": True,
                     "error": "PAGINA_BLOQUEADA", "attributes": [], "attributes_text": ""}
+        visible = storefront_fields(soup, final_url)
         offers = product.get("offers") if isinstance(product, dict) else None
         if isinstance(offers, list):
             valid = [offer for offer in offers if isinstance(offer, dict)]
@@ -289,6 +291,8 @@ class GenericScraper:
             soup, 'meta[property="og:title"]', 'meta[name="twitter:title"]'
         )
         if not title:
+            title = visible.get("title")
+        if not title:
             h1 = soup.select_one('[itemprop="name"], h1')
             title = clean_text(h1.get_text(" ", strip=True)) if h1 else None
 
@@ -299,6 +303,8 @@ class GenericScraper:
                 image = clean_text(element.get("content") or element.get("src") or element.get("data-src"))
         if image:
             image = urljoin(final_url, image)
+        else:
+            image = visible.get("image_url")
 
         price_spec = offers.get("priceSpecification")
         if not isinstance(price_spec, dict):
@@ -318,6 +324,9 @@ class GenericScraper:
             if element:
                 price = to_float(element.get("content") or element.get_text(" ", strip=True))
                 price_source = "MICRODATA" if price is not None else None
+        if price is None:
+            price = visible.get("price")
+            price_source = visible.get("price_source")
         previous = None  # highPrice is an offer range, not a historical price.
 
         availability = clean_text(offers.get("availability"))
@@ -396,7 +405,7 @@ class GenericScraper:
         self._deadline = time.monotonic() + budget
         params = {"no_browser": no_browser, "crawl": crawl,
                   "budgetClass": "short" if budget <= 12 else "full"}
-        cached = self.cache.get(url, params=params, namespace="product-pages-v5", ttl_seconds=300)
+        cached = self.cache.get(url, params=params, namespace="product-pages-v6", ttl_seconds=300)
         if cached:
             return {**cached, "cache_hit": True}
         attempts, html, result = [], "", None
@@ -411,7 +420,8 @@ class GenericScraper:
             result = self._parse_html(url, response.url, response.text)
         attempts.append({"modo": "HTML_REAPROVEITADO" if initial_page else "HTTP_GENERICO", "url": url,
                          "bloqueado": bool((result or {}).get("blocked")), "erro": type(error).__name__ if error else (result or {}).get("error")})
-        needs_browser = not (result or {}).get("ok") or (crawl and (not result.get("description") or not result.get("attributes")))
+        needs_browser = not (result or {}).get("ok") or (crawl and any(
+            not result.get(key) for key in ("description", "attributes", "image_url", "price")))
         if needs_browser and not no_browser and time.monotonic() + 3 < self._deadline:
             try:
                 from .browser_scraper import BrowserScraper
@@ -423,7 +433,14 @@ class GenericScraper:
                 attempts.append({"modo": "NAVEGADOR_GENERICO", "url": browser.get("final_url") or url,
                                  "bloqueado": bool(parsed.get("blocked")), "erro": browser.get("error") or parsed.get("error")})
                 if not browser.get("error") and parsed.get("ok") and (not (result or {}).get("ok") or same_product(result, parsed)):
+                    original_price = (result or {}).get("price")
                     result = merge_page_details(result, parsed) if (result or {}).get("ok") else parsed
+                    # O navegador está lendo a mesma página do produto. Completa
+                    # um preço ausente; nunca substitui o preço já coletado.
+                    if original_price is None and parsed.get("price") is not None:
+                        result["price"] = parsed["price"]
+                        result["price_source"] = parsed.get("price_source")
+                        result["currency"] = parsed.get("currency") or result.get("currency")
                     html = browser.get("html") or html
                 elif parsed.get("blocked"):
                     if not result or not result.get("ok"):
@@ -443,5 +460,5 @@ class GenericScraper:
         result["page_scraping_attempted"] = bool(crawl)
         result["cache_hit"] = False
         if result.get("ok") and not result.get("blocked"):
-            self.cache.set(url, result, params=params, namespace="product-pages-v5")
+            self.cache.set(url, result, params=params, namespace="product-pages-v6")
         return result

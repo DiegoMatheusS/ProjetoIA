@@ -8,7 +8,7 @@ def complement_link_page(raw, url, no_browser=False):
     if raw.get("page_scraping_attempted"):
         return raw
     result = {**raw, "page_scraping_attempted": True}
-    if raw.get("description") and raw.get("attributes"):
+    if raw.get("description") and raw.get("attributes") and raw.get("image_url"):
         return result
     address = raw.get("url_final") or url
     try:
