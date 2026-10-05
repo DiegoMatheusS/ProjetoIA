@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import json
 import os
 import re
+import time
+from itertools import zip_longest
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -49,7 +51,7 @@ DEFAULT_SOURCES_BY_CATEGORY = {
     "FONTE": ["PC_KOMBO", "GEIZHALS"],
     "GABINETE": ["PC_KOMBO", "GEIZHALS"],
     "COOLER": ["PC_KOMBO", "GEIZHALS"],
-    "VENTOINHA": ["PC_KOMBO", "GEIZHALS"],
+    "VENTOINHA": ["PANGOLY", "GEIZHALS"],
 }
 
 SOURCE_DOMAINS = {
@@ -59,6 +61,7 @@ SOURCE_DOMAINS = {
     "TECHPOWERUP": ["techpowerup.com"],
     "PC_KOMBO": ["pc-kombo.com"],
     "GEIZHALS": ["geizhals.eu", "geizhals.de", "geizhals.at"],
+    "PANGOLY": ["pangoly.com"],
 }
 
 # Catálogos públicos conhecidos. A descoberta usa essas páginas diretamente
@@ -122,6 +125,11 @@ class DiscoverySourceCatalog:
         )
         self.browser = BrowserScraper()
         self.allow_browser_fallback = True
+        self.deadline = None
+        try:
+            self.max_catalog_pages = min(100, max(4, int(os.getenv("DISCOVERY_MAX_CATALOG_PAGES", "20"))))
+        except ValueError:
+            self.max_catalog_pages = 20
         config_path = Path(__file__).resolve().parents[2] / "config" / "manufacturer_domains.json"
         try:
             self.brand_domains = json.loads(config_path.read_text(encoding="utf-8"))
@@ -136,8 +144,13 @@ class DiscoverySourceCatalog:
     def _fetch_html(self, url: str, allowed_domains: list[str]) -> tuple[str | None, str, str | None]:
         http_error = None
         try:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                return None, url, "TEMPO_LIMITE"
             self.rate_limiter.wait(url)
-            response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
+            remaining = self.deadline - time.monotonic() if self.deadline is not None else self.timeout
+            if remaining <= 0:
+                return None, url, "TEMPO_LIMITE"
+            response = self.session.get(url, timeout=min(self.timeout, remaining), allow_redirects=True)
             if response.status_code not in {401, 403, 429}:
                 response.raise_for_status()
                 final = response.url
@@ -147,7 +160,12 @@ class DiscoverySourceCatalog:
         except requests.RequestException as exc:
             http_error = f"ERRO_HTTP: {type(exc).__name__}"
 
-        if self.allow_browser_fallback and self.browser.surfsky_configured():
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            return None, url, "TEMPO_LIMITE"
+        # A inicialização do Surfsky pode levar ao menos 60s. Consultas em lote
+        # com orçamento menor conservam o resultado HTTP e seguem às outras fontes.
+        browser_fits = self.deadline is None or self.deadline - time.monotonic() >= 60
+        if browser_fits and self.allow_browser_fallback and self.browser.surfsky_configured():
             remote = self.browser.fetch_surfsky(url)
             if not remote.get("error") and not remote.get("blocked"):
                 final = remote.get("final_url") or url
@@ -163,6 +181,10 @@ class DiscoverySourceCatalog:
         quando o parser encontrou poucos SKUs. É o equivalente do fallback cloud do
         Magazine, mas limitado a UMA página de catálogo.
         """
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            return None, url, "TEMPO_LIMITE"
+        if self.deadline is not None and self.deadline - time.monotonic() < 60:
+            return None, url, "ORCAMENTO_INSUFICIENTE_PARA_RENDERIZAR"
         if not self.allow_browser_fallback or not self.browser.surfsky_configured():
             return None, url, "SURFSKY_NAO_CONFIGURADO"
         remote = self.browser.fetch_surfsky(url)
@@ -384,6 +406,9 @@ class DiscoverySourceCatalog:
             return self._dedupe(local)
 
         for page_index, url in enumerate(self._cpu_monkey_pages(marca, consulta)):
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                last_error = "TEMPO_LIMITE"
+                break
             html, final, error = self._fetch_html(url, ["cpu-monkey.com"])
             page_items = parse_page(html, final) if html else []
             if not page_items:
@@ -963,6 +988,82 @@ class DiscoverySourceCatalog:
         result = self._dedupe(found)[:limit]
         return result, None if result else (error or "NAO_ENCONTRADO")
 
+    def _pangoly_case_fans(self, marca=None, consulta=None, limit=50):
+        """Descobre ventoinhas no catálogo dedicado do Pangoly.
+
+        O PC-Kombo não possui catálogo dedicado de case fans. O Pangoly expõe
+        uma listagem própria de ventoinhas com links de produto estáveis; a ficha
+        individual é detalhada depois pelo PangolyProvider.
+        """
+        base_url = "https://pangoly.com/en/browse/case-fan"
+        found = []
+        last_error = None
+        max_pages = min(self.max_catalog_pages, max(1, (max(1, int(limit)) + 23) // 24))
+
+        def parse_page(html, final):
+            local = []
+            soup = BeautifulSoup(html or "", "html.parser")
+            for link in soup.select('a[href*="/en/product/"]'):
+                href = link.get("href") or ""
+                if not re.search(r"/en/product/[a-z0-9][a-z0-9-]*", href, re.I):
+                    continue
+                name = self._norm(link.get_text(" ", strip=True))
+                if not name or name.casefold() in {
+                    "add", "compare", "remove", "price history", "product"
+                }:
+                    continue
+                if len(name) < 4 or not re.search(r"[A-Za-z]", name):
+                    continue
+                if not self._matches_filters(name, marca, consulta):
+                    continue
+                local.append(DiscoveryCandidate(
+                    nome=name,
+                    url=urljoin(final, href),
+                    fonte="PANGOLY",
+                    marca=marca,
+                    resumo={"catalog_text": name},
+                ))
+            return self._dedupe(local)
+
+        for page in range(1, max_pages + 1):
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                last_error = "TEMPO_LIMITE"
+                break
+            url = base_url if page == 1 else f"{base_url}?page={page}"
+            html, final, error = self._fetch_html(url, ["pangoly.com"])
+            page_items = parse_page(html, final) if html else []
+            if not page_items:
+                last_error = error or last_error
+
+            if not page_items and self.allow_browser_fallback:
+                rendered, rendered_final, render_error = self._fetch_rendered_catalog(
+                    url, ["pangoly.com"]
+                )
+                if rendered:
+                    page_items = parse_page(rendered, rendered_final)
+                elif render_error:
+                    last_error = render_error or last_error
+
+            previous_count = len(found)
+            found = self._dedupe(found + page_items)
+            if len(found) >= limit:
+                break
+            # Página sem produtos indica fim real da paginação.
+            if page > 1 and (not page_items or len(found) == previous_count):
+                break
+
+        # Filtro por marca/modelo pode não estar nas primeiras páginas. Nesse
+        # caso usa a busca pública limitada apenas ao domínio do Pangoly.
+        if (marca or consulta) and not found:
+            searched, search_error = self._search_source(
+                "PANGOLY", "VENTOINHA", marca, consulta, limit
+            )
+            found = self._dedupe(found + searched)
+            last_error = search_error or last_error
+
+        result = self._dedupe(found)[:limit]
+        return result, None if result else (last_error or "NAO_ENCONTRADO")
+
     def _techpowerup_reference_index(self):
         """Baixa UMA vez a GPU Database e monta um índice por GPU de referência.
 
@@ -1094,58 +1195,94 @@ class DiscoverySourceCatalog:
             found.append(DiscoveryCandidate(nome=name, url=url, fonte=source, marca=marca))
         return self._dedupe(found), None if found else "NAO_ENCONTRADO"
 
-    def discover(self, categoria: str, marca=None, consulta=None, fontes=None, limit=50):
+    def discover(self, categoria: str, marca=None, consulta=None, fontes=None, limit=50, deadline=None):
         selected = list(fontes or DEFAULT_SOURCES_BY_CATEGORY.get(categoria) or [])
         # Se o ADMIN informou marca e existe domínio oficial, a fonte oficial entra
         # primeiro por padrão sem obrigar o frontend a conhecê-la.
         if marca and self.brand_domains.get(marca.casefold()) and "FABRICANTE_OFICIAL" not in selected:
             selected.insert(0, "FABRICANTE_OFICIAL")
 
-        all_candidates = []
+        selected = list(dict.fromkeys(str(source or "").strip().upper() for source in selected))
+        candidate_groups = []
         diagnostics = []
         processed_sources = set()
         per_source_limit = max(limit, min(80, limit * 2))
-        for source in selected:
-            source = str(source or "").strip().upper()
-            if source in processed_sources:
-                continue
-            try:
-                handlers = {
-                    "PC_KOMBO": lambda: self._pc_kombo(categoria, marca, consulta, per_source_limit),
-                    "CPU_MONKEY": lambda: self._cpu_monkey(marca, consulta, per_source_limit) if categoria == "PROCESSADOR" else ([], "CATEGORIA_NAO_SUPORTADA"),
-                    "TECHPOWERUP": lambda: self._techpowerup(marca, consulta, per_source_limit) if categoria == "PLACA_VIDEO" else ([], "CATEGORIA_NAO_SUPORTADA"),
-                }
-                handler = handlers.get(source)
-                if handler:
-                    items, error = handler()
-                else:
-                    # CPU-World, WikiChip, Geizhals e fabricante não possuem um
-                    # catálogo simples único para todas as categorias. Eles ficam
-                    # como descoberta limitada/busca e principalmente confirmação.
-                    items, error = self._search_source(source, categoria, marca, consulta, per_source_limit)
-            except Exception as exc:
-                items, error = [], f"ERRO_FONTE: {type(exc).__name__}: {exc}"
-            processed_sources.add(source)
-            diagnostics.append({"fonte": source, "encontrados": len(items), "erro": error})
-            all_candidates.extend(items)
+        previous_deadline = self.deadline
+        resolver_deadline = getattr(self.resolver, "deadline", None)
+        resolver_browser_policy = getattr(self.resolver, "allow_browser_fallback", False)
+        if deadline is not None:
+            self.resolver.allow_browser_fallback = False
+        try:
+            for source_index, source in enumerate(selected):
+                source = str(source or "").strip().upper()
+                if source in processed_sources:
+                    continue
+                # Reserva tempo para as demais fontes; uma fonte lenta não consome
+                # todo o orçamento da coleta nem impede que fontes de apoio sejam lidas.
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        diagnostics.append({"fonte": source, "encontrados": 0, "erro": "TEMPO_LIMITE"})
+                        continue
+                    self.deadline = time.monotonic() + remaining / (len(selected) - source_index)
+                    self.resolver.deadline = self.deadline
+                try:
+                    handlers = {
+                        "PC_KOMBO": lambda: self._pc_kombo(categoria, marca, consulta, per_source_limit),
+                        "CPU_MONKEY": lambda: self._cpu_monkey(marca, consulta, per_source_limit) if categoria == "PROCESSADOR" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                        "TECHPOWERUP": lambda: self._techpowerup(marca, consulta, per_source_limit) if categoria == "PLACA_VIDEO" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                        "PANGOLY": lambda: self._pangoly_case_fans(marca, consulta, per_source_limit) if categoria == "VENTOINHA" else ([], "CATEGORIA_NAO_SUPORTADA"),
+                    }
+                    handler = handlers.get(source)
+                    if handler:
+                        items, error = handler()
+                    else:
+                        # CPU-World, WikiChip, Geizhals e fabricante não possuem um
+                        # catálogo simples único para todas as categorias. Eles ficam
+                        # como descoberta limitada/busca e principalmente confirmação.
+                        items, error = self._search_source(source, categoria, marca, consulta, per_source_limit)
+                except Exception as exc:
+                    items, error = [], f"ERRO_FONTE: {type(exc).__name__}: {exc}"
+                if self.deadline is not None and time.monotonic() >= self.deadline:
+                    error = error or "TEMPO_LIMITE"
+                processed_sources.add(source)
+                diagnostics.append({"fonte": source, "encontrados": len(items), "erro": error})
+                candidate_groups.append(items)
 
-            # GPU: quando PC-Kombo já preencheu a página, ainda aproveitamos UMA
-            # leitura da tabela do TechPowerUp para completar VRAM/barramento/PCIe
-            # e clocks por GPU de referência. Não abre uma página por placa.
-            if categoria == "PLACA_VIDEO" and source == "PC_KOMBO" \
-                    and "TECHPOWERUP" in [str(x).strip().upper() for x in selected]:
-                reference_index, ref_error = self._techpowerup_reference_index()
-                merged = self._merge_gpu_reference_specs(all_candidates, reference_index) if reference_index else 0
-                processed_sources.add("TECHPOWERUP")
-                diagnostics.append({
-                    "fonte": "TECHPOWERUP",
-                    "encontrados": len(reference_index),
-                    "mesclados": merged,
-                    "erro": ref_error,
-                    "modo": "CATALOGO_REFERENCIA",
-                })
+                # GPU: quando PC-Kombo já preencheu a página, ainda aproveitamos UMA
+                # leitura da tabela do TechPowerUp para completar VRAM/barramento/PCIe
+                # e clocks por GPU de referência. Não abre uma página por placa.
+                if categoria == "PLACA_VIDEO" and source == "PC_KOMBO" \
+                        and "TECHPOWERUP" in [str(x).strip().upper() for x in selected]:
+                    try:
+                        reference_index, ref_error = self._techpowerup_reference_index()
+                    except Exception as exc:
+                        reference_index, ref_error = {}, f"ERRO_FONTE: {type(exc).__name__}: {exc}"
+                    merged = self._merge_gpu_reference_specs(items, reference_index) if reference_index else 0
+                    # Além de enriquecer as placas AIB, os modelos de referência
+                    # também participam da descoberta (incluindo GPUs antigas).
+                    reference_items = [DiscoveryCandidate(
+                        nome=reference["nome"], url=reference["url"], fonte="TECHPOWERUP",
+                        resumo={"catalog_text": reference["nome"], "specs": reference.get("specs") or {}},
+                    ) for reference in reference_index.values() if reference.get("nome") and reference.get("url")
+                        and self._matches_filters(reference["nome"], marca, consulta)]
+                    candidate_groups.append(reference_items)
+                    processed_sources.add("TECHPOWERUP")
+                    if self.deadline is not None and time.monotonic() >= self.deadline:
+                        ref_error = ref_error or "TEMPO_LIMITE"
+                    diagnostics.append({
+                        "fonte": "TECHPOWERUP",
+                        "encontrados": len(reference_index),
+                        "mesclados": merged,
+                        "erro": ref_error,
+                        "modo": "CATALOGO_REFERENCIA",
+                    })
 
-            if len(self._dedupe(all_candidates)) >= limit:
-                # Não faz crawling adicional se já temos candidatos suficientes.
-                break
-        return self._dedupe(all_candidates)[:limit], diagnostics
+        finally:
+            self.deadline = previous_deadline
+            self.resolver.deadline = resolver_deadline
+            self.resolver.allow_browser_fallback = resolver_browser_policy
+        # Alterna as fontes antes de limitar: uma listagem extensa da primeira
+        # fonte não esconde todos os modelos exclusivos das fontes posteriores.
+        candidates = [item for row in zip_longest(*candidate_groups) for item in row if item is not None]
+        return self._dedupe(candidates)[:limit], diagnostics

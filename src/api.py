@@ -83,7 +83,8 @@ class HardwareDiscoveryRequest(BaseModel):
     consulta: str | None = Field(default=None, max_length=240)
     fontes: list[str] | None = None
     pagina: int = Field(default=1, ge=1, le=100)
-    limite: int = Field(default=20, ge=1, le=50)
+    limite: int = Field(default=20, ge=1, le=100)
+    hardwaresCadastrados: list[dict[str, str | None]] = Field(default_factory=list, max_length=50000)
     # v14.20: descoberta prioriza qualidade da ficha. O catálogo encontra os
     # candidatos e, por padrão, cada candidato é detalhado/enriquecido antes de
     # ser devolvido. O cliente ainda pode desligar explicitamente para diagnóstico.
@@ -751,6 +752,7 @@ async def descobrir_hardwares(
                 payload.detalhar,
                 payload.enriquecer,
                 payload.noBrowser,
+                payload.hardwaresCadastrados,
             )
             # O frontend/backend continuam chamando a mesma rota. A Produto IA
             # completa automaticamente cards com baixa cobertura antes de responder.

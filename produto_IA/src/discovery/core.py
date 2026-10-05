@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,8 +16,9 @@ from ..enrichment.quality import evidence_for_specs, validate_specs
 from ..enrichment.identity import identity_is_strong
 from ..enrichment.providers import (
     ExternalTechnicalProvider,
-    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, GeizhalsProvider,
-    CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider, IcecatProvider,
+    ManufacturerProvider, TechPowerUpProvider, PCKomboProvider, PangolyProvider,
+    GeizhalsProvider, CPUWorldProvider, WikiChipProvider, CPUMonkeyProvider,
+    IcecatProvider,
 )
 from ..extractors.backend_schemas import SCHEMAS, REQUIRED, HARDWARE_CATEGORIES
 from ..extractors.ml_specs import extract_specs
@@ -34,6 +36,7 @@ PROVIDER_BY_SOURCE = {
     "WIKICHIP": WikiChipProvider,
     "TECHPOWERUP": TechPowerUpProvider,
     "PC_KOMBO": PCKomboProvider,
+    "PANGOLY": PangolyProvider,
     "GEIZHALS": GeizhalsProvider,
 }
 
@@ -45,6 +48,7 @@ SOURCE_LABELS = {
     "WIKICHIP": "WikiChip",
     "TECHPOWERUP": "TechPowerUp",
     "PC_KOMBO": "PC-Kombo",
+    "PANGOLY": "Pangoly",
     "GEIZHALS": "Geizhals",
 }
 
@@ -173,6 +177,10 @@ class HardwareDiscoveryService:
     def __init__(self, catalog=None):
         self.catalog = catalog or DiscoverySourceCatalog()
         try:
+            self.max_candidates = min(10000, max(300, int(os.getenv("DISCOVERY_MAX_CANDIDATES", "2000"))))
+        except ValueError:
+            self.max_candidates = 2000
+        try:
             # Orçamento global da busca. v14.20.1 evita deixar o frontend preso por
             # vários minutos quando uma fonte externa está lenta/bloqueada.
             self.request_budget = max(15.0, float(os.getenv("DISCOVERY_TOTAL_TIMEOUT_SECONDS", "45")))
@@ -210,7 +218,8 @@ class HardwareDiscoveryService:
             "fontesPadraoPorCategoria": deepcopy(DEFAULT_SOURCES_BY_CATEGORY),
             "fontesTecnicas": [
                 {"id": "ICECAT", "papel": ["ENRIQUECIMENTO_API"], "categorias": list(SUPPORTED_DISCOVERY_CATEGORIES), "configuracaoOpcional": ["ICECAT_USERNAME", "ICECAT_API_TOKEN", "ICECAT_CONTENT_TOKEN"]},
-                {"id": "PC_KOMBO", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER", "VENTOINHA"]},
+                {"id": "PC_KOMBO", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO", "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER"]},
+                {"id": "PANGOLY", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["VENTOINHA"]},
                 {"id": "CPU_MONKEY", "papel": ["DESCOBERTA", "DETALHE"], "categorias": ["PROCESSADOR"]},
                 {"id": "CPU_WORLD", "papel": ["CONFIRMACAO", "ENRIQUECIMENTO"], "categorias": ["PROCESSADOR"]},
                 {"id": "WIKICHIP", "papel": ["CONFIRMACAO", "ENRIQUECIMENTO"], "categorias": ["PROCESSADOR", "PLACA_VIDEO"]},
@@ -471,14 +480,30 @@ class HardwareDiscoveryService:
             output.append(item)
         return output
 
-    def discover(self, categoria: str, marca=None, consulta=None, fontes=None, pagina=1, limite=20, detalhar=True, enriquecer=True, no_browser=False):
+    @staticmethod
+    def _registered_name(value):
+        value = unicodedata.normalize("NFD", str(value or "")).casefold()
+        value = "".join(char for char in value if not unicodedata.combining(char))
+        return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+    def discover(self, categoria: str, marca=None, consulta=None, fontes=None, pagina=1, limite=20, detalhar=True, enriquecer=True, no_browser=False, hardwares_cadastrados=None):
         categoria = str(categoria or "").strip().upper()
         if categoria not in HARDWARE_CATEGORIES:
             raise ValueError(f"Categoria não suportada para descoberta de Hardware: {categoria}")
         pagina = max(1, int(pagina))
-        limite = min(50, max(1, int(limite)))
-        # Busca candidatos suficientes para preencher a página solicitada.
-        needed = min(200, pagina * limite + limite)
+        limite = min(100, max(1, int(limite)))
+        registered_names = set()
+        registered = hardwares_cadastrados or []
+        for hardware in registered:
+            if not isinstance(hardware, dict):
+                continue
+            for name in (hardware.get("nome"), " ".join(str(hardware.get(key) or "") for key in ("marca", "modelo"))):
+                normalized = self._registered_name(name)
+                if normalized:
+                    registered_names.add(normalized)
+        # Reserva espaço para os já cadastrados antes de paginar. Uma nova busca
+        # após cadastrar o lote alcança os próximos modelos em vez de repetir o lote.
+        needed = min(self.max_candidates, max(300, pagina * limite + limite + len(registered)))
         started = time.monotonic()
         old_browser_policy = getattr(self.catalog, "allow_browser_fallback", True)
         resolver = getattr(self.catalog, "resolver", None)
@@ -490,12 +515,18 @@ class HardwareDiscoveryService:
         try:
             candidates, diagnostics = self.catalog.discover(
                 categoria=categoria, marca=marca, consulta=consulta, fontes=fontes, limit=needed,
+                deadline=started + min(45.0, self.request_budget / 2 if detalhar else self.request_budget),
             )
         finally:
             if hasattr(self.catalog, "allow_browser_fallback"):
                 self.catalog.allow_browser_fallback = old_browser_policy
             if resolver is not None and hasattr(resolver, "allow_browser_fallback") and old_resolver_policy is not None:
                 resolver.allow_browser_fallback = old_resolver_policy
+        total_candidates = len(candidates)
+        candidates = [candidate for candidate in candidates if self._registered_name(
+            _clean_candidate_name(candidate.nome) or candidate.nome
+        ) not in registered_names]
+        registered_skipped = total_candidates - len(candidates)
         start = (pagina - 1) * limite
         page_candidates = candidates[start:start + limite]
         items = []
@@ -645,7 +676,12 @@ class HardwareDiscoveryService:
             "consulta": clean_text(consulta),
             "pagina": pagina,
             "limite": limite,
-            "totalCandidatosDescobertos": len(candidates),
+            "totalCandidatosDescobertos": total_candidates,
+            "jaCadastradosIgnorados": registered_skipped,
+            "exclusaoAntesDaPaginacao": True,
+            "limiteCandidatos": self.max_candidates,
+            "limiteBuscaAtingido": total_candidates >= self.max_candidates,
+            "buscaParcial": any(source.get("erro") not in (None, "NAO_ENCONTRADO", "CATEGORIA_NAO_SUPORTADA") for source in diagnostics),
             "quantidadeRetornada": len(items),
             "temMais": (start + limite) < len(candidates),
             "interrompidoPorTimeout": interrupted,
