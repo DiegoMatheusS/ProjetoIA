@@ -51,7 +51,7 @@ def test_offer_rejects_conflicting_ids_and_gpu_variant():
 
 def test_store_failure_does_not_discard_other_offers(monkeypatch):
     from src.offers import identical_product_router as module
-    def search(_payload, store, _domains, _limit):
+    def search(_payload, store, _domains, _limit, *args):
         if store == 'MERCADO_LIVRE':
             raise RuntimeError('store unavailable')
         return [{'marketplace': 'MAGALU', 'urlOriginal': 'https://www.magazineluiza.com.br/ssd/p/123/', 'preco': 100}], {'encontrados': 1}

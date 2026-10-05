@@ -122,19 +122,20 @@ def test_search_accepts_verified_mpn_from_title_when_api_omits_fields(monkeypatc
         last_status = "OK"
 
         def results(self, query, domains, limit):
-            return [{"url": "https://www.mercadolivre.com.br/produto" if store == "MERCADO_LIVRE"
+            return [{"url": "https://produto.mercadolivre.com.br/MLB-123456789-produto" if store == "MERCADO_LIVRE"
                      else "https://www.magazineluiza.com.br/produto/p/123456/"}]
 
     class FakeScraper:
-        @staticmethod
-        def is_mercadolivre(url):
-            return True
+        def __init__(self, *args):
+            pass
 
-        @staticmethod
-        def is_product_url(url):
-            return True
+        def api_results(self, *args):
+            return [], "NAO_CONFIGURADA"
 
-        def collect(self, url, no_browser):
+        def listing_results(self, *args):
+            return [], "NAO_ENCONTRADO"
+
+        def collect(self, url):
             return {
                 "ok": True,
                 "title": "SSD Kingston NV3 1TB SNV3S/1000G",
@@ -144,8 +145,7 @@ def test_search_accepts_verified_mpn_from_title_when_api_omits_fields(monkeypatc
             }
 
     monkeypatch.setattr(offers, "WebSearchResolver", FakeResolver)
-    monkeypatch.setattr(offers, "MercadoLivreScraper", FakeScraper)
-    monkeypatch.setattr(offers, "MagazineScraper", FakeScraper)
+    monkeypatch.setattr(offers, "StoreCandidates", FakeScraper)
 
     payload = IdenticalProductOffersRequest(
         nome="SSD Kingston NV3 1TB",
@@ -165,18 +165,23 @@ def test_search_reports_failed_collection_separately(monkeypatch):
         last_status = "OK"
 
         def results(self, query, domains, limit):
-            return [{"url": "https://www.mercadolivre.com.br/produto"}]
+            return [{"url": "https://produto.mercadolivre.com.br/MLB-123456789-produto"}]
 
     class FakeScraper:
-        @staticmethod
-        def is_mercadolivre(url):
-            return True
+        def __init__(self, *args):
+            pass
 
-        def collect(self, url, no_browser):
+        def api_results(self, *args):
+            return [], "NAO_CONFIGURADA"
+
+        def listing_results(self, *args):
+            return [], "NAO_ENCONTRADO"
+
+        def collect(self, url):
             return {"ok": False, "blocked": True}
 
     monkeypatch.setattr(offers, "WebSearchResolver", FakeResolver)
-    monkeypatch.setattr(offers, "MercadoLivreScraper", FakeScraper)
+    monkeypatch.setattr(offers, "StoreCandidates", FakeScraper)
     payload = IdenticalProductOffersRequest(nome="SSD Kingston NV3", marca="Kingston", mpn="SNV3S/1000G")
     found, diagnostics = offers._search_web_store(payload, "MERCADO_LIVRE", ["example.com"], 3)
     assert found == []
