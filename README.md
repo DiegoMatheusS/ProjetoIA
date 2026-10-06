@@ -710,3 +710,12 @@ preservado e `price_source` distingue JSON-LD, microdados e metatags.
 A melhoria se aplica aos fluxos que já usam `GenericScraper`, sem nova chave ou
 migração. O cache de páginas usa namespace v5 para não reutilizar extrações antigas.
 Testes: `python -m pytest -q tests/test_structured_page_collection.py`.
+# Pesquisa documentada para cadastros
+
+O fluxo `/analisar` com `detalharPagina=true` pesquisa lacunas técnicas após ler o anúncio. A consulta usa o modelo exato em fabricantes e bases técnicas (Icecat, TechPowerUp, CPU-World, CPU-Monkey, WikiChip e Geizhals). Só entram novos campos com URL permitida e trecho comprovado; sugestões sem comprovação, conflitos e características de uma variante diferente permanecem ausentes. Dados já informados e o preço da oferta são preservados.
+
+`/ia-tecnica/enriquecer` aceita `provedor=PROJETO_IA` para pesquisar pelo nome sem exigir chave de LLM. A pesquisa continua exigindo acesso HTTP às fontes. OpenAI permanece como complemento opcional nas importações, com revalidação documental por campo.
+
+Para PCs, `/anuncios/classificar-pc-kit` aceita `pesquisarEspecificacoes=true`: identifica cada peça informada no anúncio ou nos atributos e consulta sua própria ficha. RAM/SSD genéricos e configurações alternativas não escolhem um SKU automaticamente. A resposta inclui `pesquisaTecnica`, `origemPorCampo` e `cadastroHardwareSugerido`, sem gravar peças. O formulário abre uma prévia preenchida da peça em outra aba para revisão.
+
+Publicação coordenada: atualizar ProjetoIA, depois backend_pc3D e frontend_pc3D. O runtime principal deste repositório é `src.app:app`, conforme o Dockerfile.
