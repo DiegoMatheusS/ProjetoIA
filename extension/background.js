@@ -96,6 +96,66 @@ function extractProductDataFromPage() {
     return null;
   };
 
+  const amazonAttributes = [];
+  if (amazon) {
+    const seenAttributes = new Set();
+    const addAttribute = (name, value) => {
+      const key = clean(name)?.replace(/[:：]+$/, "");
+      const val = clean(value);
+      if (!key || !val || key.length > 160 || val.length > 1000) return;
+      const signature = `${key.toLowerCase()}::${val.toLowerCase()}`;
+      if (seenAttributes.has(signature)) return;
+      seenAttributes.add(signature);
+      amazonAttributes.push({ name: key, value: val });
+    };
+
+    const additional = product?.additionalProperty || product?.additionalProperties || [];
+    for (const item of Array.isArray(additional) ? additional : [additional]) {
+      if (!item || typeof item !== "object") continue;
+      addAttribute(item.name, typeof item.value === "object" ? item.value?.value : item.value);
+    }
+
+    const rows = document.querySelectorAll(
+      "#productDetails_techSpec_section_1 tr, #productDetails_techSpec_section_2 tr, " +
+      "#productDetails_detailBullets_sections1 tr, #productDetails_detailBullets_sections2 tr, " +
+      "#technicalSpecifications_section_1 tr, #technicalSpecifications_section_2 tr",
+    );
+    for (const row of rows) {
+      const keyNode = row.querySelector("th, td:first-child");
+      const valueNode = row.querySelector("td:last-child");
+      if (keyNode && valueNode && keyNode !== valueNode) {
+        addAttribute(keyNode.textContent, valueNode.textContent);
+      }
+      if (amazonAttributes.length >= 160) break;
+    }
+
+    if (amazonAttributes.length < 160) {
+      for (const item of document.querySelectorAll("#detailBullets_feature_div li")) {
+        const keyNode = item.querySelector(".a-text-bold");
+        if (!keyNode) continue;
+        const key = clean(keyNode.textContent);
+        const full = clean(item.textContent);
+        addAttribute(key, full && key ? full.replace(key, "").trim() : full);
+        if (amazonAttributes.length >= 160) break;
+      }
+    }
+  }
+
+  const amazonFeatureBullets = amazon
+    ? Array.from(document.querySelectorAll("#feature-bullets li span.a-list-item"))
+        .map((node) => clean(node.textContent))
+        .filter(Boolean)
+        .slice(0, 30)
+    : [];
+  const amazonDescription = amazon
+    ? clean(document.querySelector("#productDescription")?.textContent) ||
+      clean(amazonFeatureBullets.join(" | "))
+    : null;
+  const amazonImage = amazon
+    ? clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("data-old-hires")) ||
+      clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("src"))
+    : null;
+
   const brandValue = product?.brand;
   const amazonByline = amazon ? clean(document.querySelector("#bylineInfo")?.textContent) : null;
   const brand = clean(
@@ -165,6 +225,9 @@ function extractProductDataFromPage() {
     gtin: gtin ? gtin.replace(/[^0-9A-Za-z-]/g, "") : null,
     asin,
     preco,
+    descricao: amazonDescription,
+    imagemUrl: amazonImage,
+    atributos: amazonAttributes,
   };
   return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== null && value !== ""));
 }
