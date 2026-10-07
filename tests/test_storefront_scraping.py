@@ -71,6 +71,40 @@ def test_magalu_reads_the_main_price_and_image():
     assert raw["image_url"] == "https://www.magazineluiza.com.br/celular.jpg"
 
 
+@pytest.mark.parametrize("url,html,expected,source", [
+    (
+        "https://www.kabum.com.br/produto/123/teste",
+        '<h1>SSD Kingston NV3</h1><div data-testid="price">R$ 399,90</div><main><img data-testid="product-image" src="/ssd.jpg"></main>',
+        399.9,
+        "HTML_KABUM",
+    ),
+    (
+        "https://www.pichau.com.br/ssd-kingston-nv3-1tb",
+        '<h1>SSD Kingston NV3</h1><span id="valor-promocional">R$ 409,90</span><main><img fetchpriority="high" src="/ssd.jpg"></main>',
+        409.9,
+        "HTML_PICHAU",
+    ),
+    (
+        "https://www.terabyteshop.com.br/produto/123/ssd-kingston",
+        '<h1 class="tit-prod">SSD Kingston NV3</h1><div id="valVista">R$ 419,90</div><img class="img-produto" src="/ssd.jpg">',
+        419.9,
+        "HTML_TERABYTE",
+    ),
+    (
+        "https://pt.aliexpress.com/item/1005001234567890.html",
+        '<h1 data-pl="product-title">SSD Kingston NV3</h1><div class="product-price-value">R$ 429,90</div><main><img fetchpriority="high" src="/ssd.jpg"></main>',
+        429.9,
+        "HTML_ALIEXPRESS",
+    ),
+])
+def test_additional_affiliate_storefront_fields(url, html, expected, source):
+    raw = parse(url, html)
+    assert raw["price"] == expected
+    assert raw["price_source"] == source
+    assert raw["title"] == "SSD Kingston NV3"
+    assert raw["image_url"].endswith("/ssd.jpg")
+
+
 def test_structured_price_and_image_keep_priority_over_html():
     product = {"@type": "Product", "name": "Produto", "image": "https://cdn.test/oficial.jpg", "offers": {"price": 1299.9}}
     raw = parse(AMAZON, '<script type="application/ld+json">' + json.dumps(product) + '</script><span id="priceblock_ourprice">R$ 999,90</span><img id="landingImage" src="/outra.jpg">')

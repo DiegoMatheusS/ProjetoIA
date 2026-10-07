@@ -96,65 +96,100 @@ function extractProductDataFromPage() {
     return null;
   };
 
-  const amazonAttributes = [];
-  if (amazon) {
-    const seenAttributes = new Set();
-    const addAttribute = (name, value) => {
-      const key = clean(name)?.replace(/[:：]+$/, "");
-      const val = clean(value);
-      if (!key || !val || key.length > 160 || val.length > 1000) return;
-      const signature = `${key.toLowerCase()}::${val.toLowerCase()}`;
-      if (seenAttributes.has(signature)) return;
-      seenAttributes.add(signature);
-      amazonAttributes.push({ name: key, value: val });
-    };
+  const technicalAttributes = [];
+  const seenAttributes = new Set();
+  const addAttribute = (name, value) => {
+    const key = clean(name)?.replace(/[:：]+$/, "");
+    const val = clean(value);
+    if (!key || !val || key.length > 160 || val.length > 1000) return;
+    const signature = `${key.toLowerCase()}::${val.toLowerCase()}`;
+    if (seenAttributes.has(signature)) return;
+    seenAttributes.add(signature);
+    technicalAttributes.push({ name: key, value: val });
+  };
 
-    const additional = product?.additionalProperty || product?.additionalProperties || [];
-    for (const item of Array.isArray(additional) ? additional : [additional]) {
-      if (!item || typeof item !== "object") continue;
-      addAttribute(item.name, typeof item.value === "object" ? item.value?.value : item.value);
-    }
+  const additional = product?.additionalProperty || product?.additionalProperties || [];
+  for (const item of Array.isArray(additional) ? additional : [additional]) {
+    if (!item || typeof item !== "object") continue;
+    const rawValue = typeof item.value === "object" ? item.value?.value : item.value;
+    addAttribute(item.name, rawValue);
+  }
 
-    const rows = document.querySelectorAll(
-      "#productDetails_techSpec_section_1 tr, #productDetails_techSpec_section_2 tr, " +
-      "#productDetails_detailBullets_sections1 tr, #productDetails_detailBullets_sections2 tr, " +
-      "#technicalSpecifications_section_1 tr, #technicalSpecifications_section_2 tr",
-    );
-    for (const row of rows) {
-      const keyNode = row.querySelector("th, td:first-child");
-      const valueNode = row.querySelector("td:last-child");
-      if (keyNode && valueNode && keyNode !== valueNode) {
-        addAttribute(keyNode.textContent, valueNode.textContent);
-      }
-      if (amazonAttributes.length >= 160) break;
-    }
+  // Tabelas técnicas são comuns em KaBuM, Pichau, Terabyte, Amazon e Magalu.
+  // Só aceitamos pares chave/valor explícitos para não transformar layout em ficha.
+  for (const row of document.querySelectorAll("table tr")) {
+    const cells = row.querySelectorAll(":scope > th, :scope > td");
+    if (cells.length >= 2) addAttribute(cells[0].textContent, cells[1].textContent);
+    if (technicalAttributes.length >= 200) break;
+  }
 
-    if (amazonAttributes.length < 160) {
-      for (const item of document.querySelectorAll("#detailBullets_feature_div li")) {
-        const keyNode = item.querySelector(".a-text-bold");
-        if (!keyNode) continue;
-        const key = clean(keyNode.textContent);
-        const full = clean(item.textContent);
-        addAttribute(key, full && key ? full.replace(key, "").trim() : full);
-        if (amazonAttributes.length >= 160) break;
-      }
+  if (technicalAttributes.length < 200) {
+    for (const dt of document.querySelectorAll("dt")) {
+      const dd = dt.nextElementSibling?.matches?.("dd") ? dt.nextElementSibling : null;
+      if (dd) addAttribute(dt.textContent, dd.textContent);
+      if (technicalAttributes.length >= 200) break;
     }
   }
 
-  const amazonFeatureBullets = amazon
-    ? Array.from(document.querySelectorAll("#feature-bullets li span.a-list-item"))
-        .map((node) => clean(node.textContent))
-        .filter(Boolean)
-        .slice(0, 30)
-    : [];
-  const amazonDescription = amazon
-    ? clean(document.querySelector("#productDescription")?.textContent) ||
-      clean(amazonFeatureBullets.join(" | "))
-    : null;
-  const amazonImage = amazon
-    ? clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("data-old-hires")) ||
-      clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("src"))
-    : null;
+  if (technicalAttributes.length < 200) {
+    const containers = document.querySelectorAll(
+      '[class*="spec"], [id*="spec"], [class*="technical"], [id*="technical"], ' +
+      '[class*="caracter"], [id*="caracter"], [class*="ficha"], [id*="ficha"], ' +
+      '[class*="product-detail"], [id*="product-detail"], #detailBullets_feature_div',
+    );
+    for (const container of Array.from(containers).slice(0, 50)) {
+      for (const node of Array.from(container.querySelectorAll("li, p, div")).slice(0, 300)) {
+        const direct = Array.from(node.children || []).filter((child) =>
+          ["SPAN", "DIV", "STRONG", "B"].includes(child.tagName),
+        );
+        if (direct.length === 2 && !direct.some((child) => child.querySelector("div, li, p"))) {
+          addAttribute(direct[0].textContent, direct[1].textContent);
+        }
+        const line = clean(node.textContent);
+        if (line && line.includes(":") && line.length <= 1200) {
+          const separator = line.indexOf(":");
+          const key = line.slice(0, separator).trim();
+          const value = line.slice(separator + 1).trim();
+          if (key.length >= 1 && key.length <= 160 && value) addAttribute(key, value);
+        }
+        if (technicalAttributes.length >= 200) break;
+      }
+      if (technicalAttributes.length >= 200) break;
+    }
+  }
+
+  const attributeValue = (...labels) => {
+    const wanted = labels.map((label) => String(label).toLowerCase());
+    for (const item of technicalAttributes) {
+      const key = String(item.name || "").toLowerCase();
+      if (wanted.some((label) => key === label || key.includes(label))) return clean(item.value);
+    }
+    return null;
+  };
+
+  const featureBullets = Array.from(
+    document.querySelectorAll(
+      "#feature-bullets li span.a-list-item, [class*='feature'] li, [class*='highlights'] li",
+    ),
+  )
+    .map((node) => clean(node.textContent))
+    .filter(Boolean)
+    .slice(0, 30);
+
+  const productDescription = clean(product?.description) ||
+    clean(document.querySelector("#productDescription, [itemprop='description'], [data-testid*='description']")?.textContent) ||
+    clean(document.querySelector("[class*='product-description'], [class*='description__content']")?.textContent) ||
+    clean(featureBullets.join(" | ")) ||
+    meta('meta[name="description"]', 'meta[property="og:description"]');
+
+  let productImage = product?.image;
+  if (Array.isArray(productImage)) productImage = productImage[0];
+  if (productImage && typeof productImage === "object") productImage = productImage.url;
+  productImage = clean(productImage) ||
+    clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("data-old-hires")) ||
+    clean(document.querySelector("#landingImage, #imgBlkFront")?.getAttribute("src")) ||
+    meta('meta[property="og:image"]', 'meta[name="twitter:image"]') ||
+    itemprop("image");
 
   const brandValue = product?.brand;
   const amazonByline = amazon ? clean(document.querySelector("#bylineInfo")?.textContent) : null;
@@ -162,20 +197,23 @@ function extractProductDataFromPage() {
     typeof brandValue === "object" && brandValue !== null
       ? brandValue.name
       : brandValue,
-  ) || itemprop("brand") || amazonTableValue("marca", "brand", "fabricante") ||
+  ) || itemprop("brand") || attributeValue("marca", "brand", "fabricante", "manufacturer") || amazonTableValue("marca", "brand", "fabricante") ||
     (amazonByline ? amazonByline.replace(/^(?:visite a loja (?:da?|do) |marca:\s*|brand:\s*)/i, "").trim() : null) ||
     meta('meta[property="product:brand"]', 'meta[name="brand"]');
 
   const gtin = clean(
     product?.gtin || product?.gtin14 || product?.gtin13 || product?.gtin12 || product?.gtin8,
   ) || itemprop("gtin", "gtin14", "gtin13", "gtin12", "gtin8") ||
+    attributeValue("ean", "gtin", "código de barras", "codigo de barras", "upc") ||
     amazonTableValue("ean", "gtin", "código de barras") ||
     meta('meta[name="gtin"]', 'meta[property="product:gtin"]');
 
   const model = clean(product?.model) || itemprop("model") ||
+    attributeValue("modelo", "model", "número do modelo", "numero do modelo") ||
     amazonTableValue("número do modelo", "número do modelo do item", "modelo", "model number") ||
     meta('meta[name="model"]', 'meta[property="product:model"]');
   const mpn = clean(product?.mpn) || itemprop("mpn") ||
+    attributeValue("mpn", "part number", "número da peça", "numero da peca", "referência do fabricante", "referencia do fabricante") ||
     amazonTableValue("número da peça", "referência do fabricante", "manufacturer part number", "mpn") ||
     meta('meta[name="mpn"]', 'meta[property="product:mpn"]');
 
@@ -193,8 +231,27 @@ function extractProductDataFromPage() {
       "#price_inside_buybox, #priceblock_ourprice, #priceblock_dealprice",
     )?.textContent,
   ) : null;
+  const storePriceSelectors = [
+    "[data-testid='price']", "[data-testid='price-value']", "[data-testid='product-price']",
+    "#valVista", ".valVista", "#valor-promocional",
+    "[class*='finalPrice']", "[class*='pricePix']", "[class*='precoAvista']",
+    "[class*='product-price-value']", "[class*='price--current']",
+  ];
+  let visibleStorePrice = null;
+  for (const selector of storePriceSelectors) {
+    for (const node of Array.from(document.querySelectorAll(selector)).slice(0, 8)) {
+      const text = clean(node.textContent);
+      if (!text || !/R\$\s*[0-9]/i.test(text) || /\b\d{1,2}\s*x\b|parcela|sem\s+juros/i.test(text)) continue;
+      const amounts = text.match(/R\$\s*[0-9][0-9.,]*/gi) || [];
+      if (amounts.length === 1) {
+        visibleStorePrice = amounts[0];
+        break;
+      }
+    }
+    if (visibleStorePrice) break;
+  }
   const rawPrice = amazonPrice || clean(offer?.price) || itemprop("price") ||
-    meta('meta[property="product:price:amount"]', 'meta[itemprop="price"]');
+    meta('meta[property="product:price:amount"]', 'meta[itemprop="price"]') || visibleStorePrice;
   let preco = null;
   if (rawPrice) {
     let normalized = rawPrice.replace(/[^0-9.,]/g, "");
@@ -225,9 +282,9 @@ function extractProductDataFromPage() {
     gtin: gtin ? gtin.replace(/[^0-9A-Za-z-]/g, "") : null,
     asin,
     preco,
-    descricao: amazonDescription,
-    imagemUrl: amazonImage,
-    atributos: amazonAttributes,
+    descricao: productDescription,
+    imagemUrl: productImage,
+    atributos: technicalAttributes,
   };
   return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== null && value !== ""));
 }

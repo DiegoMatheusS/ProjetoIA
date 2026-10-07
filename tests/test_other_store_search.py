@@ -74,6 +74,28 @@ def test_magalu_next_data_product_links_are_supported():
     assert listing_candidates(html, "https://www.magazineluiza.com.br/busca/ssd/", "MAGALU", 3)[0]["url"] == "https://www.magazineluiza.com.br/ssd/p/123456/"
 
 
+@pytest.mark.parametrize("store,url", [
+    ("AMAZON", "https://www.amazon.com.br/dp/B0ABC12345"),
+    ("KABUM", "https://www.kabum.com.br/produto/123456/ssd-kingston"),
+    ("PICHAU", "https://www.pichau.com.br/ssd-kingston-nv3-1tb-snv3s-1000g"),
+    ("TERABYTE", "https://www.terabyteshop.com.br/produto/12345/ssd-kingston"),
+    ("ALIEXPRESS", "https://pt.aliexpress.com/item/1005001234567890.html"),
+])
+def test_additional_affiliate_product_urls_are_recognized(store, url):
+    assert is_product_url(store, url)
+
+
+@pytest.mark.parametrize("store,url", [
+    ("AMAZON", "https://www.amazon.com.br/s?k=ssd"),
+    ("KABUM", "https://www.kabum.com.br/busca/ssd"),
+    ("PICHAU", "https://www.pichau.com.br/busca?q=ssd"),
+    ("TERABYTE", "https://www.terabyteshop.com.br/busca?str=ssd"),
+    ("ALIEXPRESS", "https://pt.aliexpress.com/w/wholesale-ssd.html"),
+])
+def test_search_pages_are_not_product_urls(store, url):
+    assert not is_product_url(store, url)
+
+
 def test_mercado_livre_id_in_search_query_does_not_make_it_a_product_page():
     assert not is_product_url("MERCADO_LIVRE", "https://lista.mercadolivre.com.br/busca?q=MLB123456789")
     assert is_product_url("MERCADO_LIVRE", "https://www.mercadolivre.com.br/ssd/p/MLB123456789")
@@ -153,7 +175,7 @@ def test_timeout_preserves_completed_and_partial_store_offers(monkeypatch):
     try:
         result = offers.find_identical_product_offers(offers.IdenticalProductOffersRequest(nome="SSD Kingston NV3", modelo="SNV3S/1000G"))
         assert time.monotonic() - started < 1.8
-        assert result["quantidade"] == 2
+        assert result["quantidade"] == 7
         assert result["fontes"]["magalu"]["statusBusca"] == "TEMPO_LIMITE"
         assert result["fontes"]["magalu"]["encontrados"] == 1
     finally:

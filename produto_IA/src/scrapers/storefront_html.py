@@ -35,6 +35,48 @@ SELECTORS = {
         "image": ("[data-testid='image-selected-thumbnail'] img", "[data-testid='product-image'] img"),
         "price": ("[data-testid='price-value']",),
     },
+    "KABUM": {
+        "domains": ("kabum.com.br",),
+        "title": ("h1", "[data-testid='product-title']", "[data-testid='productName']"),
+        "image": ("main img[data-testid='product-image']", "main img[fetchpriority='high']", "main img"),
+        "price": (
+            "[data-testid='price']", "[data-testid='price-value']",
+            "[class*='finalPrice']", "[class*='priceCard']",
+        ),
+    },
+    "PICHAU": {
+        "domains": ("pichau.com.br",),
+        "title": ("h1", "[class*='product-name']", "[class*='productName']"),
+        "image": ("main img[fetchpriority='high']", "[class*='gallery'] img", "main img"),
+        "price": (
+            "#valor-promocional", "[class*='special-price'] [class*='price']",
+            "[class*='price-boleto']", "[class*='pricePix']",
+        ),
+    },
+    "TERABYTE": {
+        "domains": ("terabyteshop.com.br",),
+        "title": ("h1", ".tit-prod", "[class*='product-name']"),
+        "image": (".img-produto", "[class*='gallery'] img", "main img"),
+        "price": (
+            "#valVista", ".valVista", "[class*='precoAvista']",
+            "[class*='pricePix']", "[data-testid='price']",
+        ),
+    },
+    "SHOPEE": {
+        "domains": ("shopee.com.br",),
+        "title": ("h1", "[data-testid='product-title']"),
+        "image": ("main img[fetchpriority='high']", "[data-testid='product-image'] img"),
+        "price": ("[data-testid='product-price']", "[data-testid='price']"),
+    },
+    "ALIEXPRESS": {
+        "domains": ("aliexpress.com",),
+        "title": ("h1[data-pl='product-title']", "h1", "[class*='product-title']"),
+        "image": ("[class*='magnifier'] img", "main img[fetchpriority='high']", "main img"),
+        "price": (
+            "[class*='product-price-value']", "[class*='price--current']",
+            "[data-pl='product-price']",
+        ),
+    },
 }
 
 

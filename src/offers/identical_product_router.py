@@ -177,6 +177,11 @@ def _normalize_web_offer(
         "MERCADO_LIVRE": "Mercado Livre",
         "MAGALU": "Magazine Luiza",
         "SHOPEE": "Shopee",
+        "AMAZON": "Amazon",
+        "KABUM": "KaBuM!",
+        "PICHAU": "Pichau",
+        "TERABYTE": "Terabyte",
+        "ALIEXPRESS": "AliExpress",
     }.get(store, store)
     return {
         "parceiro": partner_name,
@@ -456,45 +461,80 @@ def find_identical_product_offers(
             return partial_offers, {**(partial.get("diagnostico") or {}), "statusBusca": "ERRO",
                 "erro": "Não foi possível consultar esta loja agora.", "encontrados": len(partial_offers)}
 
-    # Return partial results before the backend's 90s timeout, including offers
-    # already confirmed by a store that has not completed all its candidates.
+    # Retorna resultados parciais antes do timeout do backend. Lojas sem
+    # API oficial usam busca web restrita ao próprio domínio e só entram quando
+    # GTIN/MPN/modelo confirmam que é o mesmo produto.
     budget = min(70, max(1, float(os.getenv("IDENTICAL_OFFERS_TIMEOUT_SECONDS", "60"))))
     deadline = time.monotonic() + budget
-    pool = ThreadPoolExecutor(max_workers=3)
-    progress = {key: {} for key in ("mercadoLivre", "magalu", "shopee")}
+    store_specs = [
+        ("mercadoLivre", "MERCADO_LIVRE", ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"]),
+        ("magalu", "MAGALU", ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"]),
+        ("amazon", "AMAZON", ["amazon.com.br", "amazon.com"]),
+        ("kabum", "KABUM", ["kabum.com.br"]),
+        ("pichau", "PICHAU", ["pichau.com.br"]),
+        ("terabyte", "TERABYTE", ["terabyteshop.com.br"]),
+        ("aliexpress", "ALIEXPRESS", ["aliexpress.com"]),
+    ]
+    progress = {key: {} for key, _store, _domains in store_specs}
+    progress["shopee"] = {}
+    pool = ThreadPoolExecutor(max_workers=min(8, len(store_specs) + 1))
     tasks = {
-        "mercadoLivre": pool.submit(search_safely, _search_web_store, payload, "MERCADO_LIVRE",
-            ["mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com"], limit, deadline, progress["mercadoLivre"]),
-        "magalu": pool.submit(search_safely, _search_web_store, payload, "MAGALU",
-            ["magazineluiza.com.br", "magazinevoce.com.br", "magalu.com"], limit, deadline, progress["magalu"]),
-        "shopee": pool.submit(search_safely, _search_shopee, payload, limit, deadline, progress["shopee"]),
+        key: pool.submit(
+            search_safely,
+            _search_web_store,
+            payload,
+            store,
+            domains,
+            limit,
+            deadline,
+            progress[key],
+        )
+        for key, store, domains in store_specs
     }
+    tasks["shopee"] = pool.submit(
+        search_safely,
+        _search_shopee,
+        payload,
+        limit,
+        deadline,
+        progress["shopee"],
+    )
+
     wait(tasks.values(), timeout=max(0, deadline - time.monotonic()))
-    results = {}
+    results: dict[str, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
     for key, task in tasks.items():
         if task.done():
             results[key] = task.result()
         else:
             partial = progress[key]
             partial_offers = list(partial.get("ofertas") or [])
-            results[key] = partial_offers, {**(partial.get("diagnostico") or {}),
-                "statusBusca": "TEMPO_LIMITE", "encontrados": len(partial_offers)}
+            results[key] = partial_offers, {
+                **(partial.get("diagnostico") or {}),
+                "statusBusca": "TEMPO_LIMITE",
+                "encontrados": len(partial_offers),
+            }
     pool.shutdown(wait=False, cancel_futures=True)
-    mercado_livre, ml_diag = results["mercadoLivre"]
-    magalu, magalu_diag = results["magalu"]
-    shopee, shopee_diag = results["shopee"]
 
     unique: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for offer in [*mercado_livre, *magalu, *shopee]:
-        key = (
-            str(offer.get("marketplace") or ""),
-            str(offer.get("urlOriginal") or "").split("#", 1)[0].rstrip("/").casefold(),
-        )
-        if not key[1] or key in seen:
-            continue
-        seen.add(key)
-        unique.append(offer)
+    ordered_keys = [key for key, _store, _domains in store_specs] + ["shopee"]
+    for key_name in ordered_keys:
+        store_offers, _diagnostic = results[key_name]
+        for offer in store_offers:
+            key = (
+                str(offer.get("marketplace") or ""),
+                str(offer.get("urlOriginal") or "").split("#", 1)[0].rstrip("/").casefold(),
+            )
+            if not key[1] or key in seen:
+                continue
+            seen.add(key)
+            unique.append(offer)
+
+    source_diagnostics = {
+        key: results[key][1]
+        for key in ordered_keys
+    }
+
     return {
         "modo": "BUSCA_PRODUTO_IDENTICO",
         "consulta": _query(payload),
@@ -507,16 +547,13 @@ def find_identical_product_offers(
         },
         "quantidade": len(unique),
         "ofertas": unique,
-        "fontes": {
-            "mercadoLivre": ml_diag,
-            "magalu": magalu_diag,
-            "shopee": shopee_diag,
-        },
+        "fontes": source_diagnostics,
         "politica": {
             "somenteProdutoIdentico": True,
             "naoAlteraProduto": True,
             "naoAlteraFichaTecnica": True,
             "confirmacaoPorIdentidadeForte": True,
             "buscaPorNomeCurto": True,
+            "lojasConsultadas": ordered_keys,
         },
     }

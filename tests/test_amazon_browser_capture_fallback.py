@@ -183,3 +183,65 @@ def test_amazon_capture_attributes_fill_hardware_specs_when_remote_page_has_no_s
     specs = result["payloadParcialBackend"]["especificacaoProcessador"]
     assert specs["socket"] == "AM4"
     assert specs["nucleos"] == 6
+
+
+def test_kabum_capture_attributes_fill_hardware_specs(monkeypatch):
+    observed = {}
+    monkeypatch.setattr(amazon_fallback, "auto_enrich_link_result", lambda data: data)
+
+    def fake_build(raw, category):
+        observed.update(raw)
+        assert category == "ARMAZENAMENTO"
+        return {
+            "categoriaDetectada": "ARMAZENAMENTO",
+            "payloadParcialBackend": {
+                "nome": raw["title"],
+                "marca": raw["brand"],
+                "modelo": raw["model"],
+                "especificacaoArmazenamento": {
+                    "tipo": "SSD",
+                    "capacidadeGb": 1000,
+                    "interface": "NVMe",
+                    "formato": "M.2",
+                },
+            },
+            "ofertaColetada": {"preco": raw["price"]},
+            "origemColeta": {},
+        }
+
+    monkeypatch.setattr(amazon_fallback, "build_result", fake_build)
+    remote = {
+        "categoriaDetectada": "ARMAZENAMENTO",
+        "payloadParcialBackend": {
+            "nome": "SSD Kingston NV3 1TB",
+            "marca": "Kingston",
+            "modelo": "SNV3S/1000G",
+            "especificacaoArmazenamento": {},
+        },
+        "ofertaColetada": {"preco": 399.90},
+    }
+
+    result = amazon_fallback.hydrate_marketplace_analysis(
+        remote,
+        url="https://www.kabum.com.br/produto/123456/ssd-kingston",
+        capture=PageCapture(
+            nome="SSD Kingston NV3 1TB NVMe M.2",
+            marca="Kingston",
+            modelo="SNV3S/1000G",
+            preco=399.90,
+            atributos=[
+                {"name": "Tipo", "value": "SSD"},
+                {"name": "Capacidade", "value": "1 TB"},
+                {"name": "Interface", "value": "NVMe"},
+                {"name": "Formato", "value": "M.2"},
+            ],
+        ),
+        forced_category="ARMAZENAMENTO",
+    )
+
+    assert result["fallbackCapturaLocal"] is True
+    assert result["fallbackCapturaAmazon"] is False
+    assert result["origemColeta"]["plataformaCaptura"] == "KABUM"
+    assert observed["attributes"][0] == {"name": "Tipo", "value_name": "SSD"}
+    specs = result["payloadParcialBackend"]["especificacaoArmazenamento"]
+    assert specs["capacidadeGb"] == 1000

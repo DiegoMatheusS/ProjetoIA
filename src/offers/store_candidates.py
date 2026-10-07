@@ -16,6 +16,20 @@ from ..utils.public_http import get_public_page
 from ..utils.product_links import extract_shopee_ids, is_shopee_url
 
 
+_STORE_DOMAINS = {
+    "AMAZON": ("amazon.com.br", "amazon.com"),
+    "KABUM": ("kabum.com.br",),
+    "PICHAU": ("pichau.com.br",),
+    "TERABYTE": ("terabyteshop.com.br",),
+    "ALIEXPRESS": ("aliexpress.com",),
+}
+
+
+def _host_matches(host: str, domains: tuple[str, ...]) -> bool:
+    host = (host or "").lower().removeprefix("www.")
+    return any(host == domain or host.endswith("." + domain) for domain in domains)
+
+
 def is_product_url(store, url):
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
@@ -25,8 +39,27 @@ def is_product_url(store, url):
     if store == "SHOPEE":
         shop_id, item_id = extract_shopee_ids(url)
         return is_shopee_url(url) and bool(shop_id and item_id)
-    return (MercadoLivreScraper.is_mercadolivre(url)
-            and bool(re.search(r"/(?:p/MLB\d+|MLB-?\d{6,})(?:[-/]|$)", parsed.path, re.I)))
+    if store == "MERCADO_LIVRE":
+        return (MercadoLivreScraper.is_mercadolivre(url)
+                and bool(re.search(r"/(?:p/MLB\d+|MLB-?\d{6,})(?:[-/]|$)", parsed.path, re.I)))
+
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    domains = _STORE_DOMAINS.get(store)
+    if not domains or not _host_matches(host, domains):
+        return False
+    path = parsed.path or "/"
+    if store == "AMAZON":
+        return bool(re.search(r"/(?:dp|gp/(?:product|aw/d)|product)/[A-Z0-9]{10}(?:[/?]|$)", path, re.I))
+    if store in {"KABUM", "TERABYTE"}:
+        return bool(re.search(r"/produto/\d+(?:/|$)", path, re.I))
+    if store == "ALIEXPRESS":
+        return bool(re.search(r"/item/\d+\.html(?:/|$)", path, re.I))
+    if store == "PICHAU":
+        lowered = path.casefold().strip("/")
+        if not lowered or lowered.startswith(("busca", "search", "categoria", "categorias", "marca", "fabricante")):
+            return False
+        return len(lowered) >= 12 and "-" in lowered
+    return False
 
 
 def listing_candidates(html, base_url, store, limit):
@@ -127,8 +160,12 @@ class StoreCandidates:
             url = "https://www.magazineluiza.com.br/busca/" + quote(query, safe="") + "/"
         elif self.store == "SHOPEE":
             url = "https://shopee.com.br/search?keyword=" + quote(query, safe="")
-        else:
+        elif self.store == "MERCADO_LIVRE":
             url = "https://lista.mercadolivre.com.br/" + quote(query.replace(" ", "-"), safe="")
+        else:
+            # Para as demais lojas, a descoberta é feita pelo resolver web com
+            # domínio restrito. Evita depender de URLs internas de busca que mudam.
+            return [], "NAO_SUPORTADA"
         try:
             page = self._page(url)
             candidates = listing_candidates(page.text, page.url, self.store, limit)
@@ -150,7 +187,15 @@ class StoreCandidates:
                 return {"ok": False, "error": "REDIRECIONAMENTO_FORA_DO_PRODUTO"}
             if self.store == "MAGALU":
                 return MagazineScraper()._parse_magazine_html(url, page.url, page.text)
-            source = "SHOPEE_PAGINA_FALLBACK" if self.store == "SHOPEE" else "MERCADO_LIVRE_PAGINA"
+            source = {
+                "SHOPEE": "SHOPEE_PAGINA_FALLBACK",
+                "MERCADO_LIVRE": "MERCADO_LIVRE_PAGINA",
+                "AMAZON": "AMAZON_PAGINA",
+                "KABUM": "KABUM_PAGINA",
+                "PICHAU": "PICHAU_PAGINA",
+                "TERABYTE": "TERABYTE_PAGINA",
+                "ALIEXPRESS": "ALIEXPRESS_PAGINA",
+            }.get(self.store, "PAGINA_LOJA")
             return self.public._parse_html(url, page.url, page.text, source=source)
         except requests.HTTPError as exc:
             return {"ok": False, "blocked": exc.response.status_code in {401, 403, 429}, "error": "FALHA_HTTP"}
