@@ -13,6 +13,7 @@ from ..scrapers.generic_scraper import GenericScraper
 from ..scrapers.magazine_scraper import MagazineScraper
 from ..scrapers.mercadolivre_scraper import MercadoLivreScraper
 from ..utils.public_http import get_public_page
+from ..utils.product_links import extract_shopee_ids, is_shopee_url
 
 
 def is_product_url(store, url):
@@ -21,6 +22,9 @@ def is_product_url(store, url):
         return False
     if store == "MAGALU":
         return MagazineScraper.is_product_url(url)
+    if store == "SHOPEE":
+        shop_id, item_id = extract_shopee_ids(url)
+        return is_shopee_url(url) and bool(shop_id and item_id)
     return (MercadoLivreScraper.is_mercadolivre(url)
             and bool(re.search(r"/(?:p/MLB\d+|MLB-?\d{6,})(?:[-/]|$)", parsed.path, re.I)))
 
@@ -119,8 +123,12 @@ class StoreCandidates:
             deadline=min(self.deadline, time.monotonic() + 8), rate_limiter=self.public.rate_limiter)
 
     def listing_results(self, query, limit):
-        url = ("https://www.magazineluiza.com.br/busca/" + quote(query, safe="") + "/"
-               if self.store == "MAGALU" else "https://lista.mercadolivre.com.br/" + quote(query.replace(" ", "-"), safe=""))
+        if self.store == "MAGALU":
+            url = "https://www.magazineluiza.com.br/busca/" + quote(query, safe="") + "/"
+        elif self.store == "SHOPEE":
+            url = "https://shopee.com.br/search?keyword=" + quote(query, safe="")
+        else:
+            url = "https://lista.mercadolivre.com.br/" + quote(query.replace(" ", "-"), safe="")
         try:
             page = self._page(url)
             candidates = listing_candidates(page.text, page.url, self.store, limit)
@@ -142,7 +150,8 @@ class StoreCandidates:
                 return {"ok": False, "error": "REDIRECIONAMENTO_FORA_DO_PRODUTO"}
             if self.store == "MAGALU":
                 return MagazineScraper()._parse_magazine_html(url, page.url, page.text)
-            return self.public._parse_html(url, page.url, page.text, source="MERCADO_LIVRE_PAGINA")
+            source = "SHOPEE_PAGINA_FALLBACK" if self.store == "SHOPEE" else "MERCADO_LIVRE_PAGINA"
+            return self.public._parse_html(url, page.url, page.text, source=source)
         except requests.HTTPError as exc:
             return {"ok": False, "blocked": exc.response.status_code in {401, 403, 429}, "error": "FALHA_HTTP"}
         except (requests.RequestException, ValueError, TimeoutError, OSError):

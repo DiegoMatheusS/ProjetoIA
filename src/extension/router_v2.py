@@ -47,6 +47,9 @@ class PageCapture(BaseModel):
     asin: str | None = Field(default=None, max_length=20)
     codigoMarketplace: str | None = Field(default=None, max_length=160)
     preco: float | None = Field(default=None, gt=0, le=100_000_000)
+    descricao: str | None = Field(default=None, max_length=12_000)
+    imagemUrl: str | None = Field(default=None, max_length=4096)
+    atributos: list[dict[str, str]] = Field(default_factory=list, max_length=250)
 
 
 class ImportAffiliateOfferV2Request(BaseModel):

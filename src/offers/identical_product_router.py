@@ -173,8 +173,13 @@ def _normalize_web_offer(
     if (price is None or not is_product_url(store, url) or raw.get("available") is False
             or str(raw.get("currency") or "BRL").upper() != "BRL"):
         return None
+    partner_name = {
+        "MERCADO_LIVRE": "Mercado Livre",
+        "MAGALU": "Magazine Luiza",
+        "SHOPEE": "Shopee",
+    }.get(store, store)
     return {
-        "parceiro": "Mercado Livre" if store == "MERCADO_LIVRE" else "Magazine Luiza",
+        "parceiro": partner_name,
         "marketplace": store,
         "criterioIdentidade": criterion,
         "nomeEncontrado": raw.get("title"),
@@ -296,52 +301,137 @@ def _search_shopee(
     deadline: float | None = None,
     progress: dict | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    deadline = deadline or time.monotonic() + 60
+    progress = progress if progress is not None else {}
     client = ShopeeAffiliateClient()
-    if deadline is not None:
-        client.timeout_seconds = min(client.timeout_seconds, max(1, deadline - time.monotonic()))
-    if not client.configured:
-        return [], {"configurada": False, "encontrados": 0}
-    search_query = _marketplace_query(payload)
-    try:
-        response = ShopeeAffiliateAgent(client).find_products(
-            query=search_query,
-            limit=max(limit * 5, 20),
-        )
-    except ShopeeAffiliateError as exc:
-        return [], {"configurada": True, "erro": str(exc), "encontrados": 0}
+    queries = _identity_queries(payload)
     offers: list[dict[str, Any]] = []
-    for item in response.get("itens") or []:
-        if len(offers) >= limit:
-            break
-        matched, criterion = _identity_match_marketplace_name(payload, item.get("nome"))
-        if not matched or not criterion:
-            continue
-        price = _price(item.get("preco") or item.get("precoMin"))
-        url = str(item.get("urlOriginal") or "").strip()
-        if price is None or not url:
-            continue
-        offers.append({
-            "parceiro": "Shopee",
-            "marketplace": "SHOPEE",
-            "criterioIdentidade": criterion,
-            "nomeEncontrado": item.get("nome"),
-            "preco": price,
-            "precoAnterior": None,
-            "urlOriginal": url,
-            "urlAfiliada": item.get("urlAfiliada"),
-            "codigoMarketplace": item.get("itemId"),
-            "vendedorNome": item.get("loja"),
-            "vendedorIdentificador": item.get("shopId"),
-            "imagemUrl": item.get("imagemUrl"),
-            "apiOficial": True,
+    seen: set[str] = set()
+    attempts: list[dict[str, Any]] = []
+    candidate_count = 0
+
+    def publish(extra: dict[str, Any] | None = None) -> None:
+        diagnostic = {
+            "configurada": bool(client.configured),
+            "consulta": queries[0] if queries else _marketplace_query(payload),
+            "consultas": queries,
+            "candidatos": candidate_count,
+            "encontrados": len(offers),
+            "tentativas": list(attempts),
+            **(extra or {}),
+        }
+        progress.update(ofertas=list(offers), diagnostico=diagnostic)
+
+    publish()
+    if client.configured:
+        for query in queries[:3]:
+            if len(offers) >= limit or time.monotonic() >= deadline:
+                break
+            client.timeout_seconds = min(
+                client.timeout_seconds,
+                max(1, deadline - time.monotonic()),
+            )
+            try:
+                response = ShopeeAffiliateAgent(client).find_products(
+                    query=query,
+                    limit=max(limit * 5, 20),
+                )
+            except ShopeeAffiliateError as exc:
+                attempts.append({
+                    "fonte": "SHOPEE_AFFILIATE_API",
+                    "consulta": query,
+                    "status": "FALHA_TEMPORARIA",
+                    "erro": str(exc),
+                })
+                publish()
+                continue
+
+            items = list(response.get("itens") or [])
+            candidate_count += len(items)
+            attempts.append({
+                "fonte": "SHOPEE_AFFILIATE_API",
+                "consulta": query,
+                "status": "ENCONTRADO" if items else "NAO_ENCONTRADO",
+                "candidatos": len(items),
+            })
+            for item in items:
+                if len(offers) >= limit:
+                    break
+                matched, criterion = _identity_match_marketplace_name(payload, item.get("nome"))
+                if not matched or not criterion:
+                    continue
+                price = _price(item.get("preco") or item.get("precoMin"))
+                url = str(item.get("urlOriginal") or "").strip()
+                if price is None or not is_product_url("SHOPEE", url):
+                    continue
+                key = url.split("#", 1)[0].rstrip("/").casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                offers.append({
+                    "parceiro": "Shopee",
+                    "marketplace": "SHOPEE",
+                    "criterioIdentidade": criterion,
+                    "nomeEncontrado": item.get("nome"),
+                    "preco": price,
+                    "precoAnterior": None,
+                    "urlOriginal": url,
+                    "urlAfiliada": item.get("urlAfiliada"),
+                    "codigoMarketplace": item.get("itemId"),
+                    "vendedorNome": item.get("loja"),
+                    "vendedorIdentificador": item.get("shopId"),
+                    "imagemUrl": item.get("imagemUrl"),
+                    "apiOficial": True,
+                    "fonte": "SHOPEE_AFFILIATE_API",
+                })
+            publish()
+    else:
+        attempts.append({
             "fonte": "SHOPEE_AFFILIATE_API",
+            "status": "NAO_CONFIGURADA",
+            "candidatos": 0,
         })
-    return offers, {
-        "configurada": True,
-        "consulta": search_query,
-        "candidatos": len(response.get("itens") or []),
-        "encontrados": len(offers),
-    }
+        publish()
+
+    # A Affiliate API pode não indexar um SKU mesmo quando ele está publicado.
+    # Nesse caso, usamos apenas páginas da própria Shopee e mantemos a mesma
+    # confirmação forte por GTIN/MPN/modelo antes de aceitar a oferta.
+    fallback_diag: dict[str, Any] | None = None
+    if len(offers) < limit and time.monotonic() < deadline:
+        fallback_progress: dict[str, Any] = {}
+        web_offers, fallback_diag = _search_web_store(
+            payload,
+            "SHOPEE",
+            ["shopee.com.br"],
+            limit,
+            deadline,
+            fallback_progress,
+        )
+        for offer in web_offers:
+            if len(offers) >= limit:
+                break
+            key = str(offer.get("urlOriginal") or "").split("#", 1)[0].rstrip("/").casefold()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            offers.append(offer)
+
+    statuses = {str(item.get("status") or "") for item in attempts}
+    if offers:
+        status_busca = "ENCONTRADO"
+    elif time.monotonic() >= deadline:
+        status_busca = "TEMPO_LIMITE"
+    elif (fallback_diag or {}).get("statusBusca"):
+        status_busca = str(fallback_diag["statusBusca"])
+    elif "FALHA_TEMPORARIA" in statuses:
+        status_busca = "FALHA_TEMPORARIA"
+    else:
+        status_busca = "NAO_ENCONTRADO"
+    publish({
+        "statusBusca": status_busca,
+        "fallbackWeb": fallback_diag,
+    })
+    return offers, dict(progress.get("diagnostico") or {})
 
 
 @router.post("/produto-identico")

@@ -71,7 +71,27 @@ def hydrate_amazon_analysis(
     current_payload = current.get("payloadParcialBackend")
     current_payload = current_payload if isinstance(current_payload, dict) else {}
     current_category = str(current.get("categoriaDetectada") or "").upper()
-    if current_category in SCHEMAS and current_payload.get("nome"):
+    captured_attributes = []
+    for item in getattr(capture, "atributos", None) or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        value = str(item.get("value") or item.get("value_name") or "").strip()
+        if name and value:
+            captured_attributes.append({"name": name[:160], "value_name": value[:1000]})
+        if len(captured_attributes) >= 250:
+            break
+
+    current_schema = SCHEMAS.get(current_category)
+    current_spec_field = current_schema[1] if current_schema else None
+    current_specs = (
+        current_payload.get(current_spec_field)
+        if current_spec_field and isinstance(current_payload.get(current_spec_field), dict)
+        else {}
+    )
+    # Se a análise remota já trouxe ficha técnica e a aba não trouxe atributos
+    # adicionais, não há nada para complementar localmente.
+    if current_category in SCHEMAS and current_payload.get("nome") and current_specs and not captured_attributes:
         return analysis
 
     asin = str(getattr(capture, "asin", None) or "").strip().upper()
@@ -89,22 +109,41 @@ def hydrate_amazon_analysis(
         "price": getattr(capture, "preco", None),
         "currency": "BRL",
         "marketplace_product_code": asin or getattr(capture, "codigoMarketplace", None),
-        "attributes": [],
-        "product_attributes": [],
-        "attributes_text": "",
+        "description": getattr(capture, "descricao", None),
+        "image_url": getattr(capture, "imagemUrl", None),
+        "attributes": captured_attributes,
+        "product_attributes": list(captured_attributes),
+        "attributes_text": "\n".join(
+            f"{item['name']}: {item['value_name']}" for item in captured_attributes
+        ),
     }
-    local = build_result(page_raw, forced_category)
+    local = build_result(page_raw, forced_category or current_category or None)
     category = str(local.get("categoriaDetectada") or "").upper()
     if category not in SCHEMAS:
         return analysis
 
-    # Reaproveitar atributos remotos úteis apenas da MESMA categoria.
+    # Reaproveitar dados remotos úteis apenas da MESMA categoria. Em conflitos,
+    # a coleta remota continua autoritativa; a captura da aba só preenche lacunas.
     if current_category == category:
         spec_field = SCHEMAS[category][1]
-        if spec_field and isinstance(current_payload.get(spec_field), dict):
-            local["payloadParcialBackend"][spec_field] = dict(current_payload[spec_field])
-        for key in ("descricao", "imagemUrl"):
-            if current_payload.get(key) and not local["payloadParcialBackend"].get(key):
+        if spec_field:
+            local_specs = (
+                local["payloadParcialBackend"].get(spec_field)
+                if isinstance(local["payloadParcialBackend"].get(spec_field), dict)
+                else {}
+            )
+            remote_specs = (
+                current_payload.get(spec_field)
+                if isinstance(current_payload.get(spec_field), dict)
+                else {}
+            )
+            merged_specs = dict(local_specs)
+            for key, value in remote_specs.items():
+                if value is not None and value != "" and value != []:
+                    merged_specs[key] = value
+            local["payloadParcialBackend"][spec_field] = merged_specs
+        for key in ("nome", "marca", "modelo", "mpn", "gtin", "descricao", "imagemUrl"):
+            if current_payload.get(key):
                 local["payloadParcialBackend"][key] = current_payload[key]
 
     remote_offer = current.get("ofertaColetada")

@@ -105,10 +105,81 @@ def test_amazon_complete_remote_analysis_remains_authoritative(monkeypatch):
     )
     original = {
         "categoriaDetectada": "PROCESSADOR",
-        "payloadParcialBackend": {"nome": "Processador AMD Ryzen 5500", "marca": "AMD"},
+        "payloadParcialBackend": {
+            "nome": "Processador AMD Ryzen 5500",
+            "marca": "AMD",
+            "especificacaoProcessador": {
+                "socket": "AM4",
+                "nucleos": 6,
+            },
+        },
     }
     assert amazon_fallback.hydrate_amazon_analysis(
         original,
         url="https://www.amazon.com.br/dp/B09VCJ171S",
         capture=PageCapture(nome="Processador AMD Ryzen 5500"),
     ) is original
+
+
+def test_amazon_capture_attributes_fill_hardware_specs_when_remote_page_has_no_specs(monkeypatch):
+    observed = {}
+    monkeypatch.setattr(amazon_fallback, "auto_enrich_link_result", lambda data: data)
+
+    def fake_build(raw, category):
+        observed.update(raw)
+        assert category == "PROCESSADOR"
+        return {
+            "categoriaDetectada": "PROCESSADOR",
+            "payloadParcialBackend": {
+                "nome": raw["title"],
+                "marca": raw["brand"],
+                "modelo": raw["model"],
+                "especificacaoProcessador": {
+                    "socket": "AM4",
+                    "nucleos": 6,
+                },
+            },
+            "ofertaColetada": {"preco": raw["price"]},
+            "origemColeta": {},
+        }
+
+    monkeypatch.setattr(amazon_fallback, "build_result", fake_build)
+    remote = {
+        "categoriaDetectada": "PROCESSADOR",
+        "payloadParcialBackend": {
+            "nome": "Processador AMD Ryzen 5 5500",
+            "marca": "AMD",
+            "modelo": "Ryzen 5 5500",
+            "especificacaoProcessador": {},
+        },
+        "ofertaColetada": {"preco": 499.90},
+    }
+
+    result = amazon_fallback.hydrate_amazon_analysis(
+        remote,
+        url="https://www.amazon.com.br/dp/B09VCJ171S",
+        capture=PageCapture(
+            nome="Processador AMD Ryzen 5 5500 6-Core",
+            marca="AMD",
+            modelo="Ryzen 5 5500",
+            asin="B09VCJ171S",
+            preco=499.90,
+            descricao="Processador desktop AM4",
+            imagemUrl="https://images.example/ryzen.jpg",
+            atributos=[
+                {"name": "Socket", "value": "AM4"},
+                {"name": "Número de núcleos", "value": "6"},
+            ],
+        ),
+        forced_category="PROCESSADOR",
+    )
+
+    assert observed["attributes"] == [
+        {"name": "Socket", "value_name": "AM4"},
+        {"name": "Número de núcleos", "value_name": "6"},
+    ]
+    assert observed["description"] == "Processador desktop AM4"
+    assert observed["image_url"] == "https://images.example/ryzen.jpg"
+    specs = result["payloadParcialBackend"]["especificacaoProcessador"]
+    assert specs["socket"] == "AM4"
+    assert specs["nucleos"] == 6
