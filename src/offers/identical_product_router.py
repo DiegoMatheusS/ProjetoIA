@@ -417,13 +417,16 @@ def _search_shopee(
             offers.append(offer)
 
     statuses = {str(item.get("status") or "") for item in attempts}
-    status_busca = (
-        "ENCONTRADO" if offers else
-        "TEMPO_LIMITE" if time.monotonic() >= deadline else
-        str((fallback_diag or {}).get("statusBusca") or "") or
-        "FALHA_TEMPORARIA" if "FALHA_TEMPORARIA" in statuses else
-        "NAO_ENCONTRADO"
-    )
+    if offers:
+        status_busca = "ENCONTRADO"
+    elif time.monotonic() >= deadline:
+        status_busca = "TEMPO_LIMITE"
+    elif (fallback_diag or {}).get("statusBusca"):
+        status_busca = str(fallback_diag["statusBusca"])
+    elif "FALHA_TEMPORARIA" in statuses:
+        status_busca = "FALHA_TEMPORARIA"
+    else:
+        status_busca = "NAO_ENCONTRADO"
     publish({
         "statusBusca": status_busca,
         "fallbackWeb": fallback_diag,
