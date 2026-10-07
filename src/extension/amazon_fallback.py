@@ -1,7 +1,7 @@
-"""Fallback da extensão Amazon usando dados lidos da aba do administrador.
+"""Fallback da extensão usando os dados reais da aba do administrador.
 
-A Amazon pode devolver uma página bloqueada ao servidor. A captura local
-preserva a identidade do produto, mas não substitui confirmação da ficha técnica.
+Marketplaces podem bloquear datacenters ou entregar HTML incompleto ao servidor.
+A captura local preenche apenas lacunas e nunca substitui dados remotos confirmados.
 """
 from __future__ import annotations
 
@@ -13,9 +13,23 @@ from ..main import build_result
 from ..technical_ai.auto import auto_enrich_link_result
 
 
-# Aplicados apenas quando a análise REMOTA falha e a categoria veio da aba.
-# Não aceitar publicação automática de hardware sem sequer uma ficha mínima.
-_MINIMUM_AMAZON_HARDWARE_SPECS = {
+_CAPTURE_PLATFORMS = (
+    ("amazon.com.br", "AMAZON"),
+    ("amazon.com", "AMAZON"),
+    ("mercadolivre.com.br", "MERCADO_LIVRE"),
+    ("mercadolivre.com", "MERCADO_LIVRE"),
+    ("mercadolibre.com", "MERCADO_LIVRE"),
+    ("magazineluiza.com.br", "MAGALU"),
+    ("magazinevoce.com.br", "MAGALU"),
+    ("magalu.com", "MAGALU"),
+    ("shopee.com.br", "SHOPEE"),
+    ("kabum.com.br", "KABUM"),
+    ("pichau.com.br", "PICHAU"),
+    ("terabyteshop.com.br", "TERABYTE"),
+    ("aliexpress.com", "ALIEXPRESS"),
+)
+
+_MINIMUM_CAPTURE_HARDWARE_SPECS = {
     "PROCESSADOR": ("socket", "nucleos"),
     "PLACA_MAE": ("socket", "chipset"),
     "MEMORIA_RAM": ("tipo", "capacidadePorModuloGb"),
@@ -28,15 +42,24 @@ _MINIMUM_AMAZON_HARDWARE_SPECS = {
 }
 
 
-def amazon_browser_minimum_issues(category: str, payload: dict[str, Any]) -> list[str]:
-    schema = SCHEMAS.get(str(category or "").upper())
+def _capture_platform(url: str) -> str | None:
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    for domain, platform in _CAPTURE_PLATFORMS:
+        if host == domain or host.endswith(f".{domain}"):
+            return platform
+    return None
+
+
+def browser_capture_minimum_issues(category: str, payload: dict[str, Any]) -> list[str]:
+    category = str(category or "").upper()
+    schema = SCHEMAS.get(category)
     if not schema or schema[0] != "HARDWARE" or not schema[1]:
         return []
     spec_field = schema[1]
     specs = payload.get(spec_field)
     specs = specs if isinstance(specs, dict) else {}
     issues = []
-    for field in _MINIMUM_AMAZON_HARDWARE_SPECS.get(category, ()):
+    for field in _MINIMUM_CAPTURE_HARDWARE_SPECS.get(category, ()):
         value = specs.get(field)
         if value is None or value == "" or value == [] or (
             isinstance(value, str) and value.strip().casefold() in {
@@ -47,20 +70,25 @@ def amazon_browser_minimum_issues(category: str, payload: dict[str, Any]) -> lis
     return issues
 
 
-def hydrate_amazon_analysis(
+def amazon_browser_minimum_issues(category: str, payload: dict[str, Any]) -> list[str]:
+    """Compatibilidade com o contrato anterior da extensão Amazon."""
+    return browser_capture_minimum_issues(category, payload)
+
+
+def hydrate_marketplace_analysis(
     analysis: dict[str, Any],
     *,
     url: str,
     capture: Any,
     forced_category: str | None = None,
 ) -> dict[str, Any]:
-    """Substitui análise inconclusiva pela captura da aba, sem inventar specs.
+    """Complementa uma análise remota com a captura local da mesma página.
 
-    Uma análise remota completa continua prioritária. Só usar captura local
-    quando a categoria ou o nome da coleta remota estiverem ausentes.
+    A coleta do servidor continua autoritativa. Dados locais só entram quando
+    ajudam a identificar o produto ou preencher lacunas de ficha técnica.
     """
-    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
-    if not any(host == domain or host.endswith(f".{domain}") for domain in ("amazon.com.br", "amazon.com")):
+    platform = _capture_platform(url)
+    if not platform:
         return analysis
 
     page_name = str(getattr(capture, "nome", None) or "").strip()
@@ -71,6 +99,7 @@ def hydrate_amazon_analysis(
     current_payload = current.get("payloadParcialBackend")
     current_payload = current_payload if isinstance(current_payload, dict) else {}
     current_category = str(current.get("categoriaDetectada") or "").upper()
+
     captured_attributes = []
     for item in getattr(capture, "atributos", None) or []:
         if not isinstance(item, dict):
@@ -78,7 +107,10 @@ def hydrate_amazon_analysis(
         name = str(item.get("name") or "").strip()
         value = str(item.get("value") or item.get("value_name") or "").strip()
         if name and value:
-            captured_attributes.append({"name": name[:160], "value_name": value[:1000]})
+            captured_attributes.append({
+                "name": name[:160],
+                "value_name": value[:1000],
+            })
         if len(captured_attributes) >= 250:
             break
 
@@ -89,16 +121,20 @@ def hydrate_amazon_analysis(
         if current_spec_field and isinstance(current_payload.get(current_spec_field), dict)
         else {}
     )
-    # Se a análise remota já trouxe ficha técnica e a aba não trouxe atributos
-    # adicionais, não há nada para complementar localmente.
-    if current_category in SCHEMAS and current_payload.get("nome") and current_specs and not captured_attributes:
+    if (
+        current_category in SCHEMAS
+        and current_payload.get("nome")
+        and current_specs
+        and not captured_attributes
+    ):
         return analysis
 
     asin = str(getattr(capture, "asin", None) or "").strip().upper()
+    source = f"EXTENSAO_ABA_LOCAL_{platform}"
     page_raw = {
         "ok": True,
         "blocked": False,
-        "source": "EXTENSAO_ABA_LOCAL_AMAZON",
+        "source": source,
         "url_original": url,
         "url_final": url,
         "title": page_name,
@@ -122,14 +158,16 @@ def hydrate_amazon_analysis(
     if category not in SCHEMAS:
         return analysis
 
-    # Reaproveitar dados remotos úteis apenas da MESMA categoria. Em conflitos,
-    # a coleta remota continua autoritativa; a captura da aba só preenche lacunas.
+    local_payload = local.get("payloadParcialBackend")
+    if not isinstance(local_payload, dict):
+        return analysis
+
     if current_category == category:
         spec_field = SCHEMAS[category][1]
         if spec_field:
             local_specs = (
-                local["payloadParcialBackend"].get(spec_field)
-                if isinstance(local["payloadParcialBackend"].get(spec_field), dict)
+                local_payload.get(spec_field)
+                if isinstance(local_payload.get(spec_field), dict)
                 else {}
             )
             remote_specs = (
@@ -141,21 +179,44 @@ def hydrate_amazon_analysis(
             for key, value in remote_specs.items():
                 if value is not None and value != "" and value != []:
                     merged_specs[key] = value
-            local["payloadParcialBackend"][spec_field] = merged_specs
+            local_payload[spec_field] = merged_specs
+
         for key in ("nome", "marca", "modelo", "mpn", "gtin", "descricao", "imagemUrl"):
             if current_payload.get(key):
-                local["payloadParcialBackend"][key] = current_payload[key]
+                local_payload[key] = current_payload[key]
 
     remote_offer = current.get("ofertaColetada")
-    if isinstance(remote_offer, dict):
+    if isinstance(remote_offer, dict) and isinstance(local.get("ofertaColetada"), dict):
         local_offer = local["ofertaColetada"]
         for field in ("preco", "precoAnterior", "disponivel", "codigoMarketplace"):
             if local_offer.get(field) is None and remote_offer.get(field) is not None:
                 local_offer[field] = remote_offer[field]
 
+    local.setdefault("origemColeta", {})
     local["origemColeta"]["capturaLocal"] = True
-    local["origemColeta"]["fonte"] = "EXTENSAO_ABA_LOCAL_AMAZON"
-    local["fallbackCapturaAmazon"] = True
-    # IA recebe o título REAL antes da consulta; falha/timeout do provider não
-    # descarta título, categoria, ASIN nem preço capturados.
+    local["origemColeta"]["fonte"] = source
+    local["origemColeta"]["plataformaCaptura"] = platform
+    local["fallbackCapturaLocal"] = True
+    local["fallbackCapturaAmazon"] = platform == "AMAZON"
+
+    # IA técnica recebe a identidade e atributos reais da aba; falha/timeout
+    # do provider não elimina os dados já capturados.
     return auto_enrich_link_result(local)
+
+
+def hydrate_amazon_analysis(
+    analysis: dict[str, Any],
+    *,
+    url: str,
+    capture: Any,
+    forced_category: str | None = None,
+) -> dict[str, Any]:
+    """Compatibilidade: aplica o fallback somente quando a URL é da Amazon."""
+    if _capture_platform(url) != "AMAZON":
+        return analysis
+    return hydrate_marketplace_analysis(
+        analysis,
+        url=url,
+        capture=capture,
+        forced_category=forced_category,
+    )
