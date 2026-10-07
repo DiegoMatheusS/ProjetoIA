@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from .analyzer import analyze_listing
+from .research import research_pc_listing
 
 router = APIRouter(prefix="/anuncios", tags=["PCs e kits de upgrade"])
 
@@ -17,6 +18,7 @@ class AnalyzeListingRequest(BaseModel):
     titulo: str = Field(default="", max_length=500)
     descricao: str = Field(default="", max_length=30000)
     catalogo: list[CatalogHardware] = Field(default_factory=list, max_length=500)
+    pesquisarEspecificacoes: bool = False
 
 @router.post("/classificar-pc-kit")
 def classify_build_listing(payload: AnalyzeListingRequest, x_api_key: str | None = Header(default=None)):
@@ -24,6 +26,7 @@ def classify_build_listing(payload: AnalyzeListingRequest, x_api_key: str | None
     if not expected or x_api_key != expected:
         raise HTTPException(status_code=401, detail="API key inválida ou não configurada")
     try:
-        return analyze_listing(payload.titulo, payload.descricao, [c.model_dump() for c in payload.catalogo])
+        analyzer = research_pc_listing if payload.pesquisarEspecificacoes else analyze_listing
+        return analyzer(payload.titulo, payload.descricao, [c.model_dump() for c in payload.catalogo])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -404,8 +404,8 @@ def extract_processor(mapping, text):
         specs["arquitetura"] = architecture
 
     set_if(specs, "litografiaNm", integer(attr(mapping, "LITHOGRAPHY", "PROCESSOR_LITHOGRAPHY", "Litografia", "Processo de fabricação", "Lithography", "Technology")))
-    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos", "Total Cores", "Cores", "Core Count")))
-    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads", "Total Threads", "Threads", "Thread Count")))
+    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos", "Total Cores", "Cores", "Core Count", "CPU Cores", "# of CPU Cores")))
+    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads", "Total Threads", "Threads", "Thread Count", "# of Threads")))
     cores_threads = attr(mapping, "CPU Cores / Threads", "Cores / Threads")
     if cores_threads:
         pair = re.search(r"(\d{1,3})\s*/\s*(\d{1,3})", cores_threads)

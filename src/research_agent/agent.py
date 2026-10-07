@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import os
 import time
 from typing import Any
@@ -215,6 +216,7 @@ class TechnicalResearchAgent:
         category: str,
         payload: dict[str, Any],
         name: str | None = None,
+        time_budget_seconds: float | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         started = time.monotonic()
         category = str(category or "").strip().upper()
@@ -248,6 +250,9 @@ class TechnicalResearchAgent:
 
         base, spec_field = self._base_result(category, safe_seed)
         plan: ResearchPlan = build_research_plan(category, base)
+        if time_budget_seconds is not None:
+            budget = max(5.0, min(plan.total_timeout_seconds, time_budget_seconds))
+            plan = replace(plan, total_timeout_seconds=budget, source_timeout_seconds=min(4, plan.source_timeout_seconds), max_sources=min(3, plan.max_sources))
 
         if not plan.missing_fields:
             info = self._disabled_info(base)
@@ -402,9 +407,11 @@ def research_hardware_locally(
     payload: dict[str, Any],
     *,
     name: str | None = None,
+    time_budget_seconds: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     return TechnicalResearchAgent().research(
         category=category,
         payload=payload,
         name=name,
+        time_budget_seconds=time_budget_seconds,
     )

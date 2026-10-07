@@ -354,6 +354,10 @@ def _technical_ai_enrich_sync(payload: TechnicalAiEnrichmentRequest) -> dict[str
         base_payload["modelo"] = payload.modelo
     if payload.nome and not base_payload.get("nome"):
         base_payload["nome"] = payload.nome
+    if payload.provedor.strip().upper() == "PROJETO_IA":
+        from .research_agent.intake import research_verified_hardware
+        return research_verified_hardware(category=category, name=payload.nome, payload=base_payload,
+                                          local_only=True, only_fill_gaps=payload.somentePreencheLacunas)
     return enrich_hardware_with_external_ai(
         provider_name=payload.provedor,
         category=category,
@@ -500,7 +504,7 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     }
     from .enrichment.core import apply_enrichment, should_auto_enrich
     mandatory_missing_enrichment = should_auto_enrich(result) and not enrichment_disabled
-    if payload.enrich or auto_enrich or mandatory_missing_enrichment:
+    if not (payload.detalharPagina or _should_auto_enrich_link_request(payload.categoria, payload.enrich)) and (payload.enrich or auto_enrich or mandatory_missing_enrichment):
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
@@ -508,8 +512,11 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     # /analisar com categoria ausente + enrich=false permanece rápido e não
     # chama Gemini. Link de Hardware continua podendo enriquecer quando a
     # categoria é explícita ou quando enrich=true.
-    if _should_auto_enrich_link_request(payload.categoria, payload.enrich):
+    if (payload.detalharPagina and not enrichment_disabled) or _should_auto_enrich_link_request(payload.categoria, payload.enrich):
         result = auto_enrich_link_result(result)
+        if result.get("categoriaDetectada") == "PC_MONTADO" and payload.detalharPagina:
+            from .build_detection.research import research_imported_pc
+            result = research_imported_pc(result)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient
@@ -671,7 +678,7 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
     enrichment_disabled = os.getenv("ENRICHMENT_DISABLE", "false").strip().casefold() in {"1", "true", "sim", "yes"}
     from .enrichment.core import apply_enrichment, should_auto_enrich
     mandatory_missing_enrichment = should_auto_enrich(result) and not enrichment_disabled
-    if payload.enrich or auto_enrich or mandatory_missing_enrichment:
+    if not _should_auto_enrich_link_request(payload.categoria, payload.enrich) and (payload.enrich or auto_enrich or mandatory_missing_enrichment):
         result = apply_enrichment(result, auto_mode=not bool(payload.enrich))
         result.setdefault("enriquecimentoTecnico", {})["disparoAutomaticoPorLacunas"] = bool(mandatory_missing_enrichment)
 
@@ -681,6 +688,9 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
     # categoria é explícita ou quando enrich=true.
     if _should_auto_enrich_link_request(payload.categoria, payload.enrich):
         result = auto_enrich_link_result(result)
+        if result.get("categoriaDetectada") == "PC_MONTADO" and payload.enrich:
+            from .build_detection.research import research_imported_pc
+            result = research_imported_pc(result)
 
     if payload.criabytePlan:
         from .criabyte.client import CriaByteApiError, CriaByteClient

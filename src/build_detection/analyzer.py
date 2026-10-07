@@ -28,7 +28,7 @@ PATTERNS = {
         r"\b(?:mem[oó]ria(?:\s*ram)?|ram|ddr[345])\b|"
         r"\b(?:4|8|12|16|24|32|48|64|96|128)\s*gb\s+(?:de\s+)?(?:ram|ddr[345])\b"
     ),
-    "PLACA_VIDEO": r"\b(?:placa\s*de\s*v[ií]deo|gpu|geforce|radeon\s*(?:rx)?|rtx\s*\d|gtx\s*\d)\b",
+    "PLACA_VIDEO": r"\b(?:placa\s*de\s*v[ií]deo|gpu|geforce|radeon\s*(?:rx)?|(?:rtx|gtx|rx)\s*\d{3,4}(?:\s*(?:ti|super|xt|xtx))?)\b",
     "ARMAZENAMENTO": r"\b(?:ssd|hdd|hd\s+\d|disco\s*r[ií]gido|armazenamento|nvme)\b",
     "FONTE": r"\bfonte\b(?:\s*[:\-]?\s*(?:atx|de\s*alimenta[cç][aã]o|\d{3,4}\s*w))?|\bpsu\b",
     "GABINETE": r"\b(?:gabinete|chassi\s*(?:atx|gamer))\b",
