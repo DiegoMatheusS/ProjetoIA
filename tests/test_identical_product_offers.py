@@ -187,3 +187,95 @@ def test_search_reports_failed_collection_separately(monkeypatch):
     assert found == []
     assert diagnostics["falhasColeta"] == 1
     assert diagnostics["rejeitadosPorIdentidade"] == 0
+
+
+def test_shopee_search_tries_exact_identity_queries(monkeypatch):
+    queries = []
+
+    class FakeClient:
+        configured = True
+        timeout_seconds = 8
+
+    class FakeAgent:
+        def __init__(self, _client):
+            pass
+
+        def find_products(self, query, limit):
+            queries.append(query)
+            if "SNV3S/1000G" not in query:
+                return {"itens": []}
+            return {
+                "itens": [{
+                    "nome": "SSD Kingston NV3 1TB SNV3S/1000G NVMe",
+                    "preco": 399.90,
+                    "urlOriginal": "https://shopee.com.br/produto-i.123.456",
+                    "urlAfiliada": "https://s.shopee.com.br/teste",
+                    "itemId": "456",
+                    "shopId": "123",
+                }]
+            }
+
+    monkeypatch.setattr(offers, "ShopeeAffiliateClient", FakeClient)
+    monkeypatch.setattr(offers, "ShopeeAffiliateAgent", FakeAgent)
+    monkeypatch.setattr(
+        offers,
+        "_search_web_store",
+        lambda *_args, **_kwargs: ([], {"statusBusca": "NAO_ENCONTRADO"}),
+    )
+
+    payload = IdenticalProductOffersRequest(
+        nome="SSD Kingston NV3 1TB",
+        marca="Kingston",
+        mpn="SNV3S/1000G",
+    )
+    found, diagnostics = offers._search_shopee(payload, 3)
+
+    assert found and found[0]["marketplace"] == "SHOPEE"
+    assert found[0]["criterioIdentidade"] == "MPN_MARCA_TITULO"
+    assert any("SNV3S/1000G" in query for query in queries)
+    assert diagnostics["statusBusca"] == "ENCONTRADO"
+
+
+def test_shopee_search_falls_back_to_verified_web_offer(monkeypatch):
+    class FakeClient:
+        configured = True
+        timeout_seconds = 8
+
+    class FakeAgent:
+        def __init__(self, _client):
+            pass
+
+        def find_products(self, query, limit):
+            return {"itens": []}
+
+    web_offer = {
+        "parceiro": "Shopee",
+        "marketplace": "SHOPEE",
+        "criterioIdentidade": "MARCA_MODELO",
+        "nomeEncontrado": "Mouse Logitech G305",
+        "preco": 199.90,
+        "urlOriginal": "https://shopee.com.br/product/123/456",
+        "urlAfiliada": None,
+        "codigoMarketplace": "456",
+        "apiOficial": False,
+        "fonte": "SHOPEE_PAGINA_FALLBACK",
+    }
+
+    monkeypatch.setattr(offers, "ShopeeAffiliateClient", FakeClient)
+    monkeypatch.setattr(offers, "ShopeeAffiliateAgent", FakeAgent)
+    monkeypatch.setattr(
+        offers,
+        "_search_web_store",
+        lambda *_args, **_kwargs: ([web_offer], {"statusBusca": "ENCONTRADO", "encontrados": 1}),
+    )
+
+    payload = IdenticalProductOffersRequest(
+        nome="Mouse Logitech G305",
+        marca="Logitech",
+        modelo="G305",
+    )
+    found, diagnostics = offers._search_shopee(payload, 3)
+
+    assert found == [web_offer]
+    assert diagnostics["statusBusca"] == "ENCONTRADO"
+    assert diagnostics["fallbackWeb"]["encontrados"] == 1
