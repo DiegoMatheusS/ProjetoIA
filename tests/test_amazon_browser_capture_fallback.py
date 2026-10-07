@@ -105,7 +105,14 @@ def test_amazon_complete_remote_analysis_remains_authoritative(monkeypatch):
     )
     original = {
         "categoriaDetectada": "PROCESSADOR",
-        "payloadParcialBackend": {"nome": "Processador AMD Ryzen 5500", "marca": "AMD"},
+        "payloadParcialBackend": {
+            "nome": "Processador AMD Ryzen 5500",
+            "marca": "AMD",
+            "especificacaoProcessador": {
+                "socket": "AM4",
+                "nucleos": 6,
+            },
+        },
     }
     assert amazon_fallback.hydrate_amazon_analysis(
         original,
