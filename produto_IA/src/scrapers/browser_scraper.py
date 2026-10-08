@@ -410,7 +410,7 @@ class BrowserScraper:
                 page.goto(url, wait_until="domcontentloaded", timeout=remaining_ms)
                 page.wait_for_timeout(min(2500, max(0, int((deadline - time.monotonic()) * 1000) - 1000)))
                 if product_details:
-                    label = re.compile(r"^(?:descri[cç][aã]o(?: do produto)?|description|especifica[cç][oõ]es(?: t[eé]cnicas)?|specifications|ficha t[eé]cnica|caracter[ií]sticas)$", re.I)
+                    label = re.compile(r"^(?:(?:ver |mostrar |ler )?descri[cç][aã]o(?: do produto| completa)?|description|especifica[cç][oõ]es(?: t[eé]cnicas)?|specifications|ficha t[eé]cnica|caracter[ií]sticas)$", re.I)
                     # Somente abas/botões de descrição e ficha, nunca compra/login.
                     for role in ("tab", "button"):
                         for control in page.get_by_role(role, name=label).all()[:3]:

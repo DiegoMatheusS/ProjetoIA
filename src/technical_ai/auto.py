@@ -346,6 +346,8 @@ def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
     result["camposIaNaoConfirmados"] = outcome.get("camposIaNaoConfirmados") or []
     if outcome.get("utilizado") and isinstance(outcome.get("payload"), dict):
         safe_after = normalize_hardware_payload_for_backend(category, outcome["payload"])
+        # Pesquisa técnica não reescreve a descrição do vendedor.
+        safe_after["descricao"] = safe_before.get("descricao")
         specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}
         state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
         result["payloadParcialBackend"] = safe_after

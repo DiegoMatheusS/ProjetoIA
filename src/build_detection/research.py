@@ -66,7 +66,7 @@ def research_pc_listing(title, description, catalog=None):
                     "origemPorCampo": found["origemPorCampo"],
                     "cadastroHardwareSugerido": found["payload"] if found["utilizado"] and found["escopoIdentidade"] != "CHIP_GRAFICO" else None}
         except Exception:
-            return {**component, "statusPesquisa": "FONTE_INDISPONIVEL", "especificacoesConfirmadas": {}, "origemPorCampo": {}}
+            return {**component, "marca": seed["marca"], "modelo": seed["modelo"], "nome": seed["nome"], "statusPesquisa": "FONTE_INDISPONIVEL", "especificacoesConfirmadas": {}, "origemPorCampo": {}}
 
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="pc-specs") as pool:
         analysis["componentesDetectados"] = list(pool.map(research, analysis["componentesDetectados"][:9]))

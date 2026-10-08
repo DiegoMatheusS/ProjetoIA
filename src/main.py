@@ -12,6 +12,7 @@ from loguru import logger
 
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.magazine_scraper import MagazineScraper
+from .scrapers.listing_description import description_text
 from .extractors.category import detect_category
 from .extractors.backend_schemas import SCHEMAS, REQUIRED, CATEGORY_SLUGS
 from .extractors.ml_specs import extract_specs
@@ -210,7 +211,7 @@ def build_result(raw, forced_category=None):
         "nome": None if blocked else raw.get("title"),
         "marca": None if blocked else raw.get("brand"),
         "modelo": None if blocked else raw.get("model"),
-        "descricao": None if blocked else _build_spec_description(raw, specs),
+        "descricao": None if blocked else description_text(raw.get("description")),
         # Não usar MODEL como MPN. MPN só entra quando o marketplace realmente
         # fornece part number / manufacturer part number.
         "mpn": None if blocked else raw.get("mpn"),
@@ -228,13 +229,6 @@ def build_result(raw, forced_category=None):
     # desconhecidos no payload. As especificações continuam em
     # especificacoesEncontradas para revisão do ADMIN.
     if category == "PC_MONTADO":
-        # Commercial PCs/kits retain the seller's description, including generic
-        # parts and accessories; the short technical summary loses that context.
-        description = str(raw.get("description") or "").strip()
-        if description:
-            if re.search(r"<[^>]+>", description):
-                description = BeautifulSoup(description, "html.parser").get_text("\n", strip=True)
-            payload["descricao"] = description[:4000]
         for key in ("finalidade", "resolucaoRecomendada"):
             if specs.get(key) not in (None, "", []):
                 payload[key] = specs[key]
@@ -277,6 +271,7 @@ def build_result(raw, forced_category=None):
         "categoriaSlugSugerida": CATEGORY_SLUGS.get(category),
         "tipoCadastro": tipo_cadastro,
         "payloadParcialBackend": payload,
+        "descricaoAnuncio": payload["descricao"],
         "ofertaColetada": {
             "preco": current_price,
             "precoAnterior": previous_price,

@@ -56,7 +56,26 @@ def contains_model(text: str, model: str) -> bool:
     target = norm(model)
     if len(target) < 3 or not re.search(r"[0-9]", target):
         return False
-    return bool(re.search(r"(?<![a-z0-9])" + re.escape(target).replace(r"\ ", r"\s+") + r"(?![a-z0-9])", text))
+    return bool(re.search(r"(?<![a-z0-9])" + re.escape(target).replace(r"\ ", r"\s+")
+                          + r"(?![a-z0-9]|\s+(?:ti|super|xt|xtx)\b)", text))
+
+
+def important_description(description: str) -> str:
+    """Remove somente chamadas comerciais isoladas, sem resumir especificações."""
+    lines, seen = [], set()
+    for line in description.splitlines():
+        text = line.strip()
+        if re.fullmatch(r"(?:compre agora|aproveite a oferta|oferta imperd[ií]vel|"
+                        r"clique aqui|siga nossa loja|curta nossa loja)[!.\s]*", text, re.I):
+            continue
+        # Mantém repetições com valores/condições diferentes e todos os avisos.
+        if text and text in seen:
+            continue
+        if text:
+            seen.add(text)
+        if text or (lines and lines[-1]):
+            lines.append(text)
+    return "\n".join(lines).strip()
 
 
 def _extract_components(text: str) -> list[dict[str, Any]]:
@@ -116,13 +135,16 @@ def _brand_attached_to_model(source: str, brand: str, model: str) -> bool:
 
 
 def _catalog_matches(component: dict[str, Any], catalog: list[dict[str, Any]], source_text: str) -> dict[str, Any]:
-    source = norm(source_text)
+    passages = component.get("trechos") or []
+    if any(re.search(r"\b(?:ou|opcional|opcionais|varia|variam|alternativas?|compat[ií]vel|suporta|n[aã]o inclui|n[aã]o acompanha)\b", p, re.I) for p in passages):
+        return {"hardwareId": None, "candidatos": [], "revisaoNecessaria": True}
+    source = norm("\n".join(passages))
     isolated_passages = [
         norm(p) for p in component.get("trechos") or []
         if _isolated_for_category(p, component["categoria"])
     ]
     matches: list[tuple[int, dict[str, Any]]] = []
-    brand_required = component["categoria"] in {"PLACA_VIDEO", "MEMORIA_RAM", "ARMAZENAMENTO"}
+    brand_required = component["categoria"] != "PROCESSADOR"
 
     for item in catalog:
         if str(item.get("categoria", "")).upper() != component["categoria"]:
@@ -132,7 +154,7 @@ def _catalog_matches(component: dict[str, Any], catalog: list[dict[str, Any]], s
             continue
 
         model_in_isolated = any(contains_model(passage, model) for passage in isolated_passages)
-        brand_attached = _brand_attached_to_model(source, brand, model)
+        brand_attached = any(_brand_attached_to_model(norm(p), brand, model) for p in passages)
         if brand_required and not brand_attached:
             continue
 
@@ -152,6 +174,9 @@ def _catalog_matches(component: dict[str, Any], catalog: list[dict[str, Any]], s
     return {
         "hardwareId": chosen.get("id"),
         "hardwareNome": chosen.get("nome"),
+        "marca": chosen.get("marca"),
+        "modelo": chosen.get("modelo"),
+        "vinculoConfirmadoNoAnuncio": True,
         "candidatos": [],
         "revisaoNecessaria": False,
     }
@@ -201,6 +226,7 @@ def analyze_listing(title: str, description: str, catalog: list[dict[str, Any]] 
         "motivo": reason,
         "tituloOriginal": title,
         "descricaoOriginal": original,
+        "descricaoSugerida": important_description(original),
         "componentesDetectados": components,
         "acessoriosNaDescricao": sorted(set(m.group(0).lower() for m in PERIPHERALS.finditer(original))),
         "componentesObrigatorios": False,

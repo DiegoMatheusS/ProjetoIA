@@ -50,6 +50,7 @@ def merge_page_details(seed, details):
             result[key] = details[key]
     if len(details.get("description") or "") > len(result.get("description") or ""):
         result["description"] = details["description"]
+        result["description_source"] = details.get("description_source")
     pairs = list(seed.get("attributes") or [])
     names = {_token(item.get("name")) for item in pairs}
     for item in details.get("attributes") or []:
