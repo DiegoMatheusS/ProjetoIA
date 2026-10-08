@@ -99,3 +99,30 @@ def test_title_only_pc_does_not_become_individual_processor():
     assert result["tipoSugerido"] == "PC_MONTADO"
     cpu = next(c for c in result["componentesDetectados"] if c["categoria"] == "PROCESSADOR")
     assert cpu["hardwareId"] == 201
+
+
+def test_description_links_branded_components_and_keeps_important_details():
+    description = 'Compre agora!\nProcessador: AMD Ryzen 5 5500\nSSD: Kingston NV2 1TB\nRAM: 16 GB DDR4\nAcompanha teclado e mouse\nGarantia de 12 meses'
+    result = analyze_listing('PC Gamer', description, [
+        {'id': 180, 'categoria': 'PROCESSADOR', 'marca': 'AMD', 'modelo': 'Ryzen 5 5500', 'nome': 'Ryzen 5 5500'},
+        {'id': 181, 'categoria': 'ARMAZENAMENTO', 'marca': 'Kingston', 'modelo': 'NV2', 'nome': 'Kingston NV2 1TB'},
+    ])
+    linked = {c['categoria']: c for c in result['componentesDetectados']}
+    assert linked['PROCESSADOR']['hardwareId'] == 180
+    assert linked['PROCESSADOR']['marca'] == 'AMD'
+    assert linked['PROCESSADOR']['modelo'] == 'Ryzen 5 5500'
+    assert linked['PROCESSADOR']['vinculoConfirmadoNoAnuncio'] is True
+    assert linked['ARMAZENAMENTO']['hardwareId'] == 181
+    assert linked['MEMORIA_RAM']['hardwareId'] is None
+    assert 'Compre agora' not in result['descricaoSugerida']
+    for important in ['16 GB DDR4', 'teclado e mouse', 'Garantia de 12 meses']:
+        assert important in result['descricaoSugerida']
+    assert result['descricaoOriginal'] == description
+
+
+def test_optional_parts_and_wrong_gpu_suffix_are_not_linked():
+    catalog = [{'id': 1, 'categoria': 'PLACA_VIDEO', 'marca': 'ASUS', 'modelo': 'RTX 4060', 'nome': 'ASUS RTX 4060'}]
+    for description in ['Placa de vídeo: ASUS RTX 4060 Ti', 'Placa de vídeo: ASUS RTX 4060 ou RTX 4070', 'Compatível com placa de vídeo ASUS RTX 4060']:
+        result = analyze_listing('PC Gamer', description, catalog)
+        gpu = next(c for c in result['componentesDetectados'] if c['categoria'] == 'PLACA_VIDEO')
+        assert gpu['hardwareId'] is None

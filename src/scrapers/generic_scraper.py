@@ -11,6 +11,7 @@ from ..utils.rate_limiter import JsonDiskCache, PoliteRateLimiter
 from ..utils.public_http import get_public_page
 from .product_page_crawler import ProductPageCrawler, merge_page_details, same_product
 from .storefront_html import storefront_fields
+from .listing_description import listing_description
 
 
 class GenericScraper:
@@ -353,18 +354,7 @@ class GenericScraper:
         model = clean_text(product.get("model") if isinstance(product, dict) else None) or by_name.get("modelo") or by_name.get("model")
         mpn = clean_text(product.get("mpn") if isinstance(product, dict) else None) or by_name.get("mpn") or by_name.get("part number")
 
-        descriptions = []
-        if clean_text(product.get("description")):
-            descriptions.append(BeautifulSoup(str(product["description"]), "html.parser").get_text(" ", strip=True))
-        for element in soup.select('[itemprop="description"], #description, #descricao, #product-description, '
-                '[data-testid="product-description"], [data-testid="description"], '
-                '[class*="product-description"], [class*="description__content"]')[:20]:
-            for node in element.select("script, style"):
-                node.decompose()
-            if text := clean_text(element.get_text(" ", strip=True)):
-                descriptions.append(text)
-        description = max(descriptions, key=len) if descriptions else self._meta(soup, 'meta[name="description"]', 'meta[property="og:description"]')
-        description = description[:12000] if description else None
+        description, description_source = listing_description(soup, product)
 
         gtin = None
         if isinstance(product, dict):
@@ -383,6 +373,7 @@ class GenericScraper:
             "mpn": mpn,
             "gtin": clean_text(gtin),
             "description": description,
+            "description_source": description_source,
             "canonical_url": urljoin(final_url, soup.select_one('link[rel="canonical"]').get("href"))
                 if soup.select_one('link[rel="canonical"][href]') else None,
             "image_url": image,
@@ -405,7 +396,7 @@ class GenericScraper:
         self._deadline = time.monotonic() + budget
         params = {"no_browser": no_browser, "crawl": crawl,
                   "budgetClass": "short" if budget <= 12 else "full"}
-        cached = self.cache.get(url, params=params, namespace="product-pages-v6", ttl_seconds=300)
+        cached = self.cache.get(url, params=params, namespace="product-pages-v7", ttl_seconds=300)
         if cached:
             return {**cached, "cache_hit": True}
         attempts, html, result = [], "", None
@@ -422,6 +413,7 @@ class GenericScraper:
                          "bloqueado": bool((result or {}).get("blocked")), "erro": type(error).__name__ if error else (result or {}).get("error")})
         needs_browser = not (result or {}).get("ok") or (crawl and any(
             not result.get(key) for key in ("description", "attributes", "image_url", "price")))
+        needs_browser = needs_browser or (crawl and (result or {}).get("description_source") == "META")
         if needs_browser and not no_browser and time.monotonic() + 3 < self._deadline:
             try:
                 from .browser_scraper import BrowserScraper
@@ -460,5 +452,5 @@ class GenericScraper:
         result["page_scraping_attempted"] = bool(crawl)
         result["cache_hit"] = False
         if result.get("ok") and not result.get("blocked"):
-            self.cache.set(url, result, params=params, namespace="product-pages-v6")
+            self.cache.set(url, result, params=params, namespace="product-pages-v7")
         return result

@@ -89,6 +89,7 @@ class ShopeeAffiliateClient:
         *,
         variables: dict[str, Any] | None = None,
         operation_name: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self.configured:
             raise ShopeeAffiliateError(
@@ -115,7 +116,7 @@ class ShopeeAffiliateClient:
                 self.endpoint,
                 data=payload_json.encode("utf-8"),
                 headers=headers,
-                timeout=self.timeout_seconds,
+                timeout=min(self.timeout_seconds, timeout_seconds) if timeout_seconds is not None else self.timeout_seconds,
             )
         except requests.RequestException as exc:
             raise ShopeeAffiliateError(f"Falha de rede na Shopee Affiliate API: {exc}") from exc
@@ -192,8 +193,9 @@ class ShopeeAffiliateClient:
         item_id: int | None = None,
         seller_offer_only: bool | None = None,
         key_seller_only: bool | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        args: list[str] = [f"page: {max(1, int(page))}", f"limit: {max(1, min(100, int(limit)))}"]
+        args: list[str] = [f"page: {max(1, int(page))}", f"limit: {max(1, min(50, int(limit)))}"]
         if keyword:
             args.append(f"keyword: {json.dumps(str(keyword), ensure_ascii=False)}")
         args.append(f"listType: {int(list_type)}")
@@ -220,7 +222,7 @@ class ShopeeAffiliateClient:
           }
         }
         """ % ", ".join(args)
-        data = self.graphql(query)
+        data = self.graphql(query, **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}))
         result = data.get("productOfferV2") if isinstance(data, dict) else None
         if not isinstance(result, dict):
             result = {}
@@ -240,7 +242,7 @@ class ShopeeAffiliateClient:
         limit: int = 20,
         sort_type: int = 1,
     ) -> dict[str, Any]:
-        args = [f"page: {max(1, int(page))}", f"limit: {max(1, min(100, int(limit)))}", f"sortType: {int(sort_type)}"]
+        args = [f"page: {max(1, int(page))}", f"limit: {max(1, min(50, int(limit)))}", f"sortType: {int(sort_type)}"]
         if keyword:
             args.append(f"keyword: {json.dumps(str(keyword), ensure_ascii=False)}")
         query = """
