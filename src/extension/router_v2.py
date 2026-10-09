@@ -26,10 +26,13 @@ from .router import (
     MissingPriceError,
     _analysis_product_url,
     _apply_manual_fields,
+    _build_payload_for_backend,
+    _build_review_response,
     _canonical_url,
     _field_descriptor,
     _import_sync,
     _missing_product_paths,
+    _missing_build_paths,
     _partner_from_analysis,
     _preview_payload,
     _product_payload_for_backend,
@@ -325,6 +328,14 @@ def _import_new_with_ai(
         if asin:
             product_payload["asin"] = asin
         registration_payload = {"produtoPayload": product_payload}
+        preview_source = raw_payload
+    elif registration_type == "BUILD" and category == "PC_MONTADO":
+        if _missing_build_paths(raw_payload):
+            response = _build_review_response(raw_payload, analysis)
+            response["buscaCriabyte"] = {"status": preflight_status}
+            response["completouComIa"] = True
+            return response
+        registration_payload = {"buildPayload": _build_payload_for_backend(raw_payload)}
         preview_source = raw_payload
     else:
         legacy = _import_sync(

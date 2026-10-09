@@ -79,6 +79,10 @@ _FIELD_LABELS = {
     "nome": "Nome do produto",
     "marca": "Marca",
     "modelo": "Modelo",
+    "descricao": "Descrição/configuração do PC montado",
+    "especificacaoArmazenamento.tamanhoM2Mm": "Comprimento M.2 (mm): 30, 42, 60, 80 ou 110",
+    "especificacaoArmazenamento.chaveM2": "Chave/conector M.2",
+    "especificacaoArmazenamento.interface": "Interface do armazenamento",
     "especificacaoFonte.formato": "Formato da fonte",
     "especificacaoFonte.potenciaWatts": "Potência da fonte (W)",
     "especificacaoMonitor.tamanhoPolegadas": "Tamanho da tela (pol.)",
@@ -326,6 +330,8 @@ def _apply_manual_fields(
 ) -> dict[str, Any]:
     output = dict(raw_payload)
     allowed = {"nome", "marca", "modelo"}
+    if category == "PC_MONTADO":
+        allowed.add("descricao")
     schema = SCHEMAS.get(category)
     if schema:
         spec_field = schema[1]
@@ -338,12 +344,16 @@ def _apply_manual_fields(
         if clean_path not in allowed or not _present(value):
             continue
         if isinstance(value, str):
-            value = value.strip()[:500]
+            value = value.strip()[:30000 if clean_path == "descricao" else 500]
         _set_nested_value(output, clean_path, value)
     return output
 
 
 def _field_type(path: str) -> str:
+    if path == "descricao":
+        return "textarea"
+    if path == "especificacaoArmazenamento.tamanhoM2Mm":
+        return "integer"
     name = path.rsplit(".", 1)[-1]
     if name in _BOOLEAN_FIELD_NAMES:
         return "boolean"
@@ -362,6 +372,10 @@ def _field_descriptor(path: str) -> dict[str, Any]:
     }
     if path == "especificacaoFonte.formato":
         descriptor["opcoes"] = ["ATX", "SFX", "SFX_L", "TFX", "FLEX_ATX"]
+    if path == "especificacaoArmazenamento.chaveM2":
+        descriptor["opcoes"] = ["M", "B", "B_M"]
+    if path == "especificacaoArmazenamento.interface":
+        descriptor["opcoes"] = ["NVME_PCIE", "SATA"]
     return descriptor
 
 
@@ -480,6 +494,41 @@ def _product_payload_for_backend(
     return output
 
 
+def _missing_build_paths(raw_payload: dict[str, Any]) -> list[str]:
+    return [field for field in ("nome", "descricao") if not str(raw_payload.get(field) or "").strip()]
+
+
+def _build_payload_for_backend(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    """Cadastro comercial de PC: preserva o anúncio sem inventar IDs de peças."""
+    limits = {
+        "nome": 200, "marca": 100, "modelo": 150, "descricao": 30000,
+        "imagemUrl": 500, "imagemHoverUrl": 500, "finalidade": 150,
+        "resolucaoRecomendada": 80,
+    }
+    output: dict[str, Any] = {"categoria": "PC_MONTADO"}
+    for field, limit in limits.items():
+        value = raw_payload.get(field)
+        if isinstance(value, str) and value.strip():
+            value = value.strip()
+            # Não truncar URLs: uma URL cortada pode apontar para outra imagem.
+            if field.endswith("Url") and len(value) > limit:
+                continue
+            output[field] = value[:limit]
+    return output
+
+
+def _build_review_response(raw_payload: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    missing = _missing_build_paths(raw_payload)
+    return {
+        "status": "REVISAO_NECESSARIA",
+        "motivo": "Confira o nome e informe a descrição/configuração do PC montado para concluir o cadastro.",
+        "pendencias": [f"{path} ausente" for path in missing],
+        "camposFaltantes": [_field_descriptor(path) for path in missing],
+        "categoria": "PC_MONTADO",
+        "previa": _preview_payload("PC_MONTADO", "BUILD", raw_payload, analysis),
+    }
+
+
 def _review_response(
     category: str,
     hardware_payload: dict[str, Any],
@@ -583,6 +632,11 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
                 raw_payload,
             )
         }
+        preview_source = raw_payload
+    elif registration_type == "BUILD" and category == "PC_MONTADO":
+        if _missing_build_paths(raw_payload):
+            return _build_review_response(raw_payload, analysis)
+        registration_payload = {"buildPayload": _build_payload_for_backend(raw_payload)}
         preview_source = raw_payload
     else:
         return {
