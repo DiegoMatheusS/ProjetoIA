@@ -19,11 +19,12 @@ Resultados possíveis:
 
 - Hardware já existe + anúncio novo: cria somente a nova oferta.
 - Mesmo anúncio já cadastrado: atualiza preço e link afiliado.
+- Mesmo produto com outro anúncio/vendedor do Mercado Livre: mantém a ficha e adiciona outra oferta com seu próprio link e preço, inclusive em páginas de catálogo com `wid`, `item_id` ou `pdp_filters`.
 - Hardware não existe: cadastra Hardware/Produto e cria a oferta inicial.
 - Cadastro técnico inseguro/incompleto: retorna revisão necessária.
 - Se o preço não puder ser coletado, a extensão abre um campo **Preço do anúncio (R$)** para preenchimento manual e permite concluir sem sair da janela.
 
-Novos Hardwares/Produtos ficam como rascunho (`publicado=false`).
+Novos Produtos ficam publicados automaticamente pelo cadastro da extensão.
 
 ## Configuração
 

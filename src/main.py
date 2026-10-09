@@ -281,6 +281,8 @@ def build_result(raw, forced_category=None):
             "urlOriginal": raw.get("url_original"),
             "urlProduto": raw.get("url_final"),
             "codigoMarketplace": raw.get("marketplace_product_code"),
+            "vendedorNome": raw.get("seller_name"),
+            "vendedorIdentificador": raw.get("seller_id"),
             "urlAfiliada": raw.get("affiliate_url"),
         },
         # Guarda tudo o que a página informou sobre o PRODUTO, mesmo quando o

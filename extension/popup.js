@@ -448,7 +448,8 @@ function resultMessage(data) {
     case "OFERTA_ATUALIZADA":
       return `Oferta existente atualizada${item}${partner}.`;
     case "NOVA_OFERTA_CRIADA":
-      return `Nova oferta adicionada${item}${partner}.`;
+    case "ITEM_EXISTENTE_OFERTA_CRIADA":
+      return `Nova oferta adicionada ao produto existente${item}${partner}.`;
     case "PRODUTO_E_OFERTA_CRIADOS":
       return `Produto cadastrado, publicado e oferta criada${item}${partner}.`;
     case "HARDWARE_E_OFERTA_CRIADOS":
