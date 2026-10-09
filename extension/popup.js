@@ -144,6 +144,10 @@ function makeMissingFieldControl(field) {
       option.textContent = text;
       control.appendChild(option);
     }
+  } else if (field.tipo === "textarea") {
+    control = document.createElement("textarea");
+    control.rows = 5;
+    control.maxLength = 30000;
   } else {
     control = document.createElement("input");
     if (field.tipo === "integer" || field.tipo === "number") {
@@ -191,7 +195,7 @@ function renderMissingFields(fields) {
   els.missingFieldsBox.classList.remove("hidden");
   updateSendLabel();
 
-  const first = els.missingFields.querySelector("input, select");
+  const first = els.missingFields.querySelector("input, select, textarea");
   setTimeout(() => first?.focus(), 0);
 }
 
@@ -454,6 +458,8 @@ function resultMessage(data) {
       return `Produto cadastrado, publicado e oferta criada${item}${partner}.`;
     case "HARDWARE_E_OFERTA_CRIADOS":
       return `Hardware cadastrado, produto publicado e oferta criada${item}${partner}.`;
+    case "BUILD_E_OFERTA_CRIADOS":
+      return `PC montado cadastrado, publicado e oferta criada${item}${partner}.`;
     case "REVISAO_NECESSARIA":
       return data?.motivo || "O produto precisa de dados adicionais antes do cadastro.";
     default:
@@ -602,7 +608,7 @@ els.manualPrice?.addEventListener("keydown", (event) => {
 });
 
 els.missingFields?.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && event.target?.tagName !== "SELECT") {
+  if (event.key === "Enter" && !["SELECT", "TEXTAREA"].includes(event.target?.tagName)) {
     event.preventDefault();
     els.send.click();
   }

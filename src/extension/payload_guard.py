@@ -144,6 +144,17 @@ def extension_registration_issues(
         if not isinstance(value, str) or not minimum <= len(value.strip()) <= maximum:
             issues.append(f"{field} ausente ou fora do formato aceito")
 
+    if category == "ARMAZENAMENTO":
+        specs = data.get("especificacaoArmazenamento")
+        if isinstance(specs, dict) and specs.get("formato") == "M2":
+            size = specs.get("tamanhoM2Mm")
+            if not isinstance(size, int) or isinstance(size, bool) or size not in {30, 42, 60, 80, 110}:
+                issues.append("especificacaoArmazenamento.tamanhoM2Mm não confirmado")
+            if specs.get("chaveM2") not in {"B", "M", "B_M"}:
+                issues.append("especificacaoArmazenamento.chaveM2 não confirmada")
+            if specs.get("interface") not in {"SATA", "NVME_PCIE"}:
+                issues.append("especificacaoArmazenamento.interface não confirmada")
+
     if category != "FONTE":
         return list(dict.fromkeys(issues))
 

@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 from ..utils.normalizers import clean_text
+from .dto_normalizer import normalize_m2_key, normalize_m2_length
 
 
 def normalize_key(value):
@@ -1162,18 +1163,19 @@ def extract_storage(mapping, text):
         cap = text_capacity(text, r"\b([0-9.,]+\s*(?:GB|TB))\b")
     set_if(specs, "capacidadeGb", cap)
 
-    m2code = first_match(text, r"\b22(30|42|60|80|110)\b")
-    set_if(specs, "tamanhoM2Mm", int(m2code) if m2code else integer(attr(mapping, "M2_SIZE", "Tamanho M.2")))
-
-    key = attr(mapping, "M2_KEY", "Chave M.2")
-    if key:
-        tk = normalize_key(key)
-        if "b_m" in tk or "b_m_key" in tk:
-            specs["chaveM2"] = "B_M"
-        elif tk.startswith("m"):
-            specs["chaveM2"] = "M"
-        elif tk.startswith("b"):
-            specs["chaveM2"] = "B"
+    if specs.get("formato") == "M2":
+        size = normalize_m2_length(attr(mapping, "M2_SIZE", "Tamanho M.2", "Comprimento M.2"))
+        if size is None:
+            size = normalize_m2_length(text)
+        set_if(specs, "tamanhoM2Mm", size)
+        key = attr(mapping, "M2_KEY", "Chave M.2", "Chave", "Tipo de chave", "Key")
+        if not key:
+            key = first_match(
+                text,
+                r"\b((?:B\s*(?:\+|&|/|-|_)\s*M|[BM])\s*[- ]?Key)\b",
+                r"\b((?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*(?:B\s*(?:\+|&|/|-|_)\s*M|[BM]))\b",
+            )
+        set_if(specs, "chaveM2", normalize_m2_key(key))
 
     pcie = attr(mapping, "PCIE_VERSION", "PCI_EXPRESS_VERSION", "Geração PCIe") or first_match(text, r"PCIe?\s*(?:Gen\s*)?([345])(?:\.0)?")
     set_if(specs, "geracaoPcie", integer(pcie))
@@ -1208,6 +1210,8 @@ def extract_storage(mapping, text):
         set_if(specs, "larguraMm", triplet[0])
         set_if(specs, "profundidadeMm", triplet[1])
         set_if(specs, "espessuraMm", triplet[2])
+        if triplet[0] == 22 and triplet[1] in {30, 42, 60, 80, 110}:
+            set_if(specs, "tamanhoM2Mm", int(triplet[1]))
 
     heatsink = boolean(attr(mapping, "WITH_HEATSINK", "HEATSINK", "Possui dissipador"))
     if heatsink is None:

@@ -137,6 +137,9 @@ def _category_hint_from_product_url(url):
     if not slug:
         return None
     hint = re.sub(r"[-_]+", " ", slug)
+    # RAM/SSD no slug são componentes quando o anúncio vende um PC completo.
+    if detect_category(hint) == "PC_MONTADO":
+        return "PC_MONTADO"
     strong_hints = (
         (r"\b(?:smartphone|celular|iphone)\b", "CELULAR"),
         (r"\btablet\b", "TABLET"),
@@ -187,7 +190,11 @@ def build_result(raw, forced_category=None):
                 explicit_type = detect_category(str(row.get("value_name") or ""))
                 if explicit_type:
                     break
-        if explicit_type:
+        ambiguous_type = (
+            (category == "MOUSEPAD" and explicit_type == "MOUSE")
+            or (category in {"FONE", "HEADSET"} and explicit_type in {"FONE", "HEADSET"})
+        )
+        if explicit_type and not ambiguous_type:
             category = explicit_type
     if not category and not blocked:
         # Fallback técnico: usa a ficha/atributos, sem depender da categoria

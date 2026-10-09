@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..extractors.backend_schemas import SCHEMAS
+from ..extractors.category import detect_category
 from ..main import build_result
 from ..technical_ai.auto import auto_enrich_link_result
 
@@ -99,6 +100,15 @@ def hydrate_marketplace_analysis(
     current_payload = current.get("payloadParcialBackend")
     current_payload = current_payload if isinstance(current_payload, dict) else {}
     current_category = str(current.get("categoriaDetectada") or "").upper()
+    # A captura corrige categorias ambíguas com o título real da aba.
+    # Uma categoria explicitamente escolhida pelo administrador continua soberana.
+    captured_category = detect_category(page_name)
+    corrected_category = (
+        captured_category if not forced_category and (
+            (current_category == "MOUSE" and captured_category == "MOUSEPAD")
+            or (captured_category in {"FONE", "HEADSET"} and current_category != captured_category)
+        ) else None
+    )
 
     captured_attributes = []
     for item in getattr(capture, "atributos", None) or []:
@@ -126,6 +136,7 @@ def hydrate_marketplace_analysis(
         and current_payload.get("nome")
         and current_specs
         and not captured_attributes
+        and not corrected_category
     ):
         return analysis
 
@@ -153,7 +164,7 @@ def hydrate_marketplace_analysis(
             f"{item['name']}: {item['value_name']}" for item in captured_attributes
         ),
     }
-    local = build_result(page_raw, forced_category or current_category or None)
+    local = build_result(page_raw, forced_category or corrected_category or current_category or None)
     category = str(local.get("categoriaDetectada") or "").upper()
     if category not in SCHEMAS:
         return analysis

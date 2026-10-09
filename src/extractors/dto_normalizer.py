@@ -241,7 +241,21 @@ def _storage_interface(value: Any):
 
 
 
-def _m2_key(value: Any):
+def normalize_m2_length(value: Any):
+    """M.2 2280 é uma placa de 80 mm; não é um comprimento de 2280 mm."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    raw = _clean_text(value) or ""
+    codes = {int(match) for match in re.findall(r"\b22(30|42|60|80|110)\b", raw)}
+    if not codes:
+        codes = {int(match) for match in re.findall(r"\b22\s*(?:mm\s*)?[x×]\s*(30|42|60|80|110)\b", raw, re.I)}
+    if codes:
+        return next(iter(codes)) if len(codes) == 1 else None
+    match = re.fullmatch(r"(30|42|60|80|110)(?:\s*mm)?", raw, re.I)
+    return int(match[1]) if match else None
+
+
+def normalize_m2_key(value: Any):
     token = _token(value)
     raw = _clean_text(value) or ""
     if not token:
@@ -249,9 +263,9 @@ def _m2_key(value: Any):
     # B+M / B-M / B M / B&M são o mesmo enum B_M no backend.
     if re.search(r"\bB\s*(?:\+|&|/|-|_)\s*M\b", raw, re.I) or token in {"b_m", "bm", "b_and_m", "b_plus_m"}:
         return "B_M"
-    if token in {"m", "m_key", "key_m", "chave_m"} or re.search(r"\bM[- ]?Key\b", raw, re.I):
+    if token in {"m", "m_key", "key_m", "chave_m"} or re.search(r"\bM[- ]?Key\b|\b(?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*M\b", raw, re.I):
         return "M"
-    if token in {"b", "b_key", "key_b", "chave_b"} or re.search(r"\bB[- ]?Key\b", raw, re.I):
+    if token in {"b", "b_key", "key_b", "chave_b"} or re.search(r"\bB[- ]?Key\b|\b(?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*B\b", raw, re.I):
         return "B"
     return None
 
@@ -717,7 +731,9 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
         if "interface" in normalized:
             normalized["interface"] = _storage_interface(normalized.get("interface"))
         if "chaveM2" in normalized:
-            normalized["chaveM2"] = _m2_key(normalized.get("chaveM2"))
+            normalized["chaveM2"] = normalize_m2_key(normalized.get("chaveM2"))
+        if "tamanhoM2Mm" in normalized:
+            normalized["tamanhoM2Mm"] = normalize_m2_length(specs.get("tamanhoM2Mm"))
 
     elif category == "FONTE":
         if "formato" in normalized:
