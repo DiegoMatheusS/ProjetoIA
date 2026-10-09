@@ -250,6 +250,46 @@ def test_non_ml_url_is_not_rewritten():
     assert _analysis_product_url(url) == url
 
 
+@pytest.mark.parametrize("selector", [
+    "?wid=MLB5953835688", "#wid=MLB5953835688",
+    "?item_id=MLB5953835688", "?pdp_filters=item_id%3AMLB5953835688",
+])
+def test_offer_keeps_specific_ml_listing_even_after_catalog_redirect(selector):
+    catalog = "https://www.mercadolivre.com.br/fonte/p/MLB37817321"
+    payload = _offer_payload({"ofertaColetada": {
+        "preco": 199.9, "urlProduto": catalog,
+        "codigoMarketplace": "MLB37817321",
+        "vendedorNome": "Loja A", "vendedorIdentificador": 123,
+    }}, affiliate_url="https://meli.la/loja-a", product_url=catalog + selector)
+    assert payload["codigoMarketplace"] == "MLB5953835688"
+    assert "item_id=MLB5953835688" in payload["urlOriginal"]
+    assert payload["urlAfiliada"] == "https://meli.la/loja-a"
+    assert payload["vendedorNome"] == "Loja A"
+    assert payload["vendedorIdentificador"] == "123"
+
+
+def test_offer_recovers_listing_from_original_when_final_url_is_shared_catalog():
+    catalog = "https://www.mercadolivre.com.br/fonte/p/MLB37817321"
+    payload = _offer_payload({"ofertaColetada": {
+        "preco": 199.9, "urlProduto": catalog,
+        "urlOriginal": catalog + "#wid=MLB5953835688",
+        "codigoMarketplace": "MLB37817321",
+    }}, affiliate_url="https://meli.la/loja-a")
+    assert payload["codigoMarketplace"] == "MLB5953835688"
+    assert "item_id=MLB5953835688" in payload["urlOriginal"]
+
+
+def test_v2_existing_offer_preserves_listing_selector():
+    payload = ImportAffiliateOfferV2Request(
+        urlProduto="https://www.mercadolivre.com.br/fonte/p/MLB37817321#wid=MLB5953835688",
+        urlAfiliada="https://meli.la/loja-a", precoManual=199.9,
+        dadosPagina={"codigoMarketplace": "MLB37817321"},
+    )
+    offer = router_v2._page_offer(payload, payload.urlAfiliada)
+    assert offer["codigoMarketplace"] == "MLB5953835688"
+    assert "item_id=MLB5953835688" in offer["urlOriginal"]
+
+
 def test_v2_existing_amazon_product_skips_ai(monkeypatch):
     captured = {}
 

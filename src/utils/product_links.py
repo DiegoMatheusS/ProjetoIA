@@ -1,6 +1,26 @@
 """Identificação de links públicos de produto, sem dependência do cliente de API."""
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+
+def extract_mercadolivre_item_id(url: str) -> str | None:
+    parsed = urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    if not any(host == domain or host.endswith(f".{domain}") for domain in (
+        "mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com",
+    )):
+        return None
+    for params in (parse_qs(parsed.query), parse_qs(parsed.fragment)):
+        for key in ("item_id", "wid", "pdp_filters"):
+            for value in params.get(key, []):
+                pattern = r"item_id\s*:\s*MLB-?(\d{6,})\b" if key == "pdp_filters" else r"\bMLB-?(\d{6,})\b"
+                match = re.search(pattern, value, re.I)
+                if match:
+                    return f"MLB{match.group(1)}"
+    if re.search(r"/p/MLB\d+", parsed.path, re.I):
+        return None  # Código do catálogo compartilhado entre vendedores.
+    match = re.search(r"/MLB-?(\d{6,})(?:[-/]|$)", parsed.path, re.I)
+    return f"MLB{match.group(1)}" if match else None
 
 
 def is_shopee_url(url: str) -> bool:
