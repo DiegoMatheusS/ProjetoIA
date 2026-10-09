@@ -19,6 +19,7 @@ Resultados possíveis:
 
 - Hardware já existe + anúncio novo: cria somente a nova oferta.
 - Mesmo anúncio já cadastrado: atualiza preço e link afiliado.
+- Mesmo produto com outro anúncio/vendedor do Mercado Livre: mantém a ficha e adiciona outra oferta com seu próprio link e preço, inclusive em páginas de catálogo com `wid`, `item_id` ou `pdp_filters`.
 - Hardware não existe: cadastra Hardware/Produto e cria a oferta inicial.
 - PC montado não existe: cadastra um Produto do tipo BUILD com a descrição/configuração do anúncio e a oferta inicial. A extensão não cria vínculos de peças sem identificação confirmada no catálogo.
 - PC montado já cadastrado: reaproveita o Produto e cria ou atualiza a oferta.

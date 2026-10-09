@@ -13,6 +13,7 @@ from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
+from ..utils.product_links import extract_mercadolivre_item_id
 from .amazon_fallback import (
     browser_capture_minimum_issues,
     hydrate_marketplace_analysis,
@@ -132,7 +133,7 @@ def _page_offer(
     payload: ImportAffiliateOfferV2Request,
     affiliate_url: str,
 ) -> dict[str, Any]:
-    original = _canonical_url(payload.urlProduto)
+    original = _canonical_url(_analysis_product_url(payload.urlProduto))
     if not original:
         raise HTTPException(status_code=400, detail="Página do produto inválida.")
 
@@ -142,7 +143,10 @@ def _page_offer(
 
     asin = _clean_asin(payload.dadosPagina.asin)
     platform, _host = _platform_from_url(payload.urlProduto)
-    marketplace_code = _clean(payload.dadosPagina.codigoMarketplace)
+    marketplace_code = (
+        extract_mercadolivre_item_id(payload.urlProduto)
+        or _clean(payload.dadosPagina.codigoMarketplace)
+    )
     if not marketplace_code and platform == "AMAZON" and asin:
         marketplace_code = asin
 
@@ -365,6 +369,7 @@ def _import_new_with_ai(
         analysis,
         affiliate_url=affiliate_url,
         manual_price=manual_or_page_price,
+        product_url=payload.urlProduto,
     )
     asin = _clean_asin(payload.dadosPagina.asin)
     platform, _host = _platform_from_url(payload.urlProduto)

@@ -13,6 +13,7 @@ from ..api import AnalyzeRequest, _analyze_sync
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import CATEGORY_SLUGS, SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
+from ..utils.product_links import extract_mercadolivre_item_id
 from .payload_guard import (
     extension_registration_issues,
     sanitize_extension_hardware_payload,
@@ -142,27 +143,6 @@ def _validate_api_key(x_api_key: str | None) -> None:
         raise HTTPException(status_code=401, detail="API key inválida")
 
 
-def _ml_item_id(value: Any) -> str | None:
-    match = re.search(r"\bMLB-?(\d{6,})\b", str(value or ""), re.I)
-    if not match:
-        return None
-    return f"MLB{match.group(1)}"
-
-
-def _item_id_from_params(params: dict[str, list[str]]) -> str | None:
-    for key in ("item_id", "wid"):
-        for value in params.get(key, []):
-            item_id = _ml_item_id(value)
-            if item_id:
-                return item_id
-
-    for value in params.get("pdp_filters", []):
-        match = re.search(r"item_id\s*:\s*(MLB-?\d+)", str(value), re.I)
-        if match:
-            return _ml_item_id(match.group(1))
-    return None
-
-
 def _analysis_product_url(value: str) -> str:
     """Expõe ao scraper o anúncio exato escondido no fragmento do Mercado Livre."""
     text = str(value or "").strip()
@@ -179,16 +159,11 @@ def _analysis_product_url(value: str) -> str:
         return text
 
     query = parse_qs(parsed.query, keep_blank_values=True)
-    query_item_id = _item_id_from_params(query)
-    if query_item_id:
+    item_id = extract_mercadolivre_item_id(text)
+    if not item_id:
         return text
 
-    fragment = parse_qs(parsed.fragment, keep_blank_values=True)
-    fragment_item_id = _item_id_from_params(fragment)
-    if not fragment_item_id:
-        return text
-
-    query["item_id"] = [fragment_item_id]
+    query["item_id"] = [item_id]
     return urlunparse(
         (
             parsed.scheme,
@@ -261,6 +236,7 @@ def _offer_payload(
     *,
     affiliate_url: str,
     manual_price: float | None = None,
+    product_url: str | None = None,
 ) -> dict[str, Any]:
     collected = (
         analysis.get("ofertaColetada")
@@ -283,9 +259,17 @@ def _offer_payload(
     if previous_value is not None and previous_value <= price_value:
         previous_value = None
 
-    original = _canonical_url(
-        collected.get("urlProduto") or collected.get("urlOriginal")
-    )
+    source_url = collected.get("urlProduto") or collected.get("urlOriginal")
+    item_id = extract_mercadolivre_item_id(product_url or "")
+    if item_id:
+        source_url = product_url
+    else:
+        for candidate in (collected.get("urlOriginal"), source_url):
+            item_id = extract_mercadolivre_item_id(candidate or "")
+            if item_id:
+                source_url = candidate
+                break
+    original = _canonical_url(_analysis_product_url(source_url or ""))
     if not original:
         raise ValueError("URL original do anúncio não foi identificada.")
 
@@ -297,9 +281,14 @@ def _offer_payload(
     if previous_value is not None:
         payload["precoAnterior"] = previous_value
 
-    code = str(collected.get("codigoMarketplace") or "").strip()
+    code = item_id or str(collected.get("codigoMarketplace") or "").strip()
     if code:
         payload["codigoMarketplace"] = code[:160]
+
+    for field in ("vendedorNome", "vendedorIdentificador"):
+        value = str(collected.get(field) or "").strip()
+        if value:
+            payload[field] = value[:200]
 
     return payload
 
@@ -658,6 +647,7 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
         analysis,
         affiliate_url=affiliate_url,
         manual_price=payload.precoManual,
+        product_url=payload.urlProduto,
     )
 
     internal_payload = {
