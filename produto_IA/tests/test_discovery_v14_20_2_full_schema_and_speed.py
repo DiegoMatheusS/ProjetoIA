@@ -25,7 +25,7 @@ class OneCandidateCatalog:
     def __init__(self, categoria):
         self.categoria = categoria
 
-    def discover(self, categoria, marca=None, consulta=None, fontes=None, limit=20):
+    def discover(self, categoria, marca=None, consulta=None, fontes=None, limit=20, deadline=None):
         nome, brand, text = CATEGORY_EXAMPLES[categoria]
         return [
             DiscoveryCandidate(
