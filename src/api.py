@@ -388,13 +388,13 @@ def _should_auto_enrich_link_request(categoria: str | None, enrich: bool) -> boo
 
     O backend de verificação de preços usa /analisar com categoria ausente e
     enrich=false. Enriquecimento técnico automático por link só entra quando o
-    caller pede enrich explicitamente ou informa uma categoria de HARDWARE.
+    caller pede enrich explicitamente ou informa uma categoria com ficha técnica.
     """
     if enrich:
         return True
     category = str(categoria or "").strip().upper()
     schema = SCHEMAS.get(category)
-    return bool(schema and schema[0] == "HARDWARE" and schema[1])
+    return bool(schema and schema[1])
 
 
 def _validate_url(url: str) -> str:
