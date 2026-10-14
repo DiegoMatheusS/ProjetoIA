@@ -719,3 +719,9 @@ O fluxo `/analisar` com `detalharPagina=true` pesquisa lacunas técnicas após l
 Para PCs, `/anuncios/classificar-pc-kit` aceita `pesquisarEspecificacoes=true`: identifica cada peça informada no anúncio ou nos atributos e consulta sua própria ficha. RAM/SSD genéricos e configurações alternativas não escolhem um SKU automaticamente. A resposta inclui `pesquisaTecnica`, `origemPorCampo` e `cadastroHardwareSugerido`, sem gravar peças. O formulário abre uma prévia preenchida da peça em outra aba para revisão.
 
 Publicação coordenada: atualizar ProjetoIA, depois backend_pc3D e frontend_pc3D. O runtime principal deste repositório é `src.app:app`, conforme o Dockerfile.
+
+### Ficha de celulares
+
+A coleta de `CELULAR` envia `especificacaoCelular` ao CriaByte por link e extensão, com números, booleanos e somente campos conhecidos. A pesquisa técnica reconhece essa ficha e os domínios oficiais de Apple, Motorola e Xiaomi. RAM, armazenamento e cor exigem identificação da variante por código/GTIN na pesquisa do fabricante.
+
+A descrição inicial destaca até quatro dados confirmados; os demais permanecem na ficha completa. NFC exige confirmação explícita e `false` permanece válido. Requer o backend que aceita `especificacaoCelular`.

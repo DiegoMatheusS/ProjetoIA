@@ -2007,16 +2007,16 @@ def extract_notebook(mapping, text):
 
 def extract_phone(mapping,text):
     specs={}
-    set_if(specs,"processadorNome",attr(mapping,"PROCESSOR_MODEL","CHIPSET_MODEL","Processador"))
-    set_if(specs,"ramGb",capacity_gb(attr(mapping,"RAM_MEMORY","RAM_MEMORY_CAPACITY","Memória RAM")))
-    set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"INTERNAL_MEMORY","STORAGE_CAPACITY","Memória interna")))
-    set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela")))
+    set_if(specs,"processadorNome",attr(mapping,"PROCESSOR_MODEL","CHIPSET_MODEL","Processador", "Chipset", "Processor Model"))
+    set_if(specs,"ramGb",capacity_gb(attr(mapping,"RAM_MEMORY","RAM_MEMORY_CAPACITY","Memória RAM", "RAM", "RAM Capacity", "RAM Size") or first_match(text, r"(?:RAM|Mem[oó]ria\s+RAM)\s*[:=-]\s*(\d+\s*GB)")))
+    set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"INTERNAL_MEMORY","STORAGE_CAPACITY","Memória interna", "Armazenamento", "Internal Storage", "Internal Memory", "Storage Capacity") or first_match(text, r"(?:Armazenamento|Mem[oó]ria\s+interna|Storage)\s*[:=-]\s*(\d+\s*(?:GB|TB))")))
+    set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela", "Screen Size", "Display Size")))
     set_if(specs,"resolucao",resolution(attr(mapping,"SCREEN_RESOLUTION","Resolução da tela")))
-    set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização")))
-    set_if(specs,"tipoTela",attr(mapping,"DISPLAY_TYPE","Tipo de tela"))
-    set_if(specs,"cameraPrincipalMp",number(attr(mapping,"MAIN_CAMERA_RESOLUTION","Câmera principal")))
-    set_if(specs,"cameraFrontalMp",number(attr(mapping,"FRONT_CAMERA_RESOLUTION","Câmera frontal")))
-    battery = attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria", "Bateria") or first_match(text, r"(\d[\d., ]*)\s*mAh\b")
+    set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização", "Refresh Rate")))
+    set_if(specs,"tipoTela",attr(mapping,"DISPLAY_TYPE","Tipo de tela", "Display Type"))
+    set_if(specs,"cameraPrincipalMp",number(attr(mapping,"MAIN_CAMERA_RESOLUTION","Câmera principal", "Main Camera Resolution", "Rear Camera Resolution")))
+    set_if(specs,"cameraFrontalMp",number(attr(mapping,"FRONT_CAMERA_RESOLUTION","Câmera frontal", "Front Camera Resolution")))
+    battery = attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria", "Bateria", "Battery Capacity") or first_match(text, r"(\d[\d., ]*)\s*mAh\b")
     if battery:
         battery = re.sub(r"(?<=\d)[., ](?=\d{3}(?:\D|$))", "", str(battery))
         set_if(specs,"bateriaMah",integer(battery))
@@ -2029,6 +2029,10 @@ def extract_phone(mapping,text):
         elif re.search(r"(?:com|possui|suporta)\s+NFC|NFC\s*[:=-]\s*(?:sim|true)", text or "", re.I):
             nfc = True
     set_if(specs, "nfc", nfc)
+    set_if(specs,"dualSim",boolean(attr(mapping,"IS_DUAL_SIM", "Dual SIM", "Dual-SIM")))
+    set_if(specs,"esim",boolean(attr(mapping,"WITH_ESIM", "eSIM", "Com eSIM")))
+    set_if(specs,"wifi",attr(mapping,"WIFI", "Wi-Fi", "WiFi"))
+    set_if(specs,"bluetooth",attr(mapping,"BLUETOOTH_VERSION", "Versão Bluetooth", "Bluetooth Version", "Bluetooth"))
     set_if(specs,"sistemaOperacional",attr(mapping,"OPERATING_SYSTEM","Sistema operacional"))
     set_if(specs,"pesoGramas",number(attr(mapping,"WEIGHT","Peso")))
     set_if(specs,"cor",attr(mapping,"COLOR","Cor"))

@@ -94,7 +94,7 @@ SCHEMAS = {
         "displayPort", "ethernet", "leitorCartao", "sistemaOperacional", "webcam", "resolucaoWebcam", "tecladoIluminado",
         "tecladoNumerico", "leitorDigital",
     ]),
-    "CELULAR": ("PRODUTO", None, [
+    "CELULAR": ("PRODUTO", "especificacaoCelular", [
         "processadorNome", "ramGb", "armazenamentoGb", "tamanhoTelaPolegadas", "resolucao", "taxaAtualizacaoHz", "tipoTela",
         "cameraPrincipalMp", "cameraFrontalMp", "bateriaMah", "carregamentoWatts", "cincoG", "nfc", "dualSim", "esim", "wifi",
         "bluetooth", "sistemaOperacional", "pesoGramas", "cor", "resistenciaAgua",
