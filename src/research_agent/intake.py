@@ -132,7 +132,8 @@ def research_verified_hardware(*, category, payload, name=None, provider_name=No
             "processadorNome", "processadorMarca", "processadorGeracao", "nucleos", "threads", "clockBaseMhz", "clockTurboMhz", "tdpWatts",
             "gpuNome", "gpuIntegrada", "gpuDedicada", "vramGb", "tgpWatts", "ramInstaladaGb", "ramSoldadaGb", "armazenamentoGb", "sistemaOperacional",
         }
-        if field in conflict_fields or chip_variant or notebook_variant or wrong_value or not trusted_origin(origin, identity):
+        phone_variant = category == "CELULAR" and identity.get("metodo") == "MARCA_MODELO" and field in {"ramGb", "armazenamentoGb", "cor"}
+        if field in conflict_fields or chip_variant or notebook_variant or phone_variant or wrong_value or not trusted_origin(origin, identity):
             rejected.append({"campo": field, "motivo": "VARIANTE_DA_PLACA_NAO_CONFIRMADA" if chip_variant else "CONFLITO_OU_EVIDENCIA_NAO_CONFIRMADA"})
             continue
         after[field] = value

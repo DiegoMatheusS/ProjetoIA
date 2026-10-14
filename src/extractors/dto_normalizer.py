@@ -521,6 +521,7 @@ def _iso_date(value: Any):
 
 
 BOOL_FIELDS = {
+    "CELULAR": {"cincoG", "nfc", "dualSim", "esim"},
     "NOTEBOOK": {"gpuIntegrada", "gpuDedicada", "upgradeRam", "upgradeArmazenamento", "touch", "ethernet", "leitorCartao", "webcam", "tecladoIluminado", "tecladoNumerico", "leitorDigital"},
     "PROCESSADOR": {"possuiVideoIntegrado", "suportaEcc", "coolerIncluso", "multiplicadorDesbloqueado", "suporteOverclock"},
     "PLACA_MAE": {"suportaXmp", "suportaExpo", "suportaEcc", "suportaMemoriaRegistrada", "wifi", "bluetooth", "biosFlashback"},
@@ -532,6 +533,7 @@ BOOL_FIELDS = {
 }
 
 INT_FIELDS = {
+    "CELULAR": {"ramGb", "armazenamentoGb", "taxaAtualizacaoHz", "bateriaMah"},
     "NOTEBOOK": {"nucleos", "threads", "clockBaseMhz", "clockTurboMhz", "tdpWatts", "vramGb", "tgpWatts", "ramInstaladaGb", "frequenciaMhz", "ramSoldadaGb", "slotsRamTotal", "slotsRamLivres", "ramMaximaGb", "armazenamentoGb", "slotsM2Total", "slotsM2Livres", "resolucaoLargura", "resolucaoAltura", "taxaAtualizacaoHz", "brilhoNits", "potenciaCarregadorWatts", "usbA", "usbC", "thunderbolt", "hdmi", "displayPort"},
     "PROCESSADOR": {"litografiaNm", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "lanesPcie"},
     "PLACA_MAE": {"slotsMemoria", "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb", "portasSata"},
@@ -545,6 +547,7 @@ INT_FIELDS = {
 }
 
 FLOAT_FIELDS = {
+    "CELULAR": {"tamanhoTelaPolegadas", "cameraPrincipalMp", "cameraFrontalMp", "carregamentoWatts", "pesoGramas"},
     "NOTEBOOK": {"tamanhoTelaPolegadas", "bateriaWh", "autonomiaInformadaHoras", "pesoKg", "larguraMm", "alturaMm", "profundidadeMm"},
     "PROCESSADOR": {"cacheL2Mb", "cacheL3Mb", "temperaturaMaximaC"},
     "MEMORIA_RAM": {"tensaoVolts", "alturaMm", "consumoWatts"},
@@ -571,6 +574,7 @@ MHZ_FIELDS = {
 }
 
 GB_FIELDS = {
+    "CELULAR": {"ramGb", "armazenamentoGb"},
     "NOTEBOOK": {"vramGb", "ramInstaladaGb", "ramSoldadaGb", "ramMaximaGb", "armazenamentoGb"},
     "PROCESSADOR": {"capacidadeMemoriaMaximaGb"},
     "PLACA_MAE": {"capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb"},
@@ -767,6 +771,7 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
 
 
 SPEC_FIELD_BY_HARDWARE_CATEGORY = {
+    "CELULAR": "especificacaoCelular",
     "PROCESSADOR": "especificacaoProcessador",
     "PLACA_MAE": "especificacaoPlacaMae",
     "MEMORIA_RAM": "especificacaoMemoriaRam",
@@ -838,7 +843,8 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
             if specs.get(field) is None:
                 specs.pop(field, None)
 
-    output["categoria"] = category
+    if category != "CELULAR":
+        output["categoria"] = category
     output[spec_field] = specs
     return output
 

@@ -126,6 +126,20 @@ def _build_spec_description(raw, specs, max_items=18, max_length=450):
     return description or None
 
 
+def _phone_description(specs):
+    selected = [(key, specs.get(key)) for key in ("ramGb", "armazenamentoGb", "tamanhoTelaPolegadas", "bateriaMah", "processadorNome", "cameraPrincipalMp")
+                if specs.get(key) not in (None, "", [])][:4]
+    labels = {"ramGb": "Memória RAM", "armazenamentoGb": "Armazenamento", "tamanhoTelaPolegadas": "Tela",
+              "bateriaMah": "Bateria", "processadorNome": "Processador", "cameraPrincipalMp": "Câmera principal"}
+    parts = []
+    for key, value in selected:
+        text = _format_spec_value(key, value)
+        if key == "bateriaMah": text = f"{value} mAh"
+        if key == "cameraPrincipalMp": text = f"{value} MP"
+        parts.append(f"{labels[key]}: {text}")
+    return " · ".join(parts) or None
+
+
 def _category_hint_from_product_url(url):
     """Usa somente o slug público do produto como pista quando a página bloqueia."""
     try:
@@ -225,6 +239,9 @@ def build_result(raw, forced_category=None):
         "gtin": None if blocked else raw.get("gtin"),
         "imagemUrl": None if blocked else raw.get("image_url"),
     }
+
+    if category == "CELULAR" and not blocked:
+        payload["descricao"] = _phone_description(specs)
 
     if category and tipo_cadastro == "HARDWARE":
         payload["categoria"] = category
