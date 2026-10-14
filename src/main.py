@@ -249,6 +249,14 @@ def build_result(raw, forced_category=None):
     if spec_field:
         payload[spec_field] = specs
 
+    # Todas as categorias de Produto preservam os dados coletados no cadastro,
+    # mesmo quando ainda não possuem uma tabela técnica específica no backend.
+    if tipo_cadastro == "PRODUTO" and not blocked:
+        payload["metadados"] = {
+            "especificacoesEncontradas": dict(specs),
+            "informacoesProdutoEncontradas": raw.get("product_attributes") or [],
+        }
+
     # Builds e produtos sem tabela técnica própria não recebem campos
     # desconhecidos no payload. As especificações continuam em
     # especificacoesEncontradas para revisão do ADMIN.
