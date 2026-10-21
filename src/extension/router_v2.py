@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from ..api import AnalyzeRequest, _analyze_sync
+from ..api import AnalyzeRequest, _analyze_sync, _analyze_semaphore
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
@@ -253,6 +253,8 @@ def _import_new_with_ai(
     payload: ImportAffiliateOfferV2Request,
     preflight_status: str,
 ) -> dict[str, Any]:
+    from ..operations import stage
+    stage("COLETANDO_E_PESQUISANDO")
     analysis_url = _analysis_product_url(payload.urlProduto)
     analysis = _analyze_sync(
         AnalyzeRequest(
@@ -413,6 +415,8 @@ def _import_new_with_ai(
 
 
 def _import_v2_sync(payload: ImportAffiliateOfferV2Request) -> dict[str, Any]:
+    from ..operations import stage
+    stage("VERIFICANDO_CATALOGO")
     identity = _identity(payload)
     client = CriaByteClient()
     preflight: dict[str, Any] = {"status": "DADOS_INSUFICIENTES"}
@@ -439,7 +443,8 @@ async def import_affiliate_offer_v2(
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
     try:
-        return await asyncio.to_thread(_import_v2_sync, payload)
+        async with _analyze_semaphore:
+            return await asyncio.to_thread(_import_v2_sync, payload)
     except HTTPException:
         raise
     except MissingPriceError as exc:

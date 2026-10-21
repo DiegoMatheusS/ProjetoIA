@@ -8,6 +8,8 @@ __pycache__/
 .pytest_cache/
 .cache/
 node_modules/
+.venv/
+.data/
 data/raw/*
 !data/raw/.gitkeep
 *.log

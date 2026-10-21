@@ -10,6 +10,13 @@ from urllib.parse import urlencode
 import requests
 from dotenv import load_dotenv
 
+from .mercadolivre_token_store import (
+    load_tokens,
+    persistent_token_store_configured,
+    save_tokens,
+    token_storage_status,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
 PENDING_FILE = PROJECT_ROOT / ".ml_oauth_pending.json"
@@ -27,7 +34,28 @@ def _clean(value):
     return value or None
 
 
+def _stored_token(name):
+    mapping = {
+        "ML_ACCESS_TOKEN": "access_token",
+        "ML_REFRESH_TOKEN": "refresh_token",
+    }
+    key = mapping.get(name)
+    if not key or not persistent_token_store_configured():
+        return None
+    try:
+        return _clean(load_tokens().get(key))
+    except RuntimeError:
+        return None
+
+
 def _env(name):
+    # Quando o armazenamento persistente está configurado, ele tem prioridade.
+    # Isso permite sobreviver a restart/redeploy do Railway sem depender do .env
+    # efêmero do container.
+    if name in {"ML_ACCESS_TOKEN", "ML_REFRESH_TOKEN"}:
+        stored = _stored_token(name)
+        if stored:
+            return stored
     return _clean(os.getenv(name))
 
 
@@ -48,7 +76,7 @@ def configured_redirect_uri():
 
 
 def save_env_values(values: dict):
-    """Atualiza somente chaves ML_* no .env sem apagar outras configurações."""
+    """Fallback local legado: atualiza somente chaves informadas no .env."""
     existing_lines = []
     if ENV_FILE.exists():
         existing_lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
@@ -83,7 +111,33 @@ def save_env_values(values: dict):
             os.environ[key] = str(value)
 
 
+def save_token_values(values: dict):
+    access_token = _clean(values.get("ML_ACCESS_TOKEN"))
+    refresh_token = _clean(values.get("ML_REFRESH_TOKEN"))
+
+    if persistent_token_store_configured():
+        save_tokens(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+        # Também atualiza o processo atual para consumidores que ainda leem env.
+        if access_token:
+            os.environ["ML_ACCESS_TOKEN"] = access_token
+        if refresh_token:
+            os.environ["ML_REFRESH_TOKEN"] = refresh_token
+        return "ARQUIVO_PERSISTENTE_CRIPTOGRAFADO"
+
+    save_env_values(
+        {
+            "ML_ACCESS_TOKEN": access_token,
+            "ML_REFRESH_TOKEN": refresh_token,
+        }
+    )
+    return "AMBIENTE_LEGADO"
+
+
 def status():
+    storage = token_storage_status()
     data = {
         "clientIdConfigurado": bool(_env("ML_CLIENT_ID")),
         "clientSecretConfigurado": bool(_env("ML_CLIENT_SECRET")),
@@ -91,6 +145,7 @@ def status():
         "accessTokenConfigurado": bool(_env("ML_ACCESS_TOKEN")),
         "refreshTokenConfigurado": bool(_env("ML_REFRESH_TOKEN")),
         "pkce": _truthy(_env("ML_USE_PKCE")),
+        "armazenamentoTokens": storage,
     }
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -99,7 +154,7 @@ def build_authorization_url():
     client_id = _env("ML_CLIENT_ID")
     redirect_uri = configured_redirect_uri()
     if not client_id:
-        raise RuntimeError("ML_CLIENT_ID não configurado no .env.")
+        raise RuntimeError("ML_CLIENT_ID não configurado no .env/ambiente.")
     if not redirect_uri:
         raise RuntimeError("ML_REDIRECT_URI não configurado e Codespaces não detectado.")
 
@@ -129,7 +184,10 @@ def _post_token(payload):
     response = requests.post(
         TOKEN_URL,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
         timeout=30,
     )
     try:
@@ -137,7 +195,12 @@ def _post_token(payload):
     except ValueError:
         body = {"message": response.text[:500]}
     if not response.ok:
-        message = body.get("message") or body.get("error_description") or body.get("error") or f"HTTP {response.status_code}"
+        message = (
+            body.get("message")
+            or body.get("error_description")
+            or body.get("error")
+            or f"HTTP {response.status_code}"
+        )
         raise RuntimeError(f"Mercado Livre recusou o token: {message}")
     return body
 
@@ -168,10 +231,12 @@ def exchange_code(code: str, save=True):
 
     body = _post_token(payload)
     if save:
-        save_env_values({
-            "ML_ACCESS_TOKEN": _clean(body.get("access_token")),
-            "ML_REFRESH_TOKEN": _clean(body.get("refresh_token")),
-        })
+        save_token_values(
+            {
+                "ML_ACCESS_TOKEN": _clean(body.get("access_token")),
+                "ML_REFRESH_TOKEN": _clean(body.get("refresh_token")),
+            }
+        )
     if PENDING_FILE.exists():
         PENDING_FILE.unlink(missing_ok=True)
     return body
@@ -184,18 +249,22 @@ def refresh_access_token(save=True):
     if not all([client_id, client_secret, refresh_token]):
         raise RuntimeError("Configure ML_CLIENT_ID, ML_CLIENT_SECRET e ML_REFRESH_TOKEN.")
 
-    body = _post_token({
-        "grant_type": "refresh_token",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "refresh_token": refresh_token,
-    })
+    body = _post_token(
+        {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+        }
+    )
     if save:
         # O Mercado Livre invalida o refresh token anterior; sempre persista o novo.
-        save_env_values({
-            "ML_ACCESS_TOKEN": _clean(body.get("access_token")),
-            "ML_REFRESH_TOKEN": _clean(body.get("refresh_token")) or refresh_token,
-        })
+        save_token_values(
+            {
+                "ML_ACCESS_TOKEN": _clean(body.get("access_token")),
+                "ML_REFRESH_TOKEN": _clean(body.get("refresh_token")) or refresh_token,
+            }
+        )
     return body
 
 
@@ -218,8 +287,11 @@ def whoami():
         )
     response.raise_for_status()
     body = response.json()
-    # Nunca imprime token/secret.
-    safe = {k: body.get(k) for k in ("id", "nickname", "site_id", "country_id") if k in body}
+    safe = {
+        k: body.get(k)
+        for k in ("id", "nickname", "site_id", "country_id")
+        if k in body
+    }
     print(json.dumps(safe, ensure_ascii=False, indent=2))
 
 
@@ -240,27 +312,41 @@ def main():
     elif args.command == "codespace-uri":
         uri = codespace_redirect_uri()
         if not uri:
-            raise SystemExit("Codespaces não detectado. Configure ML_REDIRECT_URI manualmente.")
+            raise SystemExit(
+                "Codespaces não detectado. Configure ML_REDIRECT_URI manualmente."
+            )
         print(uri)
     elif args.command == "auth-url":
         print(build_authorization_url())
     elif args.command == "exchange":
         body = exchange_code(args.code, save=True)
-        print(json.dumps({
-            "ok": True,
-            "expiresIn": body.get("expires_in"),
-            "userId": body.get("user_id"),
-            "scope": body.get("scope"),
-            "salvoEmEnv": True,
-        }, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "expiresIn": body.get("expires_in"),
+                    "userId": body.get("user_id"),
+                    "scope": body.get("scope"),
+                    "armazenamento": token_storage_status().get("modo"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.command == "refresh":
         body = refresh_access_token(save=True)
-        print(json.dumps({
-            "ok": True,
-            "expiresIn": body.get("expires_in"),
-            "userId": body.get("user_id"),
-            "salvoEmEnv": True,
-        }, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "expiresIn": body.get("expires_in"),
+                    "userId": body.get("user_id"),
+                    "armazenamento": token_storage_status().get("modo"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.command == "whoami":
         whoami()
 

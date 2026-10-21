@@ -167,6 +167,8 @@ class CriaByteClient:
         )
 
     def importar_oferta_extensao(self, dados, api_key=None):
+        from ..operations import stage
+        stage("SALVANDO")
         key = self._internal_key(api_key)
         return self._request(
             "POST",

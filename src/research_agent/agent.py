@@ -398,6 +398,8 @@ class TechnicalResearchAgent:
             "duracaoMs": int((time.monotonic() - started) * 1000),
         }
         info = annotate_field_confidence(info)
+        from ..usage import research
+        research(category, info)
         self.cache.set(category, safe_after, info)
         return safe_after, info
 

@@ -398,6 +398,7 @@ class OpenAIProvider(TechnicalAIProvider):
                 text=text,
                 sources=self._sources(data),
                 raw_metadata={
+                    "usage": data.get("usage") or {},
                     "webSearchAtivo": bool(self.web_search),
                     "budgetSegundos": round(applied_budget, 2) if applied_budget is not None else None,
                     "timeoutEfetivoSegundos": round(float(request_timeout), 2),

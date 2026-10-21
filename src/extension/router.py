@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from ..api import AnalyzeRequest, _analyze_sync
+from ..api import AnalyzeRequest, _analyze_sync, _analyze_semaphore
 from ..criabyte.client import CriaByteApiError, CriaByteClient
 from ..extractors.backend_schemas import CATEGORY_SLUGS, SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
@@ -137,10 +137,7 @@ _INTEGER_HINTS = (
 _FLOAT_HINTS = ("Polegadas", "Ms", "Volts", "Amperes", "Percentual", "Kg", "Cm")
 
 
-def _validate_api_key(x_api_key: str | None) -> None:
-    expected = os.getenv("PRODUTO_IA_API_KEY", "").strip()
-    if expected and x_api_key != expected:
-        raise HTTPException(status_code=401, detail="API key inválida")
+from ..security import extension_owner as _validate_api_key
 
 
 def _analysis_product_url(value: str) -> str:
@@ -688,7 +685,8 @@ async def import_affiliate_offer(
 ) -> dict[str, Any]:
     _validate_api_key(x_api_key)
     try:
-        return await asyncio.to_thread(_import_sync, payload)
+        async with _analyze_semaphore:
+            return await asyncio.to_thread(_import_sync, payload)
     except HTTPException:
         raise
     except MissingPriceError as exc:

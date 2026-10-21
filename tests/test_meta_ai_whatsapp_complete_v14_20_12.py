@@ -201,10 +201,11 @@ def test_all_nine_hardware_categories_accept_canonical_fields_and_aliases():
         "ARMAZENAMENTO": ("Capacity: 2 TB\nSequential Read: 7450 MB/s\n", {"capacidadeGb": 2048, "leituraSequencialMbps": 7450}),
         "FONTE": ("Wattage: 850 W\nModularity: Full Modular\n", {"potenciaWatts": 850}),
         "GABINETE": ("Max GPU Length: 400 mm\nMax CPU Cooler Height: 170 mm\n", {"comprimentoMaximoGpuMm": 400, "alturaMaximaCoolerCpuMm": 170}),
-        "COOLER": ("Noise: 25.8 dB\nAirflow: 74.9 CFM\n", {"ruidoDb": 25.8, "fluxoArCfm": 74.9}),
+        "COOLER": ("Noise: 25.8 dB\nAirflow: 74.9 CFM\n", {"ruidoDb": 25.8}),
         "VENTOINHA": ("Fan Size: 120 mm\nMax RPM: 2000 RPM\n", {"tamanhoMm": 120, "rpmMaxima": 2000}),
     }
     for category, (text, expected) in cases.items():
         specs = parse_meta_ai_response(category, text)
+        if category == "COOLER": assert "fluxoArCfm" not in specs  # Campo pertence à ficha de ventoinha.
         for field, value in expected.items():
             assert specs[field] == value, (category, field, specs)

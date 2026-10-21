@@ -1,145 +1,73 @@
+"""Categoria principal: identifica primeiro o item vendido, depois as peças citadas.
+
+As regras gerais ficam em ``category_rules.py``. Este módulo antecipa anúncios
+claramente referentes a computadores completos para que Ryzen/Core/RTX/SSD do
+mesmo título não transformem o produto em uma peça isolada.
+"""
+
 import re
-import unicodedata
+
+from .category_rules import _clean, normalize_forced
+from .category_rules import detect_category as _detect_category_rules
 
 
-def _clean(value: str):
-    value = unicodedata.normalize("NFKD", value or "")
-    value = "".join(ch for ch in value if not unicodedata.combining(ch))
-    return value.casefold()
+_COMPONENT_AT_START = re.compile(
+    r"^\s*(?:kit\s+(?:upgrade|de\s+upgrade)|processador|cpu|placa[- ]m[aã]e|motherboard|"
+    r"placa\s+de\s+v[ií]deo|gpu|mem[oó]ria(?:\s+ram)?|ram|ssd|hdd|fonte|psu|gabinete|"
+    r"case|cooler|water\s*cooler|air\s*cooler|ventoinha|fan)\b",
+    re.I,
+)
+_EQUIPMENT_WORD = re.compile(r"\b(?:computador|pc|desktop)\b", re.I)
+_STRONG_PC_PHRASE = re.compile(
+    r"\b(?:computador|pc|desktop)\s+(?:de\s+mesa\b|gamer\b|montado\b|completo\b|"
+    r"all[- ]?in[- ]?one\b|intel\b|amd\b|core\b|ryzen\b|celeron\b|pentium\b|"
+    r"(?:i[3579])\s*[- ]?\d{3,5}\b)",
+    re.I,
+)
+_CONFIG_SIGNALS = (
+    re.compile(r"\b(?:ryzen\s*[3579]?\s*\d{3,5}[a-z]{0,2}|(?:intel\s+)?core\s+i[3579][ -]?\d{3,5}[a-z]{0,2}|i[3579][ -]?\d{3,5}[a-z]{0,2}|xeon\s+\w+)\b", re.I),
+    re.compile(r"\b(?:4|8|12|16|24|32|48|64|96|128)\s*gb\b.{0,18}\b(?:ram|ddr[345])\b|\b(?:ram|ddr[345])\b.{0,18}\b(?:4|8|12|16|24|32|48|64|96|128)\s*gb\b", re.I),
+    re.compile(r"\b(?:ssd|nvme|hdd|hd)\b.{0,18}\b\d+(?:[.,]\d+)?\s*(?:gb|tb)\b|\b\d+(?:[.,]\d+)?\s*(?:gb|tb)\b.{0,18}\b(?:ssd|nvme|hdd|hd)\b", re.I),
+    re.compile(r"\b(?:rtx|gtx)\s*\d{3,4}(?:\s*ti|\s*super)?\b|\bradeon\s*(?:rx)?\s*\d{3,4}\b", re.I),
+)
 
 
-ALIASES = {
-    "CPU": "PROCESSADOR",
-    "PROCESSADORES": "PROCESSADOR",
-    "PLACA-MAE": "PLACA_MAE",
-    "PLACAMAE": "PLACA_MAE",
-    "MOTHERBOARD": "PLACA_MAE",
-    "RAM": "MEMORIA_RAM",
-    "MEMORIA": "MEMORIA_RAM",
-    "GPU": "PLACA_VIDEO",
-    "PLACA DE VIDEO": "PLACA_VIDEO",
-    "SSD": "ARMAZENAMENTO",
-    "HDD": "ARMAZENAMENTO",
-    "PSU": "FONTE",
-    "CASE": "GABINETE",
-    "FAN": "VENTOINHA",
-    "HEADSET": "HEADSET",
-    "FONES": "FONE",
-    "SMARTPHONE": "CELULAR",
-    "PC MONTADO": "PC_MONTADO",
-    "PC-MONTADO": "PC_MONTADO",
-    "SUPORTE DE MONITOR": "SUPORTE_MONITOR",
-    "PROJETOR": "PROJETOR",
-    "TABLET": "TABLET",
-    "ROTEADOR": "ROTEADOR",
-    "NOBREAK": "NOBREAK",
-    "SMARTWATCH": "RELOGIO_INTELIGENTE",
-    "VIDEO GAME": "VIDEO_GAME",
-    "VIDEOGAME": "VIDEO_GAME",
-    "BRACO MONITOR": "SUPORTE_MONITOR",
-}
+def assembled_computer_title(text: str) -> bool:
+    """Retorna True quando o item vendido é um desktop completo.
 
+    A prioridade é o tipo do produto. CPU/GPU/RAM/SSD citados depois são
+    tratados como componentes do computador e não como a categoria principal.
+    """
+    headline = _clean(text)[:420]
+    if not headline:
+        return False
 
-def normalize_forced(value: str):
-    raw = (value or "").strip().upper().replace("-", " ")
-    raw = re.sub(r"\s+", " ", raw)
-    return ALIASES.get(raw, raw.replace(" ", "_"))
+    # Categorias próprias ou anúncios de peças não podem virar PC só porque
+    # mencionam "para computador/PC" na compatibilidade.
+    if re.search(r"\b(?:mini[- ]?pc|mini\s+computador|notebook|laptop|ultrabook)\b", headline, re.I):
+        return False
+    if _COMPONENT_AT_START.search(headline):
+        return False
+    if re.search(r"\b(?:kit\s+(?:de\s+)?upgrade|combo\s+upgrade)\b", headline, re.I):
+        return False
+
+    if _STRONG_PC_PHRASE.search(headline):
+        return True
+
+    # Alguns marketplaces inserem marca/linha antes de "PC" e depois colocam
+    # a configuração inteira no título. Ex.: "Pichau PC Ryzen 5 ... 16GB RAM SSD".
+    # Nesses casos exigimos pelo menos duas pistas técnicas independentes.
+    if _EQUIPMENT_WORD.search(headline):
+        signals = sum(1 for pattern in _CONFIG_SIGNALS if pattern.search(headline))
+        if signals >= 2:
+            return True
+
+    return False
 
 
 def detect_category(text: str, forced: str | None = None):
     if forced:
         return normalize_forced(forced)
-
-    t = _clean(text)
-
-    # Quando recebemos o título do produto, o início da frase é a evidência mais
-    # forte da categoria. Isso evita falsos positivos de termos citados na ficha
-    # (ex.: uma ventoinha menciona "placa-mãe" e "notebook" na descrição).
-    headline = t[:320]
-    headline_rules = [
-        ("VENTOINHA", [r"^\s*(?:kit\s+com\s+\d+\s+)?ventoinhas?\b", r"^\s*fans?\b"]),
-        ("NOTEBOOK", [r"^\s*notebook\b", r"^\s*laptop\b", r"^\s*ultrabook\b"]),
-        ("PC_MONTADO", [r"^\s*(?:pc|computador)\s+gamer\b", r"^\s*(?:pc|computador)\s+(?:gamer\s+)?(?:completo|montado)\b", r"^\s*desktop\s+(?:gamer|montado)\b"]),
-        ("PLACA_MAE", [r"^\s*placa[- ]mae\b", r"^\s*motherboard\b"]),
-        ("PLACA_VIDEO", [r"^\s*placa\s+de\s+video\b", r"^\s*(?:gpu|geforce|radeon)\b"]),
-        ("PROCESSADOR", [r"^\s*processador\b", r"^\s*cpu\b"]),
-        ("MEMORIA_RAM", [r"^\s*memoria\s+ram\b", r"^\s*kit\s+de\s+memoria\b"]),
-        ("ARMAZENAMENTO", [r"^\s*(?:ssd|hdd|hd\s+)\b"]),
-        ("FONTE", [r"^\s*fonte\b", r"^\s*power\s+supply\b"]),
-        ("GABINETE", [r"^\s*gabinete\b", r"^\s*computer\s+case\b"]),
-        ("COOLER", [r"^\s*(?:water|air)\s*cooler\b", r"^\s*cooler\b"]),
-        ("MONITOR", [r"^\s*monitor\b"]),
-        ("TECLADO", [r"^\s*teclado\b", r"^\s*keyboard\b"]),
-        ("MOUSE", [r"^\s*mouse\b"]),
-        ("HEADSET", [r"^\s*headset\b"]),
-        ("FONE", [r"^\s*(?:fone|headphone|earbuds?)\b"]),
-        ("MICROFONE", [r"^\s*(?:microfone|microphone)\b"]),
-    ]
-    for category, patterns in headline_rules:
-        if any(re.search(pattern, headline, re.I | re.S) for pattern in patterns):
-            return category
-
-    # Categorias compostas vêm primeiro para que CPU/GPU internas não mudem o destino.
-    rules = [
-        ("NOTEBOOK", [r"\bnotebook\b", r"\blaptop\b", r"\bultrabook\b"]),
-        ("PC_MONTADO", [r"\bpc\s+gamer\b", r"\bcomputador\s+gamer\b", r"\bpc\s+(?:gamer\s+)?(?:completo|montado)\b", r"\bcomputador\s+(?:gamer\s+)?(?:completo|montado)\b", r"\bdesktop\s+(?:gamer|montado)\b"]),
-        ("CELULAR", [r"\bsmartphone\b", r"\bcelular\b", r"\biphone\b", r"\bgalaxy\s+[asz]\d", r"\bredmi\b", r"\bpoco\b", r"\bmoto\s+g\b"]),
-        ("PROJETOR", [r"\bprojetor\b", r"\bprojector\b"]),
-        ("CALCULADORA", [r"\bcalculadora\b"]),
-        ("TELEFONE", [r"\btelefone\b(?:\s+sem\s+fio|\s+fixo)?"]),
-        ("IMPRESSORA_3D", [r"\bimpressora\s+3d\b"]),
-        ("IMPRESSORA", [r"\bimpressora\b", r"\bprinter\b"]),
-        ("SCANNER", [r"\bscanner\b"]),
-        ("CAIXA_DE_SOM", [r"\bcaixa\s+de\s+som\b", r"\bspeaker\b"]),
-        ("ROTEADOR", [r"\broteador\b", r"\brouter\b"]),
-        ("REPETIDOR_WIFI", [r"\brepetidor\b.{0,20}\bwi-?fi\b"]),
-        ("SWITCH_REDE", [r"\bswitch\b.{0,20}\brede\b"]),
-        ("NOBREAK", [r"\bnobreak\b", r"\bups\b"]),
-        ("ESTABILIZADOR", [r"\bestabilizador\b"]),
-        ("FILTRO_DE_LINHA", [r"\bfiltro\s+de\s+linha\b"]),
-        ("TABLET", [r"\btablet\b", r"\bipad\b"]),
-        ("MICROCONTROLADOR", [r"\bmicrocontrolador\b", r"\besp32\b", r"\besp8266\b", r"\barduino\b"]),
-        ("MINI_COMPUTADOR", [r"\bmini\s*(?:pc|computador)\b", r"\bras?pb?erry\s+pi\b"]),
-        ("RELOGIO_INTELIGENTE", [r"\bsmartwatch\b", r"\brelogio\s+inteligente\b"]),
-        ("VOLANTE", [r"\bvolante\b.{0,25}\b(?:gamer|jogo|simulador)\b"]),
-        ("JOYSTICK", [r"\bjoystick\b"]),
-        ("CONTROLE_VIDEO_GAME", [r"\bcontrole\b.{0,30}\b(?:xbox|playstation|ps[345]|switch|videogame|console)\b", r"\bgamepad\b"]),
-        ("VIDEO_GAME", [r"\b(?:videogame|console)\b", r"\bplaystation\s*[345]\b", r"\bxbox\b", r"\bnintendo\s+switch\b"]),
-        ("SMART_TV", [r"\bsmart\s*tv\b"]),
-        ("CAMERA", [r"\bcamera\b.{0,20}\b(?:digital|mirrorless|dslr)\b"]),
-        ("POWER_BANK", [r"\bpower\s*bank\b"]),
-        ("HUB_USB", [r"\bhub\s+usb\b"]),
-        ("DOCK_STATION", [r"\bdock(?:ing)?\s+station\b"]),
-        ("PEN_DRIVE", [r"\bpen\s*drive\b"]),
-        ("CARTAO_MEMORIA", [r"\bcartao\s+de\s+memoria\b", r"\bmicrosd\b"]),
-        ("ARMAZENAMENTO_EXTERNO", [r"\b(?:hd|ssd)\s+externo\b"]),
-        ("SUPORTE_MONITOR", [r"\b(?:suporte|braco)\b.{0,30}\bmonitor\b"]),
-        ("WEBCAM", [r"\bwebcam\b", r"camera\s+para\s+pc"]),
-        ("CONTROLE", [r"\bcontrole\s+(?:sem\s+fio|gamer|bluetooth|para\s+pc)\b", r"\bgamepad\b"]),
-        ("CADEIRA", [r"\bcadeira\s+(?:gamer|ergonomica|escritorio)\b"]),
-        ("MOUSEPAD", [r"\bmouse\s*pad\b", r"\bmousepad\b"]),
-        ("MESA", [r"\bmesa\s+(?:gamer|escritorio|computer)\b"]),
-        ("ILUMINACAO", [r"\bfita\s+led\b", r"\biluminacao\s+(?:rgb|led)\b", r"\blight\s*bar\b"]),
-        ("ORGANIZADOR_CABOS", [r"\borganizador(?:es)?\s+de\s+cabos?\b", r"\bcable\s+management\b"]),
-        ("ACESSORIO", [r"\bacess[oó]rio\s+(?:para\s+pc|gamer|de\s+setup)\b"]),
-        ("PLACA_MAE", [r"placa[- ]mae", r"\bmotherboard\b"]),
-        ("PLACA_VIDEO", [r"placa de video", r"\bgeforce\b", r"\bradeon\s+rx\b", r"\brtx\s*\d", r"\brx\s*\d"]),
-        ("PROCESSADOR", [r"\bprocessador\b", r"\bryzen\b", r"\bcore\s+(?:ultra\s+)?i?[3579]\b", r"\bintel\s+core\b"]),
-        ("MEMORIA_RAM", [r"memoria\s+ram", r"\b(?:ddr[345])\b.{0,40}\b(?:4|8|16|24|32|48|64|96|128)\s*gb\b"]),
-        ("ARMAZENAMENTO", [r"\bssd\b", r"\bnvme\b", r"\bhdd\b", r"disco\s+rigido"]),
-        ("FONTE", [r"\bfonte\b.{0,45}\b\d{3,4}\s*w\b", r"\bpower\s+supply\b", r"\bpsu\b"]),
-        ("GABINETE", [r"\bgabinete\b", r"\bcomputer\s+case\b", r"\bpc\s+case\b"]),
-        ("COOLER", [r"\bwater\s*cooler\b", r"\bair\s*cooler\b", r"\baio\s+\d{3}\b", r"cooler.{0,20}\bcpu\b"]),
-        ("VENTOINHA", [r"\bventoinha\b", r"\bcooler\s+fan\b", r"\bfan\s+(?:rgb|argb|pwm|120|140)\b"]),
-        ("MONITOR", [r"\bmonitor\b"]),
-        ("TECLADO", [r"\bteclado\b", r"\bkeyboard\b"]),
-        ("MOUSE", [r"\bmouse\b"]),
-        ("HEADSET", [r"\bheadset\b"]),
-        ("FONE", [r"\bfone\b", r"\bheadphone\b", r"\bearbuds?\b"]),
-        ("MICROFONE", [r"\bmicrofone\b", r"\bmicrophone\b"]),
-    ]
-
-    for category, patterns in rules:
-        if any(re.search(pattern, t, re.I | re.S) for pattern in patterns):
-            return category
-    return None
+    if assembled_computer_title(text):
+        return "PC_MONTADO"
+    return _detect_category_rules(text)

@@ -8,7 +8,7 @@ import requests
 from loguru import logger
 
 from ..utils.normalizers import clean_text, first_attr, to_float
-from ..auth.mercadolivre_oauth import refresh_access_token
+from ..auth.mercadolivre_oauth import _env, refresh_access_token
 from ..utils.rate_limiter import PoliteRateLimiter, JsonDiskCache
 
 
@@ -16,7 +16,7 @@ class MercadoLivreScraper:
     API_BASE = "https://api.mercadolibre.com"
 
     def __init__(self):
-        self.token = clean_text(os.getenv("ML_ACCESS_TOKEN"))
+        self.token = clean_text(_env("ML_ACCESS_TOKEN"))
         self.timeout = int(os.getenv("TIMEOUT", "20"))
         self.session = requests.Session()
         self.session.headers.update({
@@ -113,14 +113,14 @@ class MercadoLivreScraper:
 
     def _refresh_token_if_possible(self):
         if not (
-            os.getenv("ML_REFRESH_TOKEN")
-            and os.getenv("ML_CLIENT_ID")
-            and os.getenv("ML_CLIENT_SECRET")
+            _env("ML_REFRESH_TOKEN")
+            and _env("ML_CLIENT_ID")
+            and _env("ML_CLIENT_SECRET")
         ):
             return False
         try:
             refresh_access_token(save=True)
-            self.token = clean_text(os.getenv("ML_ACCESS_TOKEN"))
+            self.token = clean_text(_env("ML_ACCESS_TOKEN"))
             return bool(self.token)
         except Exception as exc:
             logger.warning(f"Não foi possível renovar o token do Mercado Livre: {exc}")
@@ -248,15 +248,20 @@ class MercadoLivreScraper:
 
     @staticmethod
     def _attribute_value(attr):
-        value = clean_text(attr.get("value_name"))
-        if value:
-            return value
-        values = attr.get("values") or []
-        for row in values:
-            value = clean_text(row.get("name") or row.get("value_name"))
-            if value:
-                return value
-        return None
+        def render(row):
+            value = row.get("name") or row.get("value_name")
+            if value is not None and value != "":
+                return clean_text(str(value))
+            structure = row.get("struct") or row.get("value_struct") or {}
+            if structure.get("number") is not None:
+                return f"{structure['number']} {structure.get('unit') or ''}".strip()
+            return None
+        direct = attr.get("value_name")
+        if direct is not None and direct != "":
+            return clean_text(str(direct))
+        values = [render(row) for row in attr.get("values") or [] if isinstance(row, dict)]
+        values = list(dict.fromkeys(v for v in values if v))
+        return ", ".join(values) if values else render({"value_struct": attr.get("value_struct")})
 
     @classmethod
     def _attributes_text(cls, attributes):
@@ -280,7 +285,7 @@ class MercadoLivreScraper:
                     # valor válido vence; listas seguintes apenas preenchem ausências.
                     normalized = key.casefold()
                     if normalized not in merged or not cls._attribute_value(merged[normalized]):
-                        merged[normalized] = attr
+                        merged[normalized] = {**attr, "value_name": cls._attribute_value(attr)}
                 else:
                     anonymous.append(attr)
         return list(merged.values()) + anonymous
@@ -649,8 +654,28 @@ class MercadoLivreScraper:
                 if value not in (None, "", []):
                     out[key] = value
 
-        # Uma descrição pública renderizada costuma ser mais completa que o
-        # short_description do catálogo; só substituímos quando for claramente maior.
+        # Para preço, a PDP renderizada representa o valor que o usuário está
+        # vendo naquele anúncio. A API pode retornar o preço regular enquanto uma
+        # promoção ativa aparece apenas na PDP. Nesse caso, o preço visível atual
+        # deve vencer e o valor maior vira precoAnterior.
+        secondary_price = to_float(secondary.get("price"))
+        secondary_previous = to_float(secondary.get("previous_price"))
+        primary_price = to_float(primary.get("price"))
+        secondary_price_source = clean_text(secondary.get("price_source"))
+
+        if secondary_price is not None and secondary_price_source == "MERCADO_LIVRE_PDP":
+            out["price"] = secondary_price
+            previous_candidates = [
+                value for value in (secondary_previous, primary_price, to_float(primary.get("previous_price")))
+                if value is not None and value > secondary_price
+            ]
+            out["previous_price"] = min(previous_candidates) if previous_candidates else None
+            out["price_source"] = secondary_price_source
+            if secondary.get("currency"):
+                out["currency"] = secondary.get("currency")
+
+        # A descrição final é montada depois a partir das especificações. Aqui
+        # mantemos o texto bruto apenas como evidência para classificação/extrator.
         if secondary.get("description") and len(str(secondary.get("description"))) > len(str(out.get("description") or "")):
             out["description"] = secondary.get("description")
 
@@ -712,7 +737,7 @@ class MercadoLivreScraper:
                 logger.warning(f"Surfsky prioritário do Mercado Livre falhou: {exc}")
 
         api_errors = []
-        item = sale_price = prices = catalog = catalog_items = catalog_offer = None
+        item = sale_price = prices = catalog = catalog_items = catalog_offer = item_description = None
 
         if item_id:
             item, err = self._api_get(
@@ -740,6 +765,11 @@ class MercadoLivreScraper:
                     api_errors.append(err)
 
             if item:
+                item_description, description_error = self._api_get(
+                    f"/items/{item_id}/description", allow_public_fallback=True,
+                )
+                if description_error:
+                    api_errors.append(description_error)
                 catalog_product_id = clean_text(item.get("catalog_product_id")) or catalog_product_id
 
         if catalog_product_id:
@@ -760,12 +790,25 @@ class MercadoLivreScraper:
                         (row for row in rows if clean_text(row.get("item_id")) == item_id),
                         None,
                     )
+                else:
+                    # Em URLs de catálogo (/p/MLB...), o link pode não carregar
+                    # item_id. Nesse caso, usa somente o anúncio explicitamente
+                    # indicado pelo buy_box_winner do próprio catálogo. Não escolhe
+                    # vendedor arbitrário quando existem várias ofertas.
+                    winner_item_id = clean_text(self._buy_box(catalog).get("item_id"))
+                    if winner_item_id:
+                        catalog_offer = next(
+                            (row for row in rows if clean_text(row.get("item_id")) == winner_item_id),
+                            None,
+                        )
+                    elif len(rows) == 1:
+                        catalog_offer = rows[0]
 
         api_result = None
         if item or catalog or catalog_offer:
             catalog_attrs = (catalog or {}).get("attributes") or []
             item_attrs = (item or {}).get("attributes") or []
-            attrs = self._merge_attributes(catalog_attrs, item_attrs)
+            attrs = self._merge_attributes(item_attrs, catalog_attrs)
 
             pictures = (catalog or {}).get("pictures") or (item or {}).get("pictures") or []
             picture = pictures[0] if pictures else {}
@@ -826,7 +869,7 @@ class MercadoLivreScraper:
                 "model": model,
                 "mpn": mpn,
                 "gtin": gtin,
-                "description": self._catalog_description(catalog),
+                "description": str((item_description or {}).get("plain_text") or (item_description or {}).get("text") or "").strip() or self._catalog_description(catalog),
                 "image_url": image,
                 "price": price,
                 "previous_price": previous,

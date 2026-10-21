@@ -22,7 +22,7 @@ def test_v14_20_5_processor_payload_final_guard_splits_memory_enum_and_drops_unk
     safe = normalize_hardware_payload_for_backend("PROCESSADOR", payload)
     specs = safe["especificacaoProcessador"]
     assert specs["tiposMemoriaSuportados"] == ["DDR5", "DDR4"]
-    assert specs["dataLancamento"] is None
+    assert "dataLancamento" not in specs
     assert "campoQueNaoExisteNoDto" not in specs
 
 

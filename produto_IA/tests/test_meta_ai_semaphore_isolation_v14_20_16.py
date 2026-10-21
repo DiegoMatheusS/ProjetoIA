@@ -4,6 +4,7 @@ from src import api
 
 
 def test_meta_ai_endpoint_does_not_wait_for_analyze_queue(monkeypatch):
+    monkeypatch.setenv("PRODUTO_IA_API_KEY", "test-key")
     async def scenario():
         analyze_queue = asyncio.Semaphore(1)
         await analyze_queue.acquire()  # simula /analisar ou navegador ocupado
@@ -26,7 +27,7 @@ def test_meta_ai_endpoint_does_not_wait_for_analyze_queue(monkeypatch):
 
         try:
             result = await asyncio.wait_for(
-                api.enriquecer_com_meta_ai_whatsapp(request, x_api_key=None),
+                api.enriquecer_com_meta_ai_whatsapp(request, x_api_key="test-key"),
                 timeout=0.5,
             )
         finally:
@@ -39,6 +40,7 @@ def test_meta_ai_endpoint_does_not_wait_for_analyze_queue(monkeypatch):
 
 
 def test_technical_ai_endpoint_has_own_queue(monkeypatch):
+    monkeypatch.setenv("PRODUTO_IA_API_KEY", "test-key")
     async def scenario():
         analyze_queue = asyncio.Semaphore(1)
         await analyze_queue.acquire()
@@ -61,7 +63,7 @@ def test_technical_ai_endpoint_has_own_queue(monkeypatch):
 
         try:
             result = await asyncio.wait_for(
-                api.enriquecer_com_ia_tecnica(request, x_api_key=None),
+                api.enriquecer_com_ia_tecnica(request, x_api_key="test-key"),
                 timeout=0.5,
             )
         finally:

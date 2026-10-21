@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+import threading
+from functools import wraps
 import asyncio
 import os
 from typing import Any
@@ -31,8 +34,15 @@ from .technical_ai.service import build_technical_ai_prompt, enrich_hardware_wit
 from .technical_ai.auto import auto_enrich_discovery_result, auto_enrich_link_result
 
 
+@asynccontextmanager
+async def _lifespan(app):
+    from .operations import recover_operations
+    await asyncio.to_thread(recover_operations)
+    yield
+
 app = FastAPI(
     title="CriaByte Produto IA",
+    lifespan=_lifespan,
     version=SERVICE_VERSION,
     docs_url="/docs" if os.getenv("PRODUTO_IA_DOCS", "false").lower() in {"1", "true", "yes", "sim"} else None,
     redoc_url=None,
@@ -83,7 +93,8 @@ class HardwareDiscoveryRequest(BaseModel):
     consulta: str | None = Field(default=None, max_length=240)
     fontes: list[str] | None = None
     pagina: int = Field(default=1, ge=1, le=100)
-    limite: int = Field(default=20, ge=1, le=50)
+    limite: int = Field(default=20, ge=1, le=100)
+    hardwaresCadastrados: list[dict[str, str | None]] = Field(default_factory=list, max_length=50000)
     # v14.20: descoberta prioriza qualidade da ficha. O catálogo encontra os
     # candidatos e, por padrão, cada candidato é detalhado/enriquecido antes de
     # ser devolvido. O cliente ainda pode desligar explicitamente para diagnóstico.
@@ -134,10 +145,7 @@ class HealthResponse(BaseModel):
     version: str
 
 
-def _validate_api_key(x_api_key: str | None) -> None:
-    expected = os.getenv("PRODUTO_IA_API_KEY", "").strip()
-    if expected and x_api_key != expected:
-        raise HTTPException(status_code=401, detail="API key inválida")
+from .security import validate_service_key as _validate_api_key
 
 
 def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -388,13 +396,13 @@ def _should_auto_enrich_link_request(categoria: str | None, enrich: bool) -> boo
 
     O backend de verificação de preços usa /analisar com categoria ausente e
     enrich=false. Enriquecimento técnico automático por link só entra quando o
-    caller pede enrich explicitamente ou informa uma categoria de HARDWARE.
+    caller pede enrich explicitamente ou informa uma categoria com ficha técnica.
     """
     if enrich:
         return True
     category = str(categoria or "").strip().upper()
     schema = SCHEMAS.get(category)
-    return bool(schema and schema[0] == "HARDWARE" and schema[1])
+    return bool(schema and schema[1])
 
 
 def _validate_url(url: str) -> str:
@@ -463,6 +471,17 @@ def _shopee_api_raw(url: str) -> tuple[dict[str, Any] | None, list[str]]:
     }, []
 
 
+_sync_analysis_slots = threading.BoundedSemaphore(_ANALYZE_CONCURRENCY)
+def _limit_analysis(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _sync_analysis_slots:
+            from .operations import stage
+            stage('COLETANDO_E_PESQUISANDO')
+            return function(*args, **kwargs)
+    return wrapped
+
+@_limit_analysis
 def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     url = _validate_url(payload.url)
     affiliate_url = _validate_url(payload.urlAfiliada) if payload.urlAfiliada else None
@@ -761,6 +780,7 @@ async def descobrir_hardwares(
                 payload.detalhar,
                 payload.enriquecer,
                 payload.noBrowser,
+                payload.hardwaresCadastrados,
             )
             # O frontend/backend continuam chamando a mesma rota. A Produto IA
             # completa automaticamente cards com baixa cobertura antes de responder.

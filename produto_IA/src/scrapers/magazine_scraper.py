@@ -452,9 +452,13 @@ class MagazineScraper:
 
         def add(name, value):
             name = clean_text(name)
-            if isinstance(value, (dict, list)):
-                return
-            value = clean_text(value)
+            if isinstance(value, list):
+                value = ", ".join(str(item.get("value") or item.get("name") or "") if isinstance(item, dict) else str(item) for item in value)
+            if isinstance(value, dict):
+                value = value.get("value") or value.get("name")
+            if isinstance(value, bool):
+                value = "Sim" if value else "Não"
+            value = clean_text(str(value)) if value is not None else None
             if not name or not value or len(name) > 160 or len(value) > 1200:
                 return
             key = (name.casefold(), value.casefold())
@@ -481,7 +485,7 @@ class MagazineScraper:
                     if "value" in value else
                     value.get("value_name")
                     if "value_name" in value else
-                    value.get("text")
+                    value.get("text") if "text" in value else value.get("values")
                 )
                 if name is not None and candidate is not None:
                     add(name, candidate)
@@ -490,6 +494,8 @@ class MagazineScraper:
                 child_path = f"{path}.{key}" if path else str(key)
                 if isinstance(child, (dict, list)):
                     walk(child, child_path)
+                elif in_technical_context and not any(k in value for k in ("name", "label", "title", "key")):
+                    add(key, child)
 
         for obj in objects:
             walk(obj)
@@ -712,11 +718,10 @@ class MagazineScraper:
         page_description = self._description_section(text)
         description = generic.get("description")
         if description and re.search(r"<[^>]+>", description):
-            description = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
-            description = clean_text(description)
+            description = BeautifulSoup(description, "html.parser").get_text("\n", strip=True)
         if page_description:
             if description and page_description.casefold() not in description.casefold():
-                description = clean_text(f"{description} {page_description}")
+                description = f"{description}\n{page_description}".strip()
             else:
                 description = page_description or description
 
@@ -893,7 +898,20 @@ class MagazineScraper:
         apenas URLs públicas do mesmo código de produto que podem ter políticas
         de entrega/cache diferentes na borda.
         """
+        parsed_input = urlparse(url or "")
+        input_host = (parsed_input.hostname or "").casefold()
         base = cls._magazineluiza_equivalent_url(url)
+        if not base and (
+            input_host == "magazineluiza.com.br"
+            or input_host.endswith(".magazineluiza.com.br")
+        ):
+            # Normaliza links desktop/mobile do próprio Magazine Luiza para a
+            # página pública canônica antes de gerar as variantes.
+            base = urlunparse(parsed_input._replace(
+                scheme="https",
+                netloc="www.magazineluiza.com.br",
+                fragment="",
+            ))
         if not base:
             return []
 
@@ -905,7 +923,8 @@ class MagazineScraper:
                 seen.add(candidate)
                 result.append((mode, candidate))
 
-        add("MAGAZINELUIZA", base)
+        if base != url:
+            add("MAGAZINELUIZA", base)
 
         parsed = urlparse(base)
         query_without_seller = [
@@ -1085,7 +1104,7 @@ class MagazineScraper:
         scraper = BrowserScraper()
         if not scraper.surfsky_configured():
             return None, "SURFSKY_NAO_CONFIGURADO", False
-        browser = scraper.fetch_surfsky(candidate_url)
+        browser = scraper.fetch_surfsky(candidate_url, interaction_profile="magalu")
         if browser.get("error"):
             return None, browser.get("error"), False
         title = browser.get("title") or ""

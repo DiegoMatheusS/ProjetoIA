@@ -31,3 +31,5 @@ data/raw/*
 # Capturas locais temporárias
 magalu_capture.json
 data/local/*.json
+
+.data/

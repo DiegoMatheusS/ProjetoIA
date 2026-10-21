@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 from ..utils.normalizers import clean_text
+from .dto_normalizer import normalize_m2_key, normalize_m2_length
 
 
 def normalize_key(value):
@@ -16,14 +17,23 @@ def normalize_key(value):
 
 
 def attribute_value(attr):
-    value = clean_text(attr.get("value_name"))
+    direct = attr.get("value_name")
+    value = clean_text(str(direct)) if direct is not None else None
     if value:
         return value
+    values = []
     for row in attr.get("values") or []:
+        if not isinstance(row, dict):
+            continue
         value = clean_text(row.get("name") or row.get("value_name"))
-        if value:
-            return value
-    return None
+        if not value:
+            structured = row.get("struct") or {}
+            amount = structured.get("number")
+            if amount is not None:
+                value = clean_text(f"{amount} {structured.get('unit') or ''}")
+        if value and value not in values:
+            values.append(value)
+    return "; ".join(values) or None
 
 
 def attrs_map(attributes):
@@ -395,8 +405,8 @@ def extract_processor(mapping, text):
         specs["arquitetura"] = architecture
 
     set_if(specs, "litografiaNm", integer(attr(mapping, "LITHOGRAPHY", "PROCESSOR_LITHOGRAPHY", "Litografia", "Processo de fabricação", "Lithography", "Technology")))
-    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos", "Total Cores", "Cores", "Core Count")))
-    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads", "Total Threads", "Threads", "Thread Count")))
+    set_if(specs, "nucleos", integer(attr(mapping, "PROCESSOR_CORES_NUMBER", "CPU_CORES_NUMBER", "CORES_NUMBER", "Quantidade de núcleos do processador", "Número de núcleos", "Total Cores", "Cores", "Core Count", "CPU Cores", "# of CPU Cores")))
+    set_if(specs, "threads", integer(attr(mapping, "PROCESSOR_THREADS_NUMBER", "THREADS_NUMBER", "Quantidade de threads do processador", "Número de threads", "Total Threads", "Threads", "Thread Count", "# of Threads")))
     cores_threads = attr(mapping, "CPU Cores / Threads", "Cores / Threads")
     if cores_threads:
         pair = re.search(r"(\d{1,3})\s*/\s*(\d{1,3})", cores_threads)
@@ -990,7 +1000,19 @@ def extract_gpu(mapping, text):
         bus_width = text_integer(text, r"\b\d+(?:[.,]\d+)?\s*(?:GB|MB)\s*,?\s*(?:GDDR[3567X]+|DDR[345]|HBM2E?|HBM3E?)\s*,?\s*(\d{2,4})\s*bit")
     set_if(specs, "barramentoBits", bus_width)
 
-    base = frequency_mhz(attr(mapping, "GPU_BASE_CLOCK", "BASE_CLOCK", "GPU Clock", "Base Clock", "Clock base"))
+    base = frequency_mhz(attr(
+        mapping,
+        "GPU_BASE_CLOCK",
+        "BASE_CLOCK",
+        "GPU Clock",
+        "Base Clock",
+        "Clock base",
+        "Clock do Processador de Vídeo",
+        "Clock do processador gráfico",
+        "Velocidade do processador gráfico",
+        "Velocidade de clock do processador gráfico",
+        "Frequência do processador gráfico",
+    ))
     if base is None:
         base = text_frequency(
             text,
@@ -1000,8 +1022,14 @@ def extract_gpu(mapping, text):
     set_if(specs, "clockBaseMhz", base)
 
     boost = frequency_mhz(attr(
-        mapping, "GPU_BOOST_CLOCK", "BOOST_CLOCK", "Boost Clock",
-        "Clock boost", "Clock do Processador de Vídeo",
+        mapping,
+        "GPU_BOOST_CLOCK",
+        "BOOST_CLOCK",
+        "Boost Clock",
+        "Clock boost",
+        "GPU Boost Clock",
+        "Clock de boost",
+        "Frequência boost",
     ))
     if boost is None:
         boost = text_frequency(
@@ -1135,18 +1163,19 @@ def extract_storage(mapping, text):
         cap = text_capacity(text, r"\b([0-9.,]+\s*(?:GB|TB))\b")
     set_if(specs, "capacidadeGb", cap)
 
-    m2code = first_match(text, r"\b22(30|42|60|80|110)\b")
-    set_if(specs, "tamanhoM2Mm", int(m2code) if m2code else integer(attr(mapping, "M2_SIZE", "Tamanho M.2")))
-
-    key = attr(mapping, "M2_KEY", "Chave M.2")
-    if key:
-        tk = normalize_key(key)
-        if "b_m" in tk or "b_m_key" in tk:
-            specs["chaveM2"] = "B_M"
-        elif tk.startswith("m"):
-            specs["chaveM2"] = "M"
-        elif tk.startswith("b"):
-            specs["chaveM2"] = "B"
+    if specs.get("formato") == "M2":
+        size = normalize_m2_length(attr(mapping, "M2_SIZE", "Tamanho M.2", "Comprimento M.2"))
+        if size is None:
+            size = normalize_m2_length(text)
+        set_if(specs, "tamanhoM2Mm", size)
+        key = attr(mapping, "M2_KEY", "Chave M.2", "Chave", "Tipo de chave", "Key")
+        if not key:
+            key = first_match(
+                text,
+                r"\b((?:B\s*(?:\+|&|/|-|_)\s*M|[BM])\s*[- ]?Key)\b",
+                r"\b((?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*(?:B\s*(?:\+|&|/|-|_)\s*M|[BM]))\b",
+            )
+        set_if(specs, "chaveM2", normalize_m2_key(key))
 
     pcie = attr(mapping, "PCIE_VERSION", "PCI_EXPRESS_VERSION", "Geração PCIe") or first_match(text, r"PCIe?\s*(?:Gen\s*)?([345])(?:\.0)?")
     set_if(specs, "geracaoPcie", integer(pcie))
@@ -1181,6 +1210,8 @@ def extract_storage(mapping, text):
         set_if(specs, "larguraMm", triplet[0])
         set_if(specs, "profundidadeMm", triplet[1])
         set_if(specs, "espessuraMm", triplet[2])
+        if triplet[0] == 22 and triplet[1] in {30, 42, 60, 80, 110}:
+            set_if(specs, "tamanhoM2Mm", int(triplet[1]))
 
     heatsink = boolean(attr(mapping, "WITH_HEATSINK", "HEATSINK", "Possui dissipador"))
     if heatsink is None:
@@ -1537,21 +1568,36 @@ def extract_fan(mapping, text):
     set_if(specs, "pressaoEstaticaMmH2o", number(attr(mapping, "STATIC_PRESSURE", "Pressão estática")) or text_number(text, r"([0-9.,]+)\s*mm\s*H2O"))
     set_if(specs, "ruidoDb", number(attr(mapping, "NOISE_LEVEL", "Ruído", "Nível de Ruído")) or text_number(text, r"([0-9.,]+)\s*dB"))
 
-    conn_source = attr(mapping, "CONNECTOR", "Conector")
+    pwm_explicit = boolean(attr(mapping, "PWM", "PWM Connector", "PWM Support", "Suporte PWM"))
+    conn_source = attr(mapping, "CONNECTOR", "Conector", "Fan Connector", "Power Connector")
     connector = connector_fan(conn_source or text)
-    if connector is None and re.search(r"PWM\s+de\s+4\s+pinos?", text or "", re.I):
+    if connector is None and (
+        pwm_explicit is True
+        or (pwm_explicit is None and re.search(r"\bPWM\b", text or "", re.I))
+    ):
         connector = "PWM_4_PINOS"
     set_if(specs, "conector", connector)
     set_if(specs, "tensaoVolts", number(attr(mapping, "VOLTAGE", "Tensão")))
     set_if(specs, "correnteAmperes", number(attr(mapping, "CURRENT", "Corrente")))
-    if connector == "PWM_4_PINOS" or re.search(r"\bPWM\b", text or "", re.I):
+    if connector == "PWM_4_PINOS" or pwm_explicit is True:
         specs["pwm"] = True
+    elif pwm_explicit is False:
+        specs["pwm"] = False
     if re.search(r"\bARGB\b", text or "", re.I):
         specs["argb"] = True
         specs["rgb"] = True
     elif re.search(r"\bRGB\b", text or "", re.I):
         specs["rgb"] = True
-    reverse = explicit_keyword_bool(text, [r"fluxo\s+reverso", r"reverse\s+(?:blade|airflow)"], [])
+    reverse = explicit_keyword_bool(
+        text,
+        [
+            r"fluxo\s+reverso",
+            r"reverse\s+(?:blade|airflow)",
+            r"airflow\s+direction\s*:?\s*reverse",
+            r"fan\s+airflow\s*:?\s*reverse",
+        ],
+        [],
+    )
     set_if(specs, "fluxoReverso", reverse)
     return specs
 
@@ -1767,9 +1813,38 @@ def extract_microphone(mapping, text):
     set_if(specs, "taxaAmostragemKhz", sample)
     return specs
 
+
+def notebook_feature(mapping, text, aliases, pattern):
+    """Use explicit attribute answers first, then a labelled passage."""
+    value = attr(mapping, *aliases)
+    answer = boolean(value)
+    if answer is not None:
+        return answer
+    if value and normalize_key(value) not in {
+        "nao_informado", "nao_encontrado", "unknown", "not_found", "n_a",
+    }:
+        if re.search(r"\b(?:sem|n[aã]o|no|without)\b", value, re.I):
+            return False
+        return True
+    negative = [
+        rf"\b(?:sem|n[aã]o\s+(?:possui|tem)|without|no)\s+(?:uma?\s+)?(?:{pattern})\b",
+        rf"(?:{pattern})\s*[:\-]\s*(?:n[aã]o|false|no|n[aã]o\s+possui)\b",
+    ]
+    positive = [
+        rf"(?:{pattern})\s*[:\-]\s*(?:sim|true|yes|HD|FHD|\d{{3,4}}p)\b",
+        rf"\b(?:com|possui|with)\s+(?:uma?\s+)?(?:{pattern})\b",
+    ]
+    listed = attr(mapping, "Funcionalidades", "Recursos", "Features") or ""
+    if listed and re.search(pattern, listed, re.I):
+        if any(re.search(expression, listed, re.I) for expression in negative):
+            return False
+        return True
+    return explicit_keyword_bool(text, positive, negative)
+
+
 def extract_notebook(mapping, text):
     specs = {}
-    cpu = attr(mapping, "PROCESSOR_MODEL", "CPU_MODEL", "Modelo do processador", "Processador") or first_match(text, r"(?:Processador|CPU)\s*:\s*([^.;|\n]+)")
+    cpu = attr(mapping, "PROCESSOR_MODEL", "CPU_MODEL", "Modelo do processador", "Processador", "Processor model", "CPU") or first_match(text, r"(?:Processador|CPU)\s*:\s*([^.;|\n]+)")
     set_if(specs, "processadorNome", cpu)
     cpu_brand = attr(mapping, "PROCESSOR_BRAND", "Marca do processador")
     if not cpu_brand and cpu:
@@ -1793,9 +1868,9 @@ def extract_notebook(mapping, text):
         specs["gpuDedicada"] = False
     set_if(specs, "vramGb", capacity_gb(attr(mapping, "VRAM", "Memória de vídeo", "Memória da Placa de Vídeo")))
 
-    ram = capacity_gb(attr(mapping, "RAM_MEMORY_CAPACITY", "RAM", "Memória RAM")) or text_capacity(text, r"\b(\d+\s*GB)\s+(?:de\s+)?RAM\b")
+    ram = capacity_gb(attr(mapping, "RAM_MEMORY_CAPACITY", "RAM_MEMORY", "RAM", "Memória RAM", "Internal memory", "Memória instalada")) or text_capacity(text, r"\b(\d+\s*GB)\s+(?:de\s+)?RAM\b")
     set_if(specs, "ramInstaladaGb", ram)
-    ram_type_source = attr(mapping, "RAM_MEMORY_TYPE", "Tipo de memória RAM", "Barramento da Memória") or ""
+    ram_type_source = attr(mapping, "RAM_MEMORY_TYPE", "Tipo de memória RAM", "Barramento da Memória", "Internal memory type") or ""
     types = memory_types(ram_type_source)
     if len(types) == 1:
         specs["tipoMemoria"] = types[0]
@@ -1804,7 +1879,7 @@ def extract_notebook(mapping, text):
     if specs.get("ramMaximaGb") and specs.get("ramInstaladaGb") and specs["ramMaximaGb"] > specs["ramInstaladaGb"]:
         specs["upgradeRam"] = True
 
-    storage = capacity_gb(attr(mapping, "STORAGE_CAPACITY", "Capacidade de armazenamento", "Capacidade do Armazenamento")) or text_capacity(text, r"\b(\d+(?:[.,]\d+)?\s*(?:GB|TB))\s+(?:SSD|NVMe|HDD)\b")
+    storage = capacity_gb(attr(mapping, "STORAGE_CAPACITY", "SSD_CAPACITY", "HARD_DRIVE_CAPACITY", "Total storage capacity", "SSD capacity", "Capacidade de armazenamento", "Capacidade do Armazenamento")) or text_capacity(text, r"\b(\d+(?:[.,]\d+)?\s*(?:GB|TB))\s+(?:SSD|NVMe|HDD)\b")
     set_if(specs, "armazenamentoGb", storage)
     stype = attr(mapping, "STORAGE_TYPE", "Tipo de armazenamento") or first_match(text, r"\b(SSD\s+NVMe|SSD|HDD)\b")
     interface = attr(mapping, "Interface de Conexão")
@@ -1812,8 +1887,8 @@ def extract_notebook(mapping, text):
         stype = clean_text(f"{stype} NVMe")
     set_if(specs, "tipoArmazenamento", stype)
 
-    set_if(specs, "tamanhoTelaPolegadas", number(attr(mapping, "SCREEN_SIZE", "Tamanho da tela")) or text_number(text, r"\b([0-9]{2}(?:[.,][0-9])?)\s*(?:\"|”|pol(?:egadas?)?)"))
-    res = resolution(attr(mapping, "SCREEN_RESOLUTION", "Resolução da tela") or first_match(text, r"\b(\d{3,5}\s*[x×]\s*\d{3,5})\b"))
+    set_if(specs, "tamanhoTelaPolegadas", number(attr(mapping, "SCREEN_SIZE", "DISPLAY_SIZE", "Display diagonal", "Tamanho da tela", "Tamanho da Tela (polegadas)")) or text_number(text, r"\b([0-9]{2}(?:[.,][0-9])?)\s*(?:\"|”|pol(?:egadas?)?)"))
+    res = resolution(attr(mapping, "SCREEN_RESOLUTION", "Display resolution", "Resolução da tela") or first_match(text, r"\b(\d{3,5}\s*[x×]\s*\d{3,5})\b"))
     if res and "x" in res:
         w, h = res.split("x")
         specs["resolucaoLargura"] = int(w)
@@ -1822,7 +1897,7 @@ def extract_notebook(mapping, text):
         # Não inventa resolução numérica a partir de apenas "Full HD".
         pass
     set_if(specs, "taxaAtualizacaoHz", integer(attr(mapping, "REFRESH_RATE", "Taxa de atualização", "Taxa de Atualização da Tela")) or text_integer(text, r"\b(\d{2,4})\s*Hz\b"))
-    set_if(specs, "tipoPainel", attr(mapping, "PANEL_TYPE", "Tipo de painel", "Painel da Tela") or first_match(text, r"\b(IPS|WVA|HVA|VA|TN|OLED|Mini[- ]LED)\b"))
+    set_if(specs, "tipoPainel", attr(mapping, "PANEL_TYPE", "Panel type", "Tipo de painel", "Painel da Tela") or first_match(text, r"\b(IPS|WVA|HVA|VA|TN|OLED|Mini[- ]LED)\b"))
     set_if(specs, "brilhoNits", integer(attr(mapping, "BRIGHTNESS", "Brilho")))
     set_if(specs, "bateriaWh", number(attr(mapping, "BATTERY_CAPACITY", "Capacidade da bateria")) or text_number(text, r"([0-9.,]+)\s*Wh\b"))
     set_if(specs, "autonomiaInformadaHoras", number(attr(mapping, "Duração Aproximada da Bateria", "Autonomia da bateria")) or text_number(text, r"(?:dura[cç][aã]o\s+aproximada\s+da\s+bateria|bateria\s+dura)\s*:?\s*(?:cerca\s+de\s*)?([0-9.,]+)\s*horas?"))
@@ -1837,13 +1912,38 @@ def extract_notebook(mapping, text):
     set_if(specs, "alturaMm", labeled_dimension_mm(dims, "Altura"))
     set_if(specs, "profundidadeMm", labeled_dimension_mm(dims, "Profundidade"))
 
-    connectivity = attr(mapping, "Conectividade") or ""
-    if re.search(r"Wi[- ]?Fi", connectivity, re.I):
-        specs["wifi"] = clean_text(first_match(connectivity, r"(Wi[- ]?Fi(?:\s*\d(?:E)?)?)") or "Wi-Fi")
-    if re.search(r"Bluetooth", connectivity, re.I):
-        specs["bluetooth"] = clean_text(first_match(connectivity, r"(Bluetooth(?:\s*\d(?:\.\d+)?)?)") or "Bluetooth")
+    connectivity = " ".join(filter(None, [attr(mapping, "Conectividade", "Connectivity"), text]))
+    wifi = attr(mapping, "WIFI_STANDARD", "WI_FI_STANDARD", "WIRELESS_TYPE", "WIRELESS_COMMUNICATIONS", "Top Wi-Fi standard", "Wi-Fi standards", "Padrão Wi-Fi", "Wi-Fi", "WiFi")
+    has_wifi = notebook_feature(mapping, connectivity, ["WITH_WI_FI", "WITH_WIFI", "Com Wi-Fi", "WLAN", "Wi-Fi"], r"Wi[-\s‑]?Fi|WLAN")
+    if has_wifi is False:
+        specs["wifi"] = "Não"
+    else:
+        wifi_version = first_match(wifi or connectivity, r"(Wi[-\s‑]?Fi\s*[4-7](?:E)?(?:\s*\([^)]+\))?)", r"(802\.11[a-z/]+)")
+        if wifi_version:
+            specs["wifi"] = wifi_version
+        elif wifi and boolean(wifi) is None and normalize_key(wifi) not in {"nao_informado", "nao_encontrado", "unknown"}:
+            specs["wifi"] = wifi[:100]
+        elif has_wifi is True:
+            specs["wifi"] = "Sim"
+        elif re.search(r"\bWi[-\s‑]?Fi\b", connectivity, re.I):
+            specs["wifi"] = "Wi-Fi"
 
-    connections = attr(mapping, "Conexões", "Conexoes") or ""
+    bluetooth = attr(mapping, "BLUETOOTH_VERSION", "Versão do Bluetooth", "Bluetooth version", "Bluetooth")
+    has_bluetooth = notebook_feature(mapping, connectivity, ["WITH_BLUETOOTH", "Com Bluetooth", "Bluetooth"], r"Bluetooth")
+    if has_bluetooth is False:
+        specs["bluetooth"] = "Não"
+    else:
+        version = first_match(bluetooth or connectivity, r"(Bluetooth\s*\d(?:\.\d)?)")
+        if not version and bluetooth and re.fullmatch(r"\d(?:\.\d)?", bluetooth):
+            version = f"Bluetooth {bluetooth}"
+        if version:
+            specs["bluetooth"] = version
+        elif has_bluetooth is True:
+            specs["bluetooth"] = "Sim"
+        elif re.search(r"\bBluetooth\b", connectivity, re.I):
+            specs["bluetooth"] = "Bluetooth"
+
+    connections = attr(mapping, "Conexões", "Conexoes", "Ports", "Portas") or text or ""
     usb_a = sum(int(x) for x in re.findall(r"(\d+)\s+(?:x\s*)?portas?\s+USB[^,;]*?Type[- ]?A", connections, re.I))
     usb_c = sum(int(x) for x in re.findall(r"(\d+)\s+(?:x\s*)?portas?\s+USB[^,;]*?Type[- ]?C", connections, re.I))
     if usb_c == 0 and re.search(r"\bPorta\s+USB\s+(?:Tipo|Type)[- ]?C\b", connections, re.I):
@@ -1872,36 +1972,82 @@ def extract_notebook(mapping, text):
     leitor = explicit_keyword_bool(connections, [r"leitor\s+de\s+cart[aã]o", r"card\s+reader"], [])
     set_if(specs, "leitorCartao", leitor)
 
-    set_if(specs, "sistemaOperacional", attr(mapping, "OPERATING_SYSTEM", "Sistema operacional"))
-    multimedia = attr(mapping, "Multimídia", "Multimidia", "Funcionalidades") or text
-    if re.search(r"\bwebcam\b|c[aâ]mera\s+(?:HD|FHD|Full\s*HD)", multimedia, re.I):
-        specs["webcam"] = True
-    webcam_res = first_match(multimedia, r"\b(\d{3,4}p)\b")
+    os_name = attr(mapping, "OPERATING_SYSTEM", "OPERATING_SYSTEM_NAME", "OS", "Sistema operacional", "Sistema operacional instalado", "Operating system installed")
+    os_version = attr(mapping, "OPERATING_SYSTEM_VERSION", "Versão do sistema operacional")
+    if os_name and os_version and os_version.casefold() not in os_name.casefold():
+        os_name = f"{os_name} {os_version}"
+    if not os_name:
+        os_name = first_match(text, r"(?:sistema\s+operacional(?:\s+instalado)?|operating\s+system(?:\s+installed)?|SO)\s*[:\-]\s*([^;|\n]+?)(?=\.(?!\d)|[;|\n]|$)")
+    if not os_name:
+        for match in re.finditer(r"\b(?:Windows\s*(?:10|11)(?:\s*(?:Home|Pro|Professional|S))?|FreeDOS|DOS|Linux(?:\s+(?:Ubuntu|Debian|Mint|Gutta))?|Ubuntu(?:\s+\d{2}\.\d{2})?|Chrome\s*OS|macOS(?:\s+[A-Za-z]+)?)\b", text or "", re.I):
+            preceding = (text or "")[max(0, match.start() - 35):match.start()]
+            if not re.search(r"compat[ií]vel|suporta|requisitos|instalar|compatible", preceding, re.I):
+                os_name = match.group(0)
+                break
+    set_if(specs, "sistemaOperacional", os_name[:150] if os_name else None)
+
+    multimedia = " ".join(filter(None, [attr(mapping, "Multimídia", "Multimidia", "Funcionalidades"), text]))
+    webcam = notebook_feature(mapping, multimedia, ["WITH_WEBCAM", "WITH_CAMERA", "Com webcam", "Possui webcam", "Webcam", "Front camera", "Câmera integrada"], r"webcam|c[aâ]mera(?:\s+(?:frontal|integrada))?")
+    camera_value = attr(mapping, "WEBCAM_RESOLUTION", "FRONT_CAMERA_RESOLUTION", "Front camera HD type", "Resolução da webcam", "Resolução da câmera", "Webcam")
+    webcam_res = first_match(camera_value or "", r"(\d{3,4}p|FHD|Full\s*HD|HD|\d+(?:\.\d+)?\s*MP)")
     if not webcam_res:
-        webcam_res = first_match(multimedia, r"(?:webcam|c[aâ]mera)[^.;|]{0,60}?\b(FHD|Full\s*HD|HD)\b")
-    set_if(specs, "resolucaoWebcam", webcam_res)
-    keyboard = attr(mapping, "Padrão de Teclado", "Padrao de Teclado") or text
-    if re.search(r"\bnum[eé]rico\b", keyboard, re.I):
-        specs["tecladoNumerico"] = True
-    if re.search(r"teclado\s+(?:retro)?iluminado|backlit\s+keyboard", text or "", re.I):
-        specs["tecladoIluminado"] = True
+        webcam_res = first_match(multimedia, r"(?:webcam|c[aâ]mera(?:\s+(?:frontal|integrada))?)[^.;|\n]{0,40}?\b(\d{3,4}p|FHD|Full\s*HD|HD)\b")
+    explicit_pixels = first_match(multimedia, r"(?:webcam|c[aâ]mera)[^;|\n]{0,80}?\b(\d{3,4}p)\b")
+    if explicit_pixels: webcam_res = explicit_pixels
+    if webcam is None and webcam_res:
+        webcam = True
+    set_if(specs, "webcam", webcam)
+    if webcam is not False:
+        set_if(specs, "resolucaoWebcam", webcam_res)
+    keyboard = " ".join(filter(None, [attr(mapping, "Padrão de Teclado", "Padrao de Teclado", "Keyboard"), text]))
+    numeric_keyboard = notebook_feature(mapping, keyboard, ["WITH_NUMERIC_KEYPAD", "Numeric keypad", "Com teclado numérico", "Teclado numérico"], r"teclado\s+num[eé]rico|numeric\s+keypad")
+    keyboard_type = attr(mapping, "Padrão de Teclado", "Padrao de Teclado") or ""
+    if numeric_keyboard is None and re.search(r"\bnum[eé]rico\b", keyboard_type, re.I):
+        numeric_keyboard = not bool(re.search(r"\b(?:sem|n[aã]o)\b", keyboard_type, re.I))
+    set_if(specs, "tecladoNumerico", numeric_keyboard)
+    set_if(specs, "tecladoIluminado", notebook_feature(mapping, keyboard, ["WITH_BACKLIT_KEYBOARD", "Keyboard backlit", "Teclado iluminado", "Teclado retroiluminado"], r"teclado\s+(?:retro)?iluminado|backlit\s+keyboard"))
+    set_if(specs, "touch", notebook_feature(mapping, text, ["IS_TOUCH_SCREEN", "Touchscreen", "Tela sensível ao toque"], r"touchscreen|tela\s+sens[ií]vel\s+ao\s+toque"))
+    set_if(specs, "leitorDigital", notebook_feature(mapping, text, ["WITH_FINGERPRINT_READER", "Fingerprint reader", "Leitor de impressão digital", "Leitor biométrico"], r"leitor\s+(?:de\s+impress[aã]o\s+digital|biom[eé]trico)|fingerprint\s+reader"))
+    set_if(specs, "potenciaCarregadorWatts", integer(attr(mapping, "AC_ADAPTER_POWER", "AC adapter power", "Potência do carregador")) or text_integer(text, r"(?:carregador|adaptador\s+de\s+energia)\s*(?:de|:)?\s*(\d{2,3})\s*W\b"))
+    for field, aliases in {
+        "slotsRamTotal": ["RAM_SLOTS_NUMBER", "Memory slots", "Slots de RAM", "Slots RAM"],
+        "slotsRamLivres": ["FREE_RAM_SLOTS_NUMBER", "Slots de RAM livres"],
+        "slotsM2Total": ["M2_SLOTS_NUMBER", "Slots M.2"],
+        "slotsM2Livres": ["FREE_M2_SLOTS_NUMBER", "Slots M.2 livres"],
+    }.items():
+        set_if(specs, field, integer(attr(mapping, *aliases)))
+    set_if(specs, "ramSoldadaGb", capacity_gb(attr(mapping, "SOLDERED_RAM_CAPACITY", "Memória soldada", "RAM soldada")))
+    set_if(specs, "upgradeArmazenamento", notebook_feature(mapping, text, ["STORAGE_EXPANDABLE", "Armazenamento expansível"], r"armazenamento\s+expans[ií]vel"))
     return specs
 
 def extract_phone(mapping,text):
     specs={}
-    set_if(specs,"processadorNome",attr(mapping,"PROCESSOR_MODEL","CHIPSET_MODEL","Processador"))
-    set_if(specs,"ramGb",capacity_gb(attr(mapping,"RAM_MEMORY","RAM_MEMORY_CAPACITY","Memória RAM")))
-    set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"INTERNAL_MEMORY","STORAGE_CAPACITY","Memória interna")))
-    set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela")))
+    set_if(specs,"processadorNome",attr(mapping,"PROCESSOR_MODEL","CHIPSET_MODEL","Processador", "Chipset", "Processor Model"))
+    set_if(specs,"ramGb",capacity_gb(attr(mapping,"RAM_MEMORY","RAM_MEMORY_CAPACITY","Memória RAM", "RAM", "RAM Capacity", "RAM Size") or first_match(text, r"(?:RAM|Mem[oó]ria\s+RAM)\s*[:=-]\s*(\d+\s*GB)")))
+    set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"INTERNAL_MEMORY","STORAGE_CAPACITY","Memória interna", "Armazenamento", "Internal Storage", "Internal Memory", "Storage Capacity") or first_match(text, r"(?:Armazenamento|Mem[oó]ria\s+interna|Storage)\s*[:=-]\s*(\d+\s*(?:GB|TB))")))
+    set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela", "Screen Size", "Display Size")))
     set_if(specs,"resolucao",resolution(attr(mapping,"SCREEN_RESOLUTION","Resolução da tela")))
-    set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização")))
-    set_if(specs,"tipoTela",attr(mapping,"DISPLAY_TYPE","Tipo de tela"))
-    set_if(specs,"cameraPrincipalMp",number(attr(mapping,"MAIN_CAMERA_RESOLUTION","Câmera principal")))
-    set_if(specs,"cameraFrontalMp",number(attr(mapping,"FRONT_CAMERA_RESOLUTION","Câmera frontal")))
-    set_if(specs,"bateriaMah",integer(attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria")))
+    set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização", "Refresh Rate")))
+    set_if(specs,"tipoTela",attr(mapping,"DISPLAY_TYPE","Tipo de tela", "Display Type"))
+    set_if(specs,"cameraPrincipalMp",number(attr(mapping,"MAIN_CAMERA_RESOLUTION","Câmera principal", "Main Camera Resolution", "Rear Camera Resolution")))
+    set_if(specs,"cameraFrontalMp",number(attr(mapping,"FRONT_CAMERA_RESOLUTION","Câmera frontal", "Front Camera Resolution")))
+    battery = attr(mapping,"BATTERY_CAPACITY","Capacidade da bateria", "Bateria", "Battery Capacity") or first_match(text, r"(\d[\d., ]*)\s*mAh\b")
+    if battery:
+        battery = re.sub(r"(?<=\d)[., ](?=\d{3}(?:\D|$))", "", str(battery))
+        set_if(specs,"bateriaMah",integer(battery))
     set_if(specs,"carregamentoWatts",integer(attr(mapping,"FAST_CHARGING_POWER","Potência de carregamento")))
     if re.search(r"\b5G\b",text or "",re.I): specs["cincoG"]=True
-    if re.search(r"\bNFC\b",text or "",re.I): specs["nfc"]=True
+    nfc = boolean(attr(mapping, "WITH_NFC", "NFC", "Com NFC", "Possui NFC"))
+    if nfc is None:
+        if re.search(r"(?:sem|n[aã]o\s+(?:possui|tem|suporta))\s+NFC|NFC\s*[:=-]\s*(?:n[aã]o|false)", text or "", re.I):
+            nfc = False
+        elif re.search(r"(?:com|possui|suporta)\s+NFC|NFC\s*[:=-]\s*(?:sim|true)", text or "", re.I):
+            nfc = True
+    set_if(specs, "nfc", nfc)
+    set_if(specs,"dualSim",boolean(attr(mapping,"IS_DUAL_SIM", "Dual SIM", "Dual-SIM")))
+    set_if(specs,"esim",boolean(attr(mapping,"WITH_ESIM", "eSIM", "Com eSIM")))
+    set_if(specs,"wifi",attr(mapping,"WIFI", "Wi-Fi", "WiFi"))
+    set_if(specs,"bluetooth",attr(mapping,"BLUETOOTH_VERSION", "Versão Bluetooth", "Bluetooth Version", "Bluetooth"))
     set_if(specs,"sistemaOperacional",attr(mapping,"OPERATING_SYSTEM","Sistema operacional"))
     set_if(specs,"pesoGramas",number(attr(mapping,"WEIGHT","Peso")))
     set_if(specs,"cor",attr(mapping,"COLOR","Cor"))
@@ -1932,8 +2078,16 @@ def extract_pc_montado(mapping,text):
     ]
     components=[]
     for category,pattern in component_patterns:
-        value=first_match(text,pattern)
+        aliases = {
+            "PROCESSADOR": ("PROCESSOR_MODEL", "Processador", "CPU"),
+            "PLACA_MAE": ("MOTHERBOARD_MODEL", "Placa mãe", "Motherboard"),
+            "MEMORIA_RAM": ("Memória RAM", "RAM"), "PLACA_VIDEO": ("GPU_MODEL", "Placa de vídeo", "GPU"),
+            "ARMAZENAMENTO": ("Armazenamento", "SSD", "HDD"), "FONTE": ("Fonte", "PSU"),
+            "GABINETE": ("Gabinete",), "COOLER": ("Cooler",),
+        }
+        value=attr(mapping, *aliases[category]) or first_match(text,pattern)
         if value:
+            value = re.split(r"\s+(?:Processador|CPU|Placa[- ]m[aã]e|Mem[oó]ria\s+RAM|RAM|Placa\s+de\s+v[ií]deo|GPU|Armazenamento|SSD|HDD|Fonte|PSU|Gabinete|Cooler)\s*:", value, maxsplit=1, flags=re.I)[0].strip()
             components.append({"categoria":category,"nome":value,"quantidade":1})
     if components:
         specs["componentes"]=components
@@ -1974,6 +2128,64 @@ def extract_generic(category,mapping,text):
         set_if(specs,"profundidadeCm",number(attr(mapping,"DEPTH","Profundidade")))
         set_if(specs,"alturaCm",number(attr(mapping,"HEIGHT","Altura")))
         set_if(specs,"pesoMaximoKg",number(attr(mapping,"MAX_WEIGHT","Peso máximo")))
+    elif category in {"TV", "SMART_TV"}:
+        set_if(specs,"tamanhoPolegadas",number(attr(mapping,"SCREEN_SIZE","DISPLAY_SIZE","Tamanho da tela")))
+        set_if(specs,"resolucao",resolution(attr(mapping,"SCREEN_RESOLUTION","RESOLUTION","Resolução","Resolução da tela")))
+        set_if(specs,"taxaAtualizacaoHz",integer(attr(mapping,"REFRESH_RATE","Taxa de atualização")))
+        set_if(specs,"tipoPainel",attr(mapping,"PANEL_TYPE","DISPLAY_TYPE","Tipo de painel","Tipo de tela"))
+        set_if(specs,"sistemaOperacional",attr(mapping,"OPERATING_SYSTEM","Sistema operacional"))
+        if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+    elif category in {"ASPIRADOR_PO", "ROBO_ASPIRADOR"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","POWER_WATTS","Potência","Potência máxima")))
+        set_if(specs,"capacidadeReservatorioLitros",number(attr(mapping,"DUST_CONTAINER_CAPACITY","Capacidade do reservatório","Capacidade")))
+        set_if(specs,"filtro",attr(mapping,"FILTER_TYPE","Tipo de filtro","Filtro"))
+        if category=="ROBO_ASPIRADOR":
+            set_if(specs,"potenciaSuccaoPa",integer(attr(mapping,"SUCTION_POWER","Poder de sucção","Potência de sucção")))
+            set_if(specs,"autonomiaMinutos",integer(attr(mapping,"BATTERY_LIFE","Autonomia","Duração da bateria")))
+            set_if(specs,"mapeamento",attr(mapping,"MAPPING_TYPE","Mapeamento","Sistema de mapeamento"))
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+    elif category in {"CAMERA", "CAMERA_ACAO", "CAMERA_SEGURANCA"}:
+        set_if(specs,"resolucaoMegapixels",number(attr(mapping,"CAMERA_RESOLUTION","RESOLUTION_MP","Resolução da câmera","Megapixels")))
+        set_if(specs,"resolucaoVideo",resolution(attr(mapping,"VIDEO_RESOLUTION","Resolução de vídeo","Resolução máxima de vídeo")))
+        set_if(specs,"sensor",attr(mapping,"SENSOR_TYPE","IMAGE_SENSOR","Tipo de sensor","Sensor"))
+        set_if(specs,"zoomOptico",number(attr(mapping,"OPTICAL_ZOOM","Zoom óptico")))
+        if category=="CAMERA_SEGURANCA":
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+            if re.search(r"vis[aã]o\s+noturna|night\s+vision", text or "", re.I): specs["visaoNoturna"]=True
+        if category=="CAMERA_ACAO":
+            if re.search(r"\bIP\d{2}\b|resistente\s+[aà]\s+[aá]gua|waterproof", text or "", re.I): specs["resistenciaAgua"]=True
+    elif category=="DRONE":
+        set_if(specs,"resolucaoCamera",resolution(attr(mapping,"VIDEO_RESOLUTION","CAMERA_RESOLUTION","Resolução da câmera")))
+        set_if(specs,"autonomiaMinutos",integer(attr(mapping,"FLIGHT_TIME","Tempo de voo","Autonomia")))
+        set_if(specs,"alcanceMetros",integer(attr(mapping,"MAX_RANGE","Alcance máximo","Alcance")))
+    elif category in {"SOUNDBAR", "HOME_THEATER", "CAIXA_DE_SOM", "SMART_SPEAKER"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","OUTPUT_POWER","Potência","Potência de saída")))
+        set_if(specs,"canais",attr(mapping,"CHANNELS","Canais","Configuração de canais"))
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+        if category=="SMART_SPEAKER":
+            set_if(specs,"assistente",attr(mapping,"VOICE_ASSISTANT","Assistente de voz"))
+            if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+    elif category in {"AIR_FRYER", "CAFETEIRA", "LIQUIDIFICADOR", "VENTILADOR", "CLIMATIZADOR"}:
+        set_if(specs,"potenciaWatts",integer(attr(mapping,"POWER","Potência")))
+        set_if(specs,"capacidadeLitros",number(attr(mapping,"CAPACITY","Capacidade")))
+        set_if(specs,"velocidades",integer(attr(mapping,"SPEEDS_NUMBER","Quantidade de velocidades","Velocidades")))
+    elif category in {"LAMPADA_INTELIGENTE", "TOMADA_INTELIGENTE", "FECHADURA_INTELIGENTE"}:
+        if re.search(r"\bWi[- ]?Fi\b", text or "", re.I): specs["wifi"]=True
+        if re.search(r"\bBluetooth\b", text or "", re.I): specs["bluetooth"]=True
+        if category=="LAMPADA_INTELIGENTE":
+            set_if(specs,"potenciaWatts",number(attr(mapping,"POWER","Potência")))
+            set_if(specs,"soquete",attr(mapping,"SOCKET_TYPE","Soquete","Base"))
+            if re.search(r"\bRGB\b", text or "", re.I): specs["rgb"]=True
+        elif category=="TOMADA_INTELIGENTE":
+            set_if(specs,"correnteAmperes",number(attr(mapping,"CURRENT","Corrente máxima","Corrente")))
+        else:
+            set_if(specs,"tipoAbertura",attr(mapping,"UNLOCK_METHOD","Método de abertura","Tipo de abertura"))
+            if re.search(r"biometr|impress[aã]o\s+digital", text or "", re.I): specs["biometria"]=True
+    elif category=="E_READER":
+        set_if(specs,"tamanhoTelaPolegadas",number(attr(mapping,"SCREEN_SIZE","Tamanho da tela")))
+        set_if(specs,"armazenamentoGb",capacity_gb(attr(mapping,"STORAGE_CAPACITY","Armazenamento","Memória interna")))
+        if re.search(r"\bIP\d{2}\b|resistente\s+[aà]\s+[aá]gua|waterproof", text or "", re.I): specs["resistenciaAgua"]=True
     return specs
 
 
