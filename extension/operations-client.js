@@ -15,8 +15,15 @@
     const { base, key } = await config()
     const { operation, ...fetchOptions } = options
     if (operation && (operation.base !== base || operation.owner !== await identity(key))) throw new Error('A configuração mudou. Retome o envio usando a configuração original.')
-    const response = await fetch(`${base}${path}`, { ...fetchOptions, headers: { 'Content-Type': 'application/json', 'X-API-Key': key, ...fetchOptions.headers }, signal: AbortSignal.timeout(20000) })
-    const body = await response.json()
+    let response
+    try { response = await fetch(`${base}${path}`, { ...fetchOptions, headers: { 'Content-Type': 'application/json', 'X-API-Key': key, ...fetchOptions.headers }, signal: AbortSignal.timeout(20000) }) }
+    catch (error) {
+      if (['TypeError', 'TimeoutError', 'AbortError'].includes(error.name)) throw new Error('Sem conexão com o agente. Use Retomar envio quando o serviço voltar.')
+      throw error
+    }
+    let body
+    try { body = await response.json() }
+    catch { const error = new Error('O agente está temporariamente indisponível. Use Retomar envio quando o serviço voltar.'); error.status = response.status; throw error }
     if (!response.ok) { const error = new Error(typeof body.detail === 'string' ? body.detail : body.detail?.mensagem || `Erro HTTP ${response.status}`); error.status = response.status; throw error }
     return body
   }

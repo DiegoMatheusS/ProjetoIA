@@ -2,6 +2,8 @@
 
 A extensão cria uma operação e consulta seu estado. Fechar a janela não interrompe o trabalho do servidor; **Retomar envio** recupera o resultado. Uma chave de idempotência impede cadastrar duas vezes ao repetir a mesma solicitação. O histórico é separado por dispositivo.
 
+Se o Railway estiver indisponível, inclusive com uma página HTML de erro do proxy, a extensão preserva o envio e mostra uma mensagem para retomar quando o serviço voltar. Os testes usam serviços simulados; disponibilidade e cadastro em produção precisam ser conferidos depois da recuperação do ambiente.
+
 Há cancelamento antes da gravação. Quando a gravação já começou, a operação precisa terminar antes de decidir sobre um reenvio. Uma reinicialização durante uma gravação deixa o resultado como interrompido e exige conferir o catálogo; não há repetição automática de uma mutação de resultado desconhecido.
 
 ## Armazenamento e configuração

@@ -20,6 +20,8 @@ com o catálogo do Criabyte continuam no servidor.
 
 O histórico mostra os envios deste dispositivo e permite abrir o resultado. O cancelamento é permitido antes da gravação. Não reenvie uma operação interrompida sem conferir se ela já chegou ao catálogo.
 
+Se o serviço estiver fora do ar, o envio fica pendente no navegador. Use **Retomar envio** quando voltar; a extensão preserva o identificador da solicitação.
+
 Resultados possíveis:
 
 - Hardware já existe + anúncio novo: cria somente a nova oferta.

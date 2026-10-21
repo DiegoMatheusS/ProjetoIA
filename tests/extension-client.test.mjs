@@ -72,3 +72,15 @@ test('dados recusados liberam um novo envio, sem manter uma operação impossív
   await assert.rejects(client(store, async () => ({ ok: false, status: 422, json: async () => ({ detail: 'Dados inválidos' }) })).send(body), /inválidos/)
   assert.equal(store.pendingImportOperation, undefined)
 })
+
+test('indisponibilidade com HTML preserva o envio para retomar quando o serviço voltar', async () => {
+  const store = settings()
+  const unavailable = client(store, async () => ({ status: 502, ok: false, json: async () => { throw new SyntaxError('HTML do proxy') } }))
+  await assert.rejects(unavailable.send(body), /temporariamente indisponível/)
+  const key = store.pendingImportOperation.requestKey
+  const restored = client(store, async (_, options) => {
+    if (options.method === 'POST') { assert.equal(options.headers['Idempotency-Key'], key); return response({ id: 'restored' }) }
+    return response({ estado: 'CONCLUIDA', resultado: { status: 'BUILD_E_OFERTA_CRIADOS' } })
+  })
+  assert.equal((await restored.resume()).status, 'BUILD_E_OFERTA_CRIADOS')
+})
