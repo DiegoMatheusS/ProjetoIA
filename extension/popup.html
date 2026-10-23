@@ -74,13 +74,21 @@
       <input id="apiUrl" type="url">
 
       <label for="apiKey">Chave da API</label>
-      <input id="apiKey" type="password" placeholder="Cole sua PRODUTO_IA_API_KEY">
+      <input id="apiKey" type="password" placeholder="Cole a chave deste dispositivo">
 
       <button id="saveConfig" class="secondary full" type="button">Salvar configuração</button>
       <small>Esses dados ficam salvos localmente no Chrome.</small>
     </details>
+    <section aria-label="Operações">
+      <p id="operationStage" role="status" aria-live="polite"></p>
+      <button id="resumeOperation" class="secondary" type="button">Retomar envio</button>
+      <button id="cancelOperation" class="secondary" type="button">Cancelar envio</button>
+      <button id="loadHistory" class="secondary" type="button">Histórico</button>
+      <ol id="operationHistory"></ol>
+    </section>
   </main>
 
+  <script src="operations-client.js"></script>
   <script src="preflight-hook.js"></script>
   <script src="popup.js"></script>
 </body>

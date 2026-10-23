@@ -171,7 +171,7 @@ def test_payload_final_barrier_keeps_only_backend_schema_and_safe_enums():
     spec = out["especificacaoProcessador"]
     assert spec["tiposMemoriaSuportados"] == ["DDR4", "DDR5"]
     assert spec["frequenciaBaseMhz"] == 4500
-    assert spec["dataLancamento"] is None
+    assert "dataLancamento" not in spec
     assert "campoQueNaoExiste" not in spec
 
 

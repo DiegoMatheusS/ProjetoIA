@@ -152,7 +152,7 @@ def test_link_flow_normalizes_null_boolean_and_memory_without_touching_offer(mon
 
 
 def test_existing_discovery_endpoint_invokes_auto_enrichment_without_new_route(monkeypatch):
-    monkeypatch.delenv("PRODUTO_IA_API_KEY", raising=False)
+    monkeypatch.setenv("PRODUTO_IA_API_KEY", "test-key")
     calls = []
 
     def fake_discover(*args, **kwargs):
@@ -166,7 +166,7 @@ def test_existing_discovery_endpoint_invokes_auto_enrichment_without_new_route(m
     monkeypatch.setattr(api._discovery_service, "discover", fake_discover)
     monkeypatch.setattr(api, "auto_enrich_discovery_result", fake_auto)
     req = api.HardwareDiscoveryRequest(categoria="PROCESSADOR", limite=1, enriquecer=True)
-    out = asyncio.run(api.descobrir_hardwares(req, None))
+    out = asyncio.run(api.descobrir_hardwares(req, "test-key"))
     assert calls == ["PROCESSADOR"]
     assert out["autoTeste"] is True
 

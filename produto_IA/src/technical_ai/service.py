@@ -1,9 +1,11 @@
-"""Orquestração de enriquecimento técnico.
+"""Orquestracao de enriquecimento tecnico.
 
 Fluxo atual:
-1. tenta primeiro a IA própria/fontes técnicas da Produto IA;
-2. usa OpenAI apenas para preencher lacunas restantes;
-3. se a OpenAI falhar, preserva e devolve o resultado da IA própria sem 503.
+1. o agente de pesquisa tecnica consulta fontes especializadas para o hardware selecionado;
+2. a OpenAI recebe a mesma pergunta do Meta AI somente para as lacunas restantes;
+3. se a primeira resposta avancar e ainda houver lacunas, uma segunda rodada focada pode ocorrer;
+4. falha posterior preserva todo avanco obtido nas rodadas anteriores;
+5. a ficha final passa por uma auditoria de qualidade antes de poder ser marcada como PRONTO.
 """
 from __future__ import annotations
 
@@ -11,7 +13,6 @@ from typing import Any
 
 from ..enrichment.quality import validate_specs
 from ..enrichment.core import (
-    apply_enrichment,
     required_missing_fields,
     technical_coverage,
     technical_missing_fields,
@@ -25,10 +26,12 @@ from ..extractors.dto_normalizer import (
 from ..extractors.meta_ai_whatsapp import (
     build_meta_ai_prompt,
     fallback_coverage_threshold,
-    merge_meta_ai_response_into_payload_detailed,
     should_use_meta_ai_fallback,
 )
-from .evidence import grounded_prompt, filter_grounded_response, collect_cited_sources
+from ..research_agent.agent import research_hardware_locally
+from ..research_agent.confidence import annotate_field_confidence
+from ..research_agent.quality_gate import evaluate_research_quality
+from .iterative_research import run_iterative_external_research
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
 
 
@@ -38,7 +41,7 @@ def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, A
     if not schema or not schema[1]:
         raise TechnicalAIProviderError(
             "PAYLOAD_INVALIDO",
-            "Categoria sem ficha técnica estruturada",
+            "Categoria sem ficha tecnica estruturada",
             status_code=400,
         )
     spec_field = schema[1]
@@ -48,34 +51,30 @@ def _coverage_state(category: str, payload: dict[str, Any]) -> tuple[dict[str, A
 
 
 def _local_enrich(category: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    safe, spec_field, state, _coverage, _missing = _coverage_state(category, payload)
-    result = {
-        "categoriaDetectada": category,
-        "nome": safe.get("nome"),
-        "especificacoesEncontradas": state["especificacoesEncontradas"],
-        "payloadParcialBackend": safe,
-    }
+    safe, _spec_field, _state, _coverage, _missing = _coverage_state(category, payload)
     try:
-        enriched = apply_enrichment(result, auto_mode=True)
+        return research_hardware_locally(
+            category,
+            safe,
+            name=safe.get("nome"),
+        )
     except Exception as exc:
+        # O agente local e uma etapa de pesquisa, nao um ponto unico de falha.
+        # Em erro inesperado, a OpenAI ainda recebe a mesma pergunta do Meta AI.
         return safe, {
             "executado": False,
-            "motivoIgnorado": "ERRO_ENRIQUECIMENTO_PROPRIO",
-            "erro": str(exc),
+            "motivoIgnorado": "ERRO_AGENTE_PESQUISA_TECNICA",
+            "erro": f"{type(exc).__name__}: {exc}",
             "camposPreenchidos": [],
             "fontesConsultadas": [],
+            "origemPorCampo": {},
+            "conflitos": [],
+            "agentePesquisa": {
+                "versao": 5,
+                "ativo": True,
+                "resultado": "ERRO_COM_FALLBACK_OPENAI",
+            },
         }
-
-    local_payload = enriched.get("payloadParcialBackend")
-    if not isinstance(local_payload, dict):
-        local_payload = dict(safe)
-        local_specs = enriched.get("especificacoesEncontradas")
-        if isinstance(local_specs, dict):
-            local_payload[spec_field] = local_specs
-
-    local_safe = normalize_hardware_payload_for_backend(category, local_payload)
-    info = enriched.get("enriquecimentoTecnico")
-    return local_safe, info if isinstance(info, dict) else {}
 
 
 def _local_sources(info: dict[str, Any]) -> list[str]:
@@ -87,6 +86,14 @@ def _local_sources(info: dict[str, Any]) -> list[str]:
         if source and source not in out:
             out.append(source)
     return out
+
+
+def _status_with_quality_gate(status: str, audit: dict[str, Any]) -> str:
+    # A auditoria nunca promove uma ficha. Ela apenas impede PRONTO silencioso
+    # quando um campo essencial veio de fonte fraca, sem proveniencia ou em conflito.
+    if status == "PRONTO" and not audit.get("podeMarcarPronto"):
+        return "PRECISA_REVISAO"
+    return status
 
 
 def _local_only_result(
@@ -102,6 +109,22 @@ def _local_only_result(
 ) -> dict[str, Any]:
     safe_after, _spec_field, state_after, coverage_after, missing_after = _coverage_state(category, safe_local)
     filled = list(dict.fromkeys(local_info.get("camposPreenchidos") or []))
+    conflicts = list(local_info.get("conflitos") or [])
+    payload_issues = list(registration_payload_issues(category, safe_after))
+    confidence_by_field = local_info.get("confiancaPorCampo") or {}
+    audit = evaluate_research_quality(
+        category,
+        original_payload=safe_initial,
+        final_payload=safe_after,
+        confidence_by_field=confidence_by_field,
+        conflicts=conflicts,
+        registration_issues=payload_issues,
+    )
+    status_after = _status_with_quality_gate(
+        technical_status(state_after, conflicts=conflicts),
+        audit,
+    )
+
     result: dict[str, Any] = {
         "utilizado": bool(filled),
         "provedor": "PROJETO_IA",
@@ -114,16 +137,22 @@ def _local_only_result(
         "camposPreenchidos": filled,
         "camposAusentes": missing_after,
         "camposObrigatoriosAusentes": required_missing_fields(state_after),
-        "conflitos": list(local_info.get("conflitos") or []),
+        "conflitos": conflicts,
         "especificacoesInterpretadas": {},
-        "statusFicha": technical_status(state_after, conflicts=local_info.get("conflitos") or []),
+        "statusFicha": status_after,
         "payload": safe_after,
-        "payloadValidoParaCadastro": not bool(registration_payload_issues(category, safe_after)),
-        "problemasPayload": list(registration_payload_issues(category, safe_after)),
+        "payloadValidoParaCadastro": not bool(payload_issues),
+        "problemasPayload": payload_issues,
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
         "origemPorCampo": local_info.get("origemPorCampo") or {},
+        "confiancaPorCampo": confidence_by_field,
+        "confiancaMediaPesquisa": local_info.get("confiancaMediaPesquisa"),
         "camposIaNaoConfirmados": local_info.get("camposIaNaoConfirmados") or [],
+        "rodadasOpenAI": [],
+        "auditoriaPesquisa": audit,
+        "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+        "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
     }
     if provider_error is not None:
         result["fallbackExternoFalhou"] = True
@@ -134,7 +163,7 @@ def _local_only_result(
             "statusProvedor": provider_error.provider_status_code,
         }
         result["mensagem"] = (
-            "A OpenAI não pôde completar a ficha. Foram preservados os dados obtidos pela IA própria."
+            "A OpenAI nao pode completar a ficha. Foram preservados os dados obtidos pela pesquisa tecnica."
         )
     elif not missing_after:
         result["motivo"] = "FICHA_COMPLETADA_PELA_IA_PROPRIA"
@@ -165,7 +194,7 @@ def enrich_hardware_with_external_ai(
     if only_fill_gaps is not True:
         raise TechnicalAIProviderError(
             "PAYLOAD_INVALIDO",
-            "somentePreencheLacunas deve permanecer true para enriquecimento automático",
+            "somentePreencheLacunas deve permanecer true para enriquecimento automatico",
             status_code=400,
         )
 
@@ -173,6 +202,15 @@ def enrich_hardware_with_external_ai(
     status_before = technical_status(state_initial)
 
     if not missing_before:
+        payload_issues = list(registration_payload_issues(category, safe_initial))
+        audit = evaluate_research_quality(
+            category,
+            original_payload=safe_initial,
+            final_payload=safe_initial,
+            confidence_by_field={},
+            conflicts=[],
+            registration_issues=payload_issues,
+        )
         result = {
             "utilizado": False,
             "motivo": "FICHA_SEM_LACUNAS",
@@ -188,14 +226,20 @@ def enrich_hardware_with_external_ai(
             "camposObrigatoriosAusentes": required_missing_fields(state_initial),
             "conflitos": [],
             "especificacoesInterpretadas": {},
-            "statusFicha": status_before,
+            "statusFicha": _status_with_quality_gate(status_before, audit),
             "payload": safe_initial,
+            "payloadValidoParaCadastro": not bool(payload_issues),
+            "problemasPayload": payload_issues,
+            "rodadasOpenAI": [],
+            "auditoriaPesquisa": audit,
+            "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+            "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
         }
         if hardware_id is not None:
             result["hardwareId"] = hardware_id
         return result
 
-    # 1) IA própria / fontes técnicas primeiro.
+    # 1) Agente local: cache seguro, fontes especializadas, busca focada e validacao.
     safe_local, local_info = _local_enrich(category, safe_initial)
     safe_local, _local_spec_field, state_local, _coverage_local, missing_local = _coverage_state(category, safe_local)
 
@@ -210,14 +254,20 @@ def enrich_hardware_with_external_ai(
             hardware_id=hardware_id,
         )
 
-    # 2) OpenAI somente para lacunas que permaneceram.
-    prompt, missing_from_prompt = build_technical_ai_prompt(category, name, safe_local)
-    prompt = grounded_prompt(prompt, safe_local, local_info)
+    # 2) OpenAI: mesma pergunta Campo: valor do Meta AI. Pode fazer uma segunda
+    # rodada somente quando a primeira realmente preencheu campos e ainda ha lacunas.
     provider = get_technical_ai_provider(provider_name or "OPENAI")
-    try:
-        external = provider.enrich(prompt)
-    except TechnicalAIProviderError as exc:
-        # 3) Falha externa nunca derruba o botão Completar com IA.
+    external_result = run_iterative_external_research(
+        provider=provider,
+        category=category,
+        name=name,
+        payload=safe_local,
+        local_info=local_info,
+    )
+
+    # Falha antes de qualquer avanco externo preserva exatamente o comportamento
+    # tolerante anterior: devolve a pesquisa local em vez de gerar 503.
+    if external_result.provider_error is not None and not external_result.filled_fields:
         return _local_only_result(
             category=category,
             name=name,
@@ -225,37 +275,29 @@ def enrich_hardware_with_external_ai(
             safe_local=safe_local,
             local_info=local_info,
             coverage_before=coverage_before,
-            provider_error=exc,
+            provider_error=external_result.provider_error,
             hardware_id=hardware_id,
         )
 
-    try:
-        collect_cited_sources(category, safe_local, external.sources, local_info)
-    except Exception as exc:
-        local_info["erroVerificacaoCitacoes"] = type(exc).__name__
-    grounded_text, ai_provenance, rejected = filter_grounded_response(category, external.text, local_info)
-    local_info["camposIaNaoConfirmados"] = rejected
-    safe_after, external_filled, parsed_specs, external_conflicts = merge_meta_ai_response_into_payload_detailed(
-        category,
-        safe_local,
-        grounded_text,
-    )
-    safe_after = normalize_hardware_payload_for_backend(category, safe_after)
-    specs_after, consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
+    safe_after = normalize_hardware_payload_for_backend(category, external_result.payload)
+    specs_after, final_consistency_issues = validate_specs(category, safe_after.get(spec_field) or {})
     safe_after[spec_field] = specs_after
-    rejected.extend(consistency_issues)
-    external_filled = [field for field in external_filled if specs_after.get(field) not in (None, "", [])]
+    external_filled = [
+        field
+        for field in external_result.filled_fields
+        if specs_after.get(field) not in (None, "", [])
+    ]
+    rejected = list(external_result.rejected or []) + list(final_consistency_issues or [])
     state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
     coverage_after = technical_coverage(state_after)
     missing_after = technical_missing_fields(state_after)
     local_conflicts = list(local_info.get("conflitos") or [])
-    conflicts = local_conflicts + list(external_conflicts or [])
-    status_after = technical_status(state_after, conflicts=conflicts)
+    conflicts = local_conflicts + list(external_result.conflicts or [])
 
     local_filled = list(local_info.get("camposPreenchidos") or [])
-    filled = list(dict.fromkeys(local_filled + list(external_filled or [])))
+    filled = list(dict.fromkeys(local_filled + external_filled))
 
-    if not parsed_specs and not local_filled:
+    if not external_result.parsed_specs and not local_filled and not external_filled:
         return _local_only_result(
             category=category,
             name=name,
@@ -264,14 +306,38 @@ def enrich_hardware_with_external_ai(
             local_info=local_info,
             coverage_before=coverage_before,
             provider_error=TechnicalAIProviderError(
-                "EVIDENCIA_NAO_CONFIRMADA" if rejected else "PARSER_SEM_DADOS",
-                "A resposta não trouxe campos técnicos com evidência verificável; os dados coletados foram preservados",
+                "PARSER_SEM_DADOS",
+                "A resposta da OpenAI nao trouxe campos tecnicos reconheciveis; os dados coletados foram preservados",
                 status_code=422,
             ),
             hardware_id=hardware_id,
         )
 
-    payload_issues = registration_payload_issues(category, safe_after)
+    origins = {
+        **(local_info.get("origemPorCampo") or {}),
+        **(external_result.provenance or {}),
+    }
+    confidence = annotate_field_confidence(
+        {
+            "origemPorCampo": origins,
+            "conflitos": conflicts,
+        }
+    )
+
+    payload_issues = list(registration_payload_issues(category, safe_after))
+    audit = evaluate_research_quality(
+        category,
+        original_payload=safe_initial,
+        final_payload=safe_after,
+        confidence_by_field=confidence.get("confiancaPorCampo") or {},
+        conflicts=conflicts,
+        registration_issues=payload_issues,
+    )
+    status_after = _status_with_quality_gate(
+        technical_status(state_after, conflicts=conflicts),
+        audit,
+    )
+
     threshold = fallback_coverage_threshold()
     meta_recommended = should_use_meta_ai_fallback(coverage_after, threshold=threshold)
     meta_fallback = {
@@ -291,8 +357,8 @@ def enrich_hardware_with_external_ai(
 
     result: dict[str, Any] = {
         "utilizado": bool(filled),
-        "provedor": external.provider,
-        "modelo": external.model,
+        "provedor": external_result.provider or "OPENAI",
+        "modelo": external_result.model,
         "categoria": category,
         "nome": name or safe_after.get("nome"),
         "somentePreencheLacunas": True,
@@ -302,20 +368,37 @@ def enrich_hardware_with_external_ai(
         "camposAusentes": missing_after,
         "camposObrigatoriosAusentes": required_missing_fields(state_after),
         "conflitos": conflicts,
-        "especificacoesInterpretadas": parsed_specs,
+        "especificacoesInterpretadas": external_result.parsed_specs,
         "statusFicha": status_after,
         "payload": safe_after,
         "payloadValidoParaCadastro": not bool(payload_issues),
-        "problemasPayload": list(payload_issues),
-        "promptUtilizado": prompt,
-        "camposSolicitados": missing_from_prompt,
-        "fontesDeclaradas": external.sources,
-        "origemPorCampo": {**(local_info.get("origemPorCampo") or {}), **ai_provenance},
+        "problemasPayload": payload_issues,
+        # Mantidos por compatibilidade com o frontend/diagnostico existente.
+        "promptUtilizado": external_result.first_prompt,
+        "camposSolicitados": external_result.first_requested_fields,
+        "fontesDeclaradas": external_result.sources,
+        "origemPorCampo": origins,
+        "confiancaPorCampo": confidence.get("confiancaPorCampo") or {},
+        "confiancaMediaPesquisa": confidence.get("confiancaMediaPesquisa"),
         "camposIaNaoConfirmados": rejected,
         "fontesIaPropria": _local_sources(local_info),
         "enriquecimentoProprio": local_info,
+        "rodadasOpenAI": external_result.rounds,
         "metaAiWhatsappFallback": meta_fallback,
+        "auditoriaPesquisa": audit,
+        "pesquisaConfiavel": bool(audit.get("podeMarcarPronto")),
+        "camposParaRevisao": list(audit.get("camposParaRevisao") or []),
     }
+
+    # Se a primeira rodada funcionou e a segunda falhou, o avanco nao e descartado.
+    if external_result.provider_error is not None and external_filled:
+        result["openAiInterrompidaAposAvanco"] = True
+        result["erroProvedorParcial"] = {
+            "codigo": external_result.provider_error.code,
+            "mensagem": external_result.provider_error.message,
+            "statusProvedor": external_result.provider_error.provider_status_code,
+        }
+
     if hardware_id is not None:
         result["hardwareId"] = hardware_id
         result["payloadOriginal"] = safe_initial

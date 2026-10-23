@@ -41,14 +41,8 @@
       // O servidor v2 ainda consegue completar via coleta/IA sem a captura local.
     }
 
-    const v2Url = url.replace(
-      /\/extensao\/importar-oferta$/,
-      "/extensao/importar-oferta-v2",
-    );
-    const response = await nativeFetch(v2Url, {
-      ...init,
-      body: JSON.stringify(body),
-    });
+    const result = await window.CriaByteOperations.send(body);
+    const response = new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
     let data;
     try {

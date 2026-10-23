@@ -158,11 +158,18 @@ def _call_provider_with_budget(
     except Exception:
         response_cache = None
 
-    enrich_with_budget = getattr(provider, "enrich_with_budget", None)
-    if callable(enrich_with_budget):
-        response = enrich_with_budget(prompt, budget_seconds=budget_seconds)
-    else:
-        response = provider.enrich(prompt)
+    from ..usage import reserve, finish
+    identifier = reserve(provider)
+    try:
+        enrich_with_budget = getattr(provider, "enrich_with_budget", None)
+        if callable(enrich_with_budget):
+            response = enrich_with_budget(prompt, budget_seconds=budget_seconds)
+        else:
+            response = provider.enrich(prompt)
+    except Exception:
+        finish(identifier)
+        raise
+    finish(identifier, response)
 
     if response_cache is not None:
         try:

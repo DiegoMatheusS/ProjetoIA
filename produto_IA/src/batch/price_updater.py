@@ -1,4 +1,5 @@
 import csv
+import math
 import json
 from pathlib import Path
 
@@ -11,7 +12,8 @@ def _float_or_none(value):
     if value in (None, ""):
         return None
     try:
-        return float(str(value).replace(".", "").replace(",", ".")) if isinstance(value, str) and "," in value else float(value)
+        number = float(str(value).replace(".", "").replace(",", ".")) if isinstance(value, str) and "," in value else float(value)
+        return number if math.isfinite(number) and number > 0 else None
     except (TypeError, ValueError):
         return None
 

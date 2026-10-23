@@ -25,7 +25,7 @@ from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_hardware_payload_for_backend
 from ..extractors.meta_ai_whatsapp import fallback_coverage_threshold
 from .providers import TechnicalAIProviderError, get_technical_ai_provider
-from .service import enrich_hardware_with_external_ai
+from ..research_agent.intake import research_verified_hardware as enrich_hardware_with_external_ai
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -133,21 +133,8 @@ def maybe_auto_enrich_hardware(
     if not automatic_technical_ai_enabled():
         base["motivo"] = "IA_TECNICA_AUTOMATICA_DESABILITADA"
         return base
-    if coverage_before >= threshold:
-        base["motivo"] = "COBERTURA_NORMAL_SUFICIENTE"
-        return base
     if not missing_before:
         base["motivo"] = "FICHA_SEM_LACUNAS"
-        return base
-
-    try:
-        provider = get_technical_ai_provider(selected_provider)
-    except TechnicalAIProviderError as exc:
-        base["motivo"] = exc.code
-        base["erro"] = {"codigo": exc.code, "mensagem": exc.message}
-        return base
-    if not provider.configured:
-        base["motivo"] = "PROVEDOR_NAO_CONFIGURADO"
         return base
 
     try:
@@ -212,16 +199,6 @@ def auto_enrich_discovery_result(category: str, result: dict[str, Any]) -> dict[
         configured = bool(provider.configured)
     except TechnicalAIProviderError:
         configured = False
-    if not configured:
-        result["iaTecnicaAutomatica"] = {
-            "habilitada": True,
-            "provedor": provider_name,
-            "provedorConfigurado": False,
-            "limiarCobertura": round(threshold, 4),
-            "tentados": 0,
-            "enriquecidos": 0,
-        }
-        return result
 
     eligible: list[tuple[int, dict[str, Any], dict[str, Any], float]] = []
     max_items = automatic_technical_ai_max_items()
@@ -320,7 +297,7 @@ def auto_enrich_discovery_result(category: str, result: dict[str, Any]) -> dict[
     result["iaTecnicaAutomatica"] = {
         "habilitada": True,
         "provedor": provider_name,
-        "provedorConfigurado": True,
+        "provedorConfigurado": configured,
         "limiarCobertura": round(threshold, 4),
         "limiteItensPorBusca": max_items,
         "concorrencia": workers,
@@ -334,14 +311,14 @@ def auto_enrich_discovery_result(category: str, result: dict[str, Any]) -> dict[
 def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
     """Aplica a mesma regra ao fluxo histórico ``/analisar`` por URL.
 
-    O bloco comercial/oferta nunca é alterado. O payload de Hardware é sempre
-    normalizado antes de sair, mesmo se o Gemini estiver indisponível.
+    O bloco comercial/oferta nunca é alterado. Toda categoria com ficha técnica
+    é normalizada antes de sair, inclusive produtos e notebooks.
     """
     if not isinstance(result, dict):
         return result
     category = str(result.get("categoriaDetectada") or "").strip().upper()
     schema = SCHEMAS.get(category)
-    if not schema or schema[0] != "HARDWARE" or not schema[1]:
+    if not schema or not schema[1]:
         return result
 
     spec_field = schema[1]
@@ -369,9 +346,20 @@ def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
     result["camposIaNaoConfirmados"] = outcome.get("camposIaNaoConfirmados") or []
     if outcome.get("utilizado") and isinstance(outcome.get("payload"), dict):
         safe_after = normalize_hardware_payload_for_backend(category, outcome["payload"])
-        # Pesquisa técnica não reescreve a descrição do vendedor.
-        safe_after["descricao"] = safe_before.get("descricao")
         specs_after = safe_after.get(spec_field) if isinstance(safe_after.get(spec_field), dict) else {}
+        # Celulares usam um resumo curto dos dados confirmados; demais produtos
+        # preservam a descrição coletada do anúncio.
+        if category == "CELULAR":
+            from ..main import _phone_description
+            safe_after["descricao"] = _phone_description(specs_after)
+            result["descricaoAnuncio"] = safe_after["descricao"]
+        else:
+            safe_after["descricao"] = safe_before.get("descricao")
+        if schema[0] == "PRODUTO":
+            safe_after["metadados"] = {
+                **(safe_before.get("metadados") or {}),
+                "especificacoesEncontradas": dict(specs_after),
+            }
         state_after = {"categoriaDetectada": category, "especificacoesEncontradas": specs_after}
         result["payloadParcialBackend"] = safe_after
         result["especificacoesEncontradas"] = specs_after

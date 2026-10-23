@@ -1,5 +1,7 @@
 # Extensão Criabyte — envio de ofertas
 
+Versão **0.3.0**. [Guia de implantação e configuração](../docs/platform-upgrade-20261021.md).
+
 Extensão Manifest V3 focada no Google Chrome. A extensão envia a página do
 produto e o link afiliado para a Produto IA; toda a identificação e integração
 com o catálogo do Criabyte continuam no servidor.
@@ -14,6 +16,11 @@ com o catálogo do Criabyte continuam no servidor.
 5. **Página do produto** recebe automaticamente a aba que estava ativa.
 6. Cole o **Link afiliado**.
 7. Clique em **Enviar para Criabyte**.
+8. Acompanhe a etapa na seção de operações. Se fechar a janela, use **Retomar envio** ao reabri-la. O trabalho continua no servidor.
+
+O histórico mostra os envios deste dispositivo e permite abrir o resultado. O cancelamento é permitido antes da gravação. Não reenvie uma operação interrompida sem conferir se ela já chegou ao catálogo.
+
+Se o serviço estiver fora do ar, o envio fica pendente no navegador. Use **Retomar envio** quando voltar; a extensão preserva o identificador da solicitação.
 
 Resultados possíveis:
 
@@ -41,12 +48,15 @@ A URL de produção já vem preenchida:
 
 `https://projetoia-production.up.railway.app`
 
-Só é necessário informar `PRODUTO_IA_API_KEY` uma vez. A configuração fica
-salva no armazenamento local do Chrome.
+No painel administrativo do CriaByte, abra **Chaves da extensão**, crie uma
+chave com o nome deste computador e cole-a em **Configuração**. Ela aparece
+apenas na criação, vale por um ano e pode ser revogada no painel. A configuração
+fica salva no armazenamento local do Chrome.
 
-A extensão não recebe login ou senha administrativa do Criabyte. A comunicação
-Produto IA → backend usa uma rota interna autenticada pela mesma
-`PRODUTO_IA_API_KEY` configurada nos dois serviços.
+A comunicação Produto IA → backend usa a chave interna `PRODUTO_IA_API_KEY`
+configurada nos dois servidores. Ela é independente da chave do dispositivo.
+A primeira chave própria criada encerra a compatibilidade com a chave antiga
+do serviço na extensão. Atualize as demais instalações nesse momento.
 
 ## Instalar/atualizar localmente no Chrome
 
@@ -60,9 +70,12 @@ Produto IA → backend usa uma rota interna autenticada pela mesma
 
 O endpoint usado pelo hook de captura local é:
 
-`POST /extensao/importar-oferta-v2`
+`POST /extensao/operacoes`, seguido de `GET /extensao/operacoes/:id`.
 
-O endpoint anterior `POST /extensao/importar-oferta` continua suportado, inclusive para PC montado e revisão dos campos M.2.
+Uma chave de idempotência é preservada quando a rede falha, evitando duplicação
+ao retomar a criação. A fila exige um volume persistente no servidor.
+
+Os endpoints síncronos anteriores continuam suportados para integrações existentes.
 
 ## Ícone
 

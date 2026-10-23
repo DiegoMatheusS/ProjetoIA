@@ -577,18 +577,7 @@ els.send.addEventListener("click", async () => {
       throw new Error(message);
     }
 
-    renderPreview(data?.previa);
-
-    const warning = data?.status === "REVISAO_NECESSARIA";
-    if (warning) {
-      renderMissingFields(data?.camposFaltantes);
-      showResult(resultMessage(data), "warning");
-      return;
-    }
-
-    showResult(resultMessage(data), "success");
-    clearMissingFields();
-    resetManualPrice();
+    applyOperationResult(data);
   } catch (error) {
     showResult(
       error?.message || "Falha ao enviar a oferta para o Criabyte.",
@@ -615,3 +604,57 @@ els.missingFields?.addEventListener("keydown", (event) => {
 });
 
 Promise.all([loadConfig(), loadCurrentTab()]).catch(() => {});
+
+function applyOperationResult(data) {
+  if (data?.envio) {
+    els.productUrl.value = data.envio.urlProduto || els.productUrl.value;
+    els.affiliateUrl.value = data.envio.urlAfiliada || els.affiliateUrl.value;
+  }
+  if (data?.status === "PRECO_NAO_IDENTIFICADO") { revealManualPrice(data.motivo || "Informe o preço do anúncio para continuar."); return; }
+    renderPreview(data?.previa);
+
+    const warning = data?.status === "REVISAO_NECESSARIA";
+    if (warning) {
+      renderMissingFields(data?.camposFaltantes);
+      showResult(resultMessage(data), "warning");
+      return;
+    }
+
+    showResult(resultMessage(data), "success");
+    clearMissingFields();
+    resetManualPrice();
+}
+const stageNames = { AGUARDANDO: 'Aguardando na fila', VERIFICANDO_CATALOGO: 'Conferindo o catálogo', COLETANDO_E_PESQUISANDO: 'Coletando anúncio e pesquisando a ficha', SALVANDO: 'Salvando no CriaByte', CONCLUIDA: 'Concluído', FALHOU: 'Falhou', CANCELADA: 'Cancelado', INTERROMPIDA: 'Interrompido: confira o catálogo' };
+window.addEventListener('criabyte:operation', event => {
+  document.getElementById('operationStage').textContent = stageNames[event.detail.etapa] || event.detail.etapa;
+});
+document.getElementById('resumeOperation').addEventListener('click', async () => {
+  if (els.send.disabled) return;
+  els.send.disabled = true;
+  try { applyOperationResult(await window.CriaByteOperations.resume()); }
+  catch (error) { showResult(error.message, 'error'); }
+  finally { els.send.disabled = false; updateSendLabel(); }
+});
+document.getElementById('cancelOperation').addEventListener('click', async () => {
+  try { await window.CriaByteOperations.cancel(); }
+  catch (error) { showResult(error.message, 'warning'); }
+});
+document.getElementById('loadHistory').addEventListener('click', async () => {
+  try {
+    const rows = await window.CriaByteOperations.history();
+    const list = document.getElementById('operationHistory');
+    list.replaceChildren();
+    for (const row of rows) {
+      const item = document.createElement('li');
+      item.textContent = `${new Date(row.criadaEm * 1000).toLocaleString('pt-BR')} — ${stageNames[row.etapa] || row.estado}`;
+      if (row.resultado) {
+        const view = document.createElement('button');
+        view.type = 'button';
+        view.textContent = 'Ver resultado';
+        view.addEventListener('click', () => applyOperationResult({ ...row.resultado, envio: row.envio }));
+        item.appendChild(view);
+      }
+      list.appendChild(item);
+    }
+  } catch (error) { showResult(error.message, 'error'); }
+});

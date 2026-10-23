@@ -130,7 +130,7 @@ def test_notebook_and_phone():
         attr("Memória interna", "256 GB", "INTERNAL_MEMORY"),
         attr("Capacidade da bateria", "5000 mAh", "BATTERY_CAPACITY"),
     ]
-    phone = extract_specs("CELULAR", phone_attrs, "Smartphone 5G NFC")
+    phone = extract_specs("CELULAR", phone_attrs, "Smartphone 5G com NFC")
     assert phone["ramGb"] == 12
     assert phone["armazenamentoGb"] == 256
     assert phone["bateriaMah"] == 5000

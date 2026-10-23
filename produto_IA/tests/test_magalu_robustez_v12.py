@@ -205,7 +205,7 @@ def test_v12_captura_local_incompleta_e_detectada():
     assert raw["error"] == "MAGALU_CAPTURA_LOCAL_INCOMPLETA"
 
 
-def test_v12_produto_fora_das_categorias_nao_vira_hardware():
+def test_v12_liquidificador_e_produto_comum_sem_hardware():
     raw = _raw_base(
         title="Liquidificador Mondial 3 Velocidades",
         brand="Mondial",
@@ -215,10 +215,10 @@ def test_v12_produto_fora_das_categorias_nao_vira_hardware():
         attributes_text="",
     )
     result = build_result(raw)
-    assert result["categoriaDetectada"] is None
-    assert result["tipoCadastro"] is None
-    assert result["erro"] == "PRODUTO_FORA_DAS_CATEGORIAS_CRIABYTE"
-    assert result["analiseProduto"]["categoriaSuportada"] is False
+    assert result["categoriaDetectada"] == "LIQUIDIFICADOR"
+    assert result["tipoCadastro"] == "PRODUTO"
+    assert result["erro"] is None
+    assert result["analiseProduto"]["categoriaSuportada"] is True
 
 
 def test_v12_mesmo_produto_com_nomes_diferentes_gera_mesmas_chaves():

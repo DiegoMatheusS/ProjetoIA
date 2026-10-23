@@ -3,6 +3,7 @@ from src.enrichment.core import complete_specs, technical_coverage
 from src.enrichment.identity import text_matches_identity
 from src.extractors.backend_schemas import SCHEMAS
 from src.extractors.ml_specs import extract_specs
+from src.extractors.dto_normalizer import normalize_hardware_payload_for_backend
 
 
 def test_v14_20_3_ram_catalog_extracts_kit_capacity_from_real_shape():
@@ -165,6 +166,53 @@ def test_v14_20_3_fan_generic_parser_extracts_main_fields():
     assert specs["conector"] == "PWM_4_PINOS"
     assert specs["pwm"] is True
     assert specs["argb"] is True
+
+
+def test_v14_20_3_fan_pwm_connector_yes_infers_required_backend_enum():
+    attrs = [
+        {"name": "Fan Size", "value_name": "140 mm"},
+        {"name": "PWM Connector", "value_name": "Yes"},
+        {"name": "Fan RPM", "value_name": "350 - 1800 RPM"},
+        {"name": "Airflow", "value_name": "74.39 CFM"},
+    ]
+    specs = extract_specs(
+        "VENTOINHA",
+        attrs,
+        "Fractal Design Momentum 14 RGB White ARGB",
+    )
+    assert specs["tamanhoMm"] == 140
+    assert specs["pwm"] is True
+    assert specs["conector"] == "PWM_4_PINOS"
+
+
+def test_v14_20_3_fan_payload_recovers_null_connector_when_pwm_is_confirmed():
+    payload = normalize_hardware_payload_for_backend(
+        "VENTOINHA",
+        {
+            "categoria": "VENTOINHA",
+            "nome": "Fractal Design Momentum 14 RGB White",
+            "marca": "fractal design",
+            "modelo": "Momentum 14 RGB White",
+            "especificacaoVentoinha": {
+                "tamanhoMm": 140,
+                "espessuraMm": 25,
+                "rpmMinima": 350,
+                "rpmMaxima": 1800,
+                "fluxoArCfm": 74.39,
+                "pressaoEstaticaMmH2o": 2.45,
+                "ruidoDb": 28,
+                "conector": None,
+                "tensaoVolts": 12,
+                "correnteAmperes": 0.17,
+                "pwm": True,
+                "rgb": True,
+                "argb": True,
+                "fluxoReverso": False,
+            },
+        },
+    )
+
+    assert payload["especificacaoVentoinha"]["conector"] == "PWM_4_PINOS"
 
 
 def test_v14_20_3_ram_identity_accepts_catalog_suffix_when_page_confirms_same_sku():

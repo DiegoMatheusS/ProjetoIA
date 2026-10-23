@@ -19,12 +19,45 @@ def _extract_list(payload, *keys):
     return []
 
 
-class CriaByteClient:
-    """Cliente de leitura do backend real do CriaByte.
+def _error_detail(payload):
+    """Extrai a mensagem legível tanto do Nest puro quanto do filtro do CriaByte."""
+    if payload is None:
+        return None
+    if isinstance(payload, list):
+        parts = [str(item).strip() for item in payload if str(item).strip()]
+        return "; ".join(parts) or None
+    if not isinstance(payload, dict):
+        text = str(payload).strip()
+        return text or None
 
-    A v14 usa este cliente para CONSULTAR o banco e montar um plano. Nenhuma
-    alteração é aplicada automaticamente. A autenticação do backend atual é
-    feita por cookie de sessão, então aceitamos um token de sessão já emitido
+    for key in ("mensagem", "message", "detail", "error"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            if parts:
+                return "; ".join(parts)
+        elif isinstance(value, dict):
+            nested = _error_detail(value)
+            if nested:
+                return nested
+        elif value not in (None, ""):
+            return str(value).strip()
+
+    detalhes = payload.get("detalhes")
+    if isinstance(detalhes, dict) and detalhes:
+        return "; ".join(
+            f"{key}: {value}" for key, value in detalhes.items()
+        )[:1000]
+    return None
+
+
+class CriaByteClient:
+    """Cliente HTTP do backend real do CriaByte.
+
+    As rotas de leitura continuam servindo ao planejador da v14. As rotas de
+    escrita abaixo são usadas apenas por fluxos administrativos explícitos,
+    como a extensão de importação de ofertas. A autenticação do backend atual
+    é feita por cookie de sessão, então aceitamos um token de sessão já emitido
     ou login administrativo por e-mail/senha via variáveis de ambiente.
     """
 
@@ -36,7 +69,14 @@ class CriaByteClient:
         cookie_name=None,
         timeout=None,
     ):
-        self.base_url = (base_url or os.getenv("CRIABYTE_API_URL") or "https://api.criabyte.com.br").rstrip("/") + "/"
+        api_base = (
+            base_url
+            or os.getenv("CRIABYTE_API_URL")
+            or "https://api.criabyte.com.br"
+        ).rstrip("/")
+        if not api_base.endswith("/api"):
+            api_base = f"{api_base}/api"
+        self.base_url = f"{api_base}/"
         self.session = session or requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
@@ -60,11 +100,12 @@ class CriaByteClient:
         if response.status_code >= 400:
             detail = None
             try:
-                data = response.json()
-                detail = data.get("message") if isinstance(data, dict) else data
+                detail = _error_detail(response.json())
             except ValueError:
-                detail = response.text[:500]
-            raise CriaByteApiError(f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}")
+                detail = response.text[:500].strip() or None
+            raise CriaByteApiError(
+                f"CriaByte HTTP {response.status_code}: {detail or 'erro sem detalhe'}"
+            )
 
         if not response.content:
             return None
@@ -72,6 +113,14 @@ class CriaByteClient:
             return response.json()
         except ValueError as exc:
             raise CriaByteApiError("O CriaByte retornou uma resposta que não é JSON.") from exc
+
+    def _internal_key(self, api_key=None):
+        key = (api_key or os.getenv("PRODUTO_IA_API_KEY") or "").strip()
+        if not key:
+            raise CriaByteApiError(
+                "PRODUTO_IA_API_KEY não configurada para a integração interna."
+            )
+        return key
 
     def login(self, email=None, senha=None):
         email = email or os.getenv("CRIABYTE_ADMIN_EMAIL")
@@ -107,6 +156,53 @@ class CriaByteClient:
 
     def listar_categorias(self):
         return _extract_list(self._request("GET", "/admin/categorias-produto"), "categorias", "items")
+
+    def buscar_item_extensao(self, dados, api_key=None):
+        key = self._internal_key(api_key)
+        return self._request(
+            "POST",
+            "/interno/produto-ia/extensao/buscar-item",
+            json=dados,
+            headers={"X-API-Key": key},
+        )
+
+    def importar_oferta_extensao(self, dados, api_key=None):
+        from ..operations import stage
+        stage("SALVANDO")
+        key = self._internal_key(api_key)
+        return self._request(
+            "POST",
+            "/interno/produto-ia/extensao/importar-oferta",
+            json=dados,
+            headers={"X-API-Key": key},
+        )
+
+    def cadastrar_hardware_descoberto(self, payload, id_temporario=None):
+        self.ensure_authenticated()
+        body = {"payload": payload}
+        if id_temporario:
+            body["idTemporario"] = id_temporario
+        return self._request("POST", "/admin/hardwares/descobrir/cadastrar", json=body)
+
+    def criar_produto_de_hardware(self, hardware_id, dados=None):
+        self.ensure_authenticated()
+        return self._request(
+            "POST",
+            f"/admin/produtos/de-hardware/{int(hardware_id)}",
+            json=dados or {},
+        )
+
+    def criar_oferta(self, dados):
+        self.ensure_authenticated()
+        return self._request("POST", "/admin/ofertas", json=dados)
+
+    def atualizar_oferta(self, oferta_id, dados):
+        self.ensure_authenticated()
+        return self._request("PATCH", f"/admin/ofertas/{int(oferta_id)}", json=dados)
+
+    def criar_parceiro(self, dados):
+        self.ensure_authenticated()
+        return self._request("POST", "/admin/ofertas/parceiros", json=dados)
 
     def snapshot(self):
         self.ensure_authenticated()

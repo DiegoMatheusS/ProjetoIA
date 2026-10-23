@@ -1,9 +1,12 @@
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -16,8 +19,158 @@ from .extractors.ml_specs import extract_specs
 from .extractors.dto_normalizer import normalize_specs_for_backend
 from .utils.data_handler import DataHandler
 from .utils.sites import detect_site
+from .utils.normalizers import to_float
 
 load_dotenv()
+
+
+def _humanize_spec_key(key):
+    text = str(key or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    text = text.replace("_", " ").strip()
+    aliases = {
+        "tdp watts": "TDP",
+        "clock base ghz": "Clock base",
+        "clock boost ghz": "Clock boost",
+        "nucleos": "Núcleos",
+        "threads": "Threads",
+        "socket cpu": "Socket",
+        "socket": "Socket",
+        "memoria gb": "Memória",
+        "armazenamento gb": "Armazenamento",
+        "tamanho tela polegadas": "Tela",
+        "taxa atualizacao hz": "Taxa de atualização",
+        "potencia watts": "Potência",
+        "autonomia minutos": "Autonomia",
+    }
+    normalized = text.casefold()
+    return aliases.get(normalized) or text[:1].upper() + text[1:]
+
+
+def _format_spec_value(key, value):
+    if value in (None, "", []):
+        return None
+    if isinstance(value, bool):
+        return "Sim" if value else "Não"
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return ", ".join(parts[:8]) or None
+    if isinstance(value, dict):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = str(key or "").casefold()
+    suffixes = {
+        "ghz": " GHz",
+        "mhz": " MHz",
+        "watts": " W",
+        "gb": " GB",
+        "mb": " MB",
+        "polegadas": '\"',
+        "minutos": " min",
+        "metros": " m",
+        "litros": " L",
+        "cm": " cm",
+        "hz": " Hz",
+    }
+    if not re.search(r"[A-Za-zÀ-ÿ]", text):
+        for token, suffix in suffixes.items():
+            if normalized.endswith(token):
+                return f"{text}{suffix}"
+    return text
+
+
+def _build_spec_description(raw, specs, max_items=18, max_length=450):
+    """Cria descrição curta a partir da ficha técnica, nunca do texto bruto da página."""
+    parts = []
+    seen = set()
+
+    def add(label, value):
+        value = _format_spec_value(label, value)
+        label = _humanize_spec_key(label)
+        if not label or not value:
+            return
+        signature = f"{label.casefold()}|{value.casefold()}"
+        if signature in seen:
+            return
+        seen.add(signature)
+        parts.append(f"{label}: {value}")
+
+    add("marca", raw.get("brand"))
+    model = raw.get("model")
+    if model and len(str(model)) <= 100 and str(model).casefold() != str(raw.get("title") or "").casefold():
+        add("modelo", model)
+    for key, value in (specs or {}).items():
+        if len(parts) >= max_items:
+            break
+        add(key, value)
+
+    # Produtos genéricos podem ter poucas specs normalizadas; nesses casos,
+    # completa com atributos reais do marketplace sem copiar a descrição inteira.
+    if len(parts) < 6:
+        for row in raw.get("product_attributes") or []:
+            if len(parts) >= max_items:
+                break
+            if not isinstance(row, dict):
+                continue
+            add(row.get("nome") or row.get("name"), row.get("valor") or row.get("value"))
+
+    description = " · ".join(parts)
+    if len(description) > max_length:
+        description = description[: max_length - 1].rstrip(" ·,;:") + "…"
+    return description or None
+
+
+def _phone_description(specs):
+    selected = [(key, specs.get(key)) for key in ("ramGb", "armazenamentoGb", "tamanhoTelaPolegadas", "bateriaMah", "processadorNome", "cameraPrincipalMp")
+                if specs.get(key) not in (None, "", [])][:4]
+    labels = {"ramGb": "Memória RAM", "armazenamentoGb": "Armazenamento", "tamanhoTelaPolegadas": "Tela",
+              "bateriaMah": "Bateria", "processadorNome": "Processador", "cameraPrincipalMp": "Câmera principal"}
+    parts = []
+    for key, value in selected:
+        text = _format_spec_value(key, value)
+        if key == "bateriaMah": text = f"{value} mAh"
+        if key == "cameraPrincipalMp": text = f"{value} MP"
+        parts.append(f"{labels[key]}: {text}")
+    return " · ".join(parts) or None
+
+
+def _category_hint_from_product_url(url):
+    """Usa somente o slug público do produto como pista quando a página bloqueia."""
+    try:
+        path = unquote(urlparse(str(url or "")).path)
+    except Exception:
+        return None
+    before_product_code = re.split(r"/p/", path, maxsplit=1, flags=re.I)[0]
+    slug = before_product_code.rstrip("/").split("/")[-1]
+    if not slug:
+        return None
+    hint = re.sub(r"[-_]+", " ", slug)
+    # RAM/SSD no slug são componentes quando o anúncio vende um PC completo.
+    if detect_category(hint) == "PC_MONTADO":
+        return "PC_MONTADO"
+    strong_hints = (
+        (r"\b(?:smartphone|celular|iphone)\b", "CELULAR"),
+        (r"\btablet\b", "TABLET"),
+        (r"\b(?:videogame|console|playstation|xbox|nintendo switch)\b", "VIDEOGAME"),
+        (r"\bsmart tv\b", "SMART_TV"),
+        (r"\b(?:camera|câmera|maquina fotografica|máquina fotográfica)\b", "CAMERA"),
+        (r"\brobo aspirador\b", "ROBO_ASPIRADOR"),
+        (r"\baspirador\b", "ASPIRADOR_PO"),
+        (r"\bnotebook\b", "NOTEBOOK"),
+        (r"\bmonitor\b", "MONITOR"),
+        (r"\b(?:memoria(?: ram)?|kit (?:de )?(?:memoria|ram)|ram)\b", "MEMORIA_RAM"),
+        (r"\b(?:4|8|16|24|32|48|64|96|128) gb\b.{0,45}\bddr[345]\b", "MEMORIA_RAM"),
+    )
+    for pattern, category in strong_hints:
+        if re.search(pattern, hint, flags=re.I):
+            return category
+    return detect_category(hint)
 
 
 def build_result(raw, forced_category=None):
@@ -36,7 +189,13 @@ def build_result(raw, forced_category=None):
     # Em coleta bloqueada não interpretar texto de CAPTCHA/verificação como
     # produto. Se o backend informou uma categoria esperada, ela pode ser
     # preservada apenas como contexto, nunca como evidência coletada.
-    category = forced_category if blocked else detect_category(raw.get("title") or "", forced_category)
+    category = (
+        forced_category
+        if blocked and forced_category
+        else _category_hint_from_product_url(raw.get("url_original"))
+        if blocked
+        else detect_category(raw.get("title") or "", forced_category)
+    )
     if not forced_category and not blocked:
         explicit_type = None
         for row in raw.get("attributes") or []:
@@ -45,7 +204,11 @@ def build_result(raw, forced_category=None):
                 explicit_type = detect_category(str(row.get("value_name") or ""))
                 if explicit_type:
                     break
-        if explicit_type:
+        ambiguous_type = (
+            (category == "MOUSEPAD" and explicit_type == "MOUSE")
+            or (category in {"FONE", "HEADSET"} and explicit_type in {"FONE", "HEADSET"})
+        )
+        if explicit_type and not ambiguous_type:
             category = explicit_type
     if not category and not blocked:
         # Fallback técnico: usa a ficha/atributos, sem depender da categoria
@@ -77,11 +240,22 @@ def build_result(raw, forced_category=None):
         "imagemUrl": None if blocked else raw.get("image_url"),
     }
 
+    if category == "CELULAR" and not blocked:
+        payload["descricao"] = _phone_description(specs)
+
     if category and tipo_cadastro == "HARDWARE":
         payload["categoria"] = category
 
     if spec_field:
         payload[spec_field] = specs
+
+    # Todas as categorias de Produto preservam os dados coletados no cadastro,
+    # mesmo quando ainda não possuem uma tabela técnica específica no backend.
+    if tipo_cadastro == "PRODUTO" and not blocked:
+        payload["metadados"] = {
+            "especificacoesEncontradas": dict(specs),
+            "informacoesProdutoEncontradas": raw.get("product_attributes") or [],
+        }
 
     # Builds e produtos sem tabela técnica própria não recebem campos
     # desconhecidos no payload. As especificações continuam em
@@ -98,6 +272,17 @@ def build_result(raw, forced_category=None):
     ]
 
     site = detect_site(raw.get("url_original") or "")
+
+    current_price = to_float(raw.get("price"))
+    previous_price = to_float(raw.get("previous_price"))
+    # Contrato da Oferta: precoAnterior nunca pode representar um valor menor
+    # que o preço atual. Se uma fonte entregar os campos invertidos, corrigimos
+    # antes de enviar ao backend; valores iguais não são exibidos como "de".
+    if current_price is not None and previous_price is not None:
+        if previous_price < current_price:
+            current_price, previous_price = previous_price, current_price
+        elif previous_price == current_price:
+            previous_price = None
 
     brand_key = (raw.get("brand") or "").strip().casefold() or None
     model_key = (raw.get("model") or "").strip().casefold() or None
@@ -120,14 +305,17 @@ def build_result(raw, forced_category=None):
         "payloadParcialBackend": payload,
         "descricaoAnuncio": payload["descricao"],
         "ofertaColetada": {
-            "preco": raw.get("price"),
-            "precoAnterior": raw.get("previous_price"),
+            "preco": current_price,
+            "precoAnterior": previous_price,
             "fontePreco": raw.get("price_source"),
             "moeda": raw.get("currency") or "BRL",
             "disponivel": raw.get("available"),
             "urlOriginal": raw.get("url_original"),
             "urlProduto": raw.get("url_final"),
             "codigoMarketplace": raw.get("marketplace_product_code"),
+            "vendedorNome": raw.get("seller_name"),
+            "vendedorIdentificador": raw.get("seller_id"),
+            "urlAfiliada": raw.get("affiliate_url"),
         },
         # Guarda tudo o que a página informou sobre o PRODUTO, mesmo quando o
         # backend ainda não possui um campo específico. Dados de vendedor,
@@ -169,7 +357,11 @@ def build_result(raw, forced_category=None):
                 else (
                     "MAGALU"
                     if MagazineScraper.is_magazine(raw.get("url_original") or "")
-                    else None
+                    else (
+                        "SHOPEE"
+                        if detect_site(raw.get("url_original") or "").get("plataforma") == "SHOPEE"
+                        else None
+                    )
                 )
             ),
             "apiUsada": raw.get("api_used", False),

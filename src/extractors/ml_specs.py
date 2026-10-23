@@ -1834,6 +1834,11 @@ def notebook_feature(mapping, text, aliases, pattern):
         rf"(?:{pattern})\s*[:\-]\s*(?:sim|true|yes|HD|FHD|\d{{3,4}}p)\b",
         rf"\b(?:com|possui|with)\s+(?:uma?\s+)?(?:{pattern})\b",
     ]
+    listed = attr(mapping, "Funcionalidades", "Recursos", "Features") or ""
+    if listed and re.search(pattern, listed, re.I):
+        if any(re.search(expression, listed, re.I) for expression in negative):
+            return False
+        return True
     return explicit_keyword_bool(text, positive, negative)
 
 
@@ -1918,8 +1923,10 @@ def extract_notebook(mapping, text):
             specs["wifi"] = wifi_version
         elif wifi and boolean(wifi) is None and normalize_key(wifi) not in {"nao_informado", "nao_encontrado", "unknown"}:
             specs["wifi"] = wifi[:100]
-        elif has_wifi is True or re.search(r"\bWi[-\s‑]?Fi\b", connectivity, re.I):
+        elif has_wifi is True:
             specs["wifi"] = "Sim"
+        elif re.search(r"\bWi[-\s‑]?Fi\b", connectivity, re.I):
+            specs["wifi"] = "Wi-Fi"
 
     bluetooth = attr(mapping, "BLUETOOTH_VERSION", "Versão do Bluetooth", "Bluetooth version", "Bluetooth")
     has_bluetooth = notebook_feature(mapping, connectivity, ["WITH_BLUETOOTH", "Com Bluetooth", "Bluetooth"], r"Bluetooth")
@@ -1931,8 +1938,10 @@ def extract_notebook(mapping, text):
             version = f"Bluetooth {bluetooth}"
         if version:
             specs["bluetooth"] = version
-        elif has_bluetooth is True or re.search(r"\bBluetooth\b", connectivity, re.I):
+        elif has_bluetooth is True:
             specs["bluetooth"] = "Sim"
+        elif re.search(r"\bBluetooth\b", connectivity, re.I):
+            specs["bluetooth"] = "Bluetooth"
 
     connections = attr(mapping, "Conexões", "Conexoes", "Ports", "Portas") or text or ""
     usb_a = sum(int(x) for x in re.findall(r"(\d+)\s+(?:x\s*)?portas?\s+USB[^,;]*?Type[- ]?A", connections, re.I))
@@ -1983,13 +1992,19 @@ def extract_notebook(mapping, text):
     webcam_res = first_match(camera_value or "", r"(\d{3,4}p|FHD|Full\s*HD|HD|\d+(?:\.\d+)?\s*MP)")
     if not webcam_res:
         webcam_res = first_match(multimedia, r"(?:webcam|c[aâ]mera(?:\s+(?:frontal|integrada))?)[^.;|\n]{0,40}?\b(\d{3,4}p|FHD|Full\s*HD|HD)\b")
+    explicit_pixels = first_match(multimedia, r"(?:webcam|c[aâ]mera)[^;|\n]{0,80}?\b(\d{3,4}p)\b")
+    if explicit_pixels: webcam_res = explicit_pixels
     if webcam is None and webcam_res:
         webcam = True
     set_if(specs, "webcam", webcam)
     if webcam is not False:
         set_if(specs, "resolucaoWebcam", webcam_res)
     keyboard = " ".join(filter(None, [attr(mapping, "Padrão de Teclado", "Padrao de Teclado", "Keyboard"), text]))
-    set_if(specs, "tecladoNumerico", notebook_feature(mapping, keyboard, ["WITH_NUMERIC_KEYPAD", "Numeric keypad", "Com teclado numérico", "Teclado numérico"], r"teclado\s+num[eé]rico|numeric\s+keypad"))
+    numeric_keyboard = notebook_feature(mapping, keyboard, ["WITH_NUMERIC_KEYPAD", "Numeric keypad", "Com teclado numérico", "Teclado numérico"], r"teclado\s+num[eé]rico|numeric\s+keypad")
+    keyboard_type = attr(mapping, "Padrão de Teclado", "Padrao de Teclado") or ""
+    if numeric_keyboard is None and re.search(r"\bnum[eé]rico\b", keyboard_type, re.I):
+        numeric_keyboard = not bool(re.search(r"\b(?:sem|n[aã]o)\b", keyboard_type, re.I))
+    set_if(specs, "tecladoNumerico", numeric_keyboard)
     set_if(specs, "tecladoIluminado", notebook_feature(mapping, keyboard, ["WITH_BACKLIT_KEYBOARD", "Keyboard backlit", "Teclado iluminado", "Teclado retroiluminado"], r"teclado\s+(?:retro)?iluminado|backlit\s+keyboard"))
     set_if(specs, "touch", notebook_feature(mapping, text, ["IS_TOUCH_SCREEN", "Touchscreen", "Tela sensível ao toque"], r"touchscreen|tela\s+sens[ií]vel\s+ao\s+toque"))
     set_if(specs, "leitorDigital", notebook_feature(mapping, text, ["WITH_FINGERPRINT_READER", "Fingerprint reader", "Leitor de impressão digital", "Leitor biométrico"], r"leitor\s+(?:de\s+impress[aã]o\s+digital|biom[eé]trico)|fingerprint\s+reader"))

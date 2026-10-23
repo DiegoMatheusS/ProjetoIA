@@ -1,0 +1,22 @@
+name: Agent and extension integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12', cache: pip}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: pip install -r requirements.txt pytest httpx
+      - run: python -m compileall -q src
+      - run: python -m pytest -q tests
+      - run: node --test tests/extension-client.test.mjs
+      - run: node --check extension/background.js && node --check extension/popup.js && node --check extension/operations-client.js && node --check extension/preflight-hook.js

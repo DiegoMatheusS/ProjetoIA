@@ -241,7 +241,21 @@ def _storage_interface(value: Any):
 
 
 
-def _m2_key(value: Any):
+def normalize_m2_length(value: Any):
+    """M.2 2280 é uma placa de 80 mm; não é um comprimento de 2280 mm."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    raw = _clean_text(value) or ""
+    codes = {int(match) for match in re.findall(r"\b22(30|42|60|80|110)\b", raw)}
+    if not codes:
+        codes = {int(match) for match in re.findall(r"\b22\s*(?:mm\s*)?[x×]\s*(30|42|60|80|110)\b", raw, re.I)}
+    if codes:
+        return next(iter(codes)) if len(codes) == 1 else None
+    match = re.fullmatch(r"(30|42|60|80|110)(?:\s*mm)?", raw, re.I)
+    return int(match[1]) if match else None
+
+
+def normalize_m2_key(value: Any):
     token = _token(value)
     raw = _clean_text(value) or ""
     if not token:
@@ -249,9 +263,9 @@ def _m2_key(value: Any):
     # B+M / B-M / B M / B&M são o mesmo enum B_M no backend.
     if re.search(r"\bB\s*(?:\+|&|/|-|_)\s*M\b", raw, re.I) or token in {"b_m", "bm", "b_and_m", "b_plus_m"}:
         return "B_M"
-    if token in {"m", "m_key", "key_m", "chave_m"} or re.search(r"\bM[- ]?Key\b", raw, re.I):
+    if token in {"m", "m_key", "key_m", "chave_m"} or re.search(r"\bM[- ]?Key\b|\b(?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*M\b", raw, re.I):
         return "M"
-    if token in {"b", "b_key", "key_b", "chave_b"} or re.search(r"\bB[- ]?Key\b", raw, re.I):
+    if token in {"b", "b_key", "key_b", "chave_b"} or re.search(r"\bB[- ]?Key\b|\b(?:Key|Chave)(?:\s+M\.?2)?\s*[:\-]?\s*B\b", raw, re.I):
         return "B"
     return None
 
@@ -507,6 +521,8 @@ def _iso_date(value: Any):
 
 
 BOOL_FIELDS = {
+    "CELULAR": {"cincoG", "nfc", "dualSim", "esim"},
+    "NOTEBOOK": {"gpuIntegrada", "gpuDedicada", "upgradeRam", "upgradeArmazenamento", "touch", "ethernet", "leitorCartao", "webcam", "tecladoIluminado", "tecladoNumerico", "leitorDigital"},
     "PROCESSADOR": {"possuiVideoIntegrado", "suportaEcc", "coolerIncluso", "multiplicadorDesbloqueado", "suporteOverclock"},
     "PLACA_MAE": {"suportaXmp", "suportaExpo", "suportaEcc", "suportaMemoriaRegistrada", "wifi", "bluetooth", "biosFlashback"},
     "MEMORIA_RAM": {"ecc", "registrada", "suportaXmp", "suportaExpo", "rgb"},
@@ -517,6 +533,8 @@ BOOL_FIELDS = {
 }
 
 INT_FIELDS = {
+    "CELULAR": {"ramGb", "armazenamentoGb", "taxaAtualizacaoHz", "bateriaMah"},
+    "NOTEBOOK": {"nucleos", "threads", "clockBaseMhz", "clockTurboMhz", "tdpWatts", "vramGb", "tgpWatts", "ramInstaladaGb", "frequenciaMhz", "ramSoldadaGb", "slotsRamTotal", "slotsRamLivres", "ramMaximaGb", "armazenamentoGb", "slotsM2Total", "slotsM2Livres", "resolucaoLargura", "resolucaoAltura", "taxaAtualizacaoHz", "brilhoNits", "potenciaCarregadorWatts", "usbA", "usbC", "thunderbolt", "hdmi", "displayPort"},
     "PROCESSADOR": {"litografiaNm", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "tdpWatts", "frequenciaMemoriaMaximaMhz", "capacidadeMemoriaMaximaGb", "canaisMemoria", "lanesPcie"},
     "PLACA_MAE": {"slotsMemoria", "capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb", "portasSata"},
     "MEMORIA_RAM": {"capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz", "frequenciaJedecMhz", "latenciaCl"},
@@ -529,6 +547,8 @@ INT_FIELDS = {
 }
 
 FLOAT_FIELDS = {
+    "CELULAR": {"tamanhoTelaPolegadas", "cameraPrincipalMp", "cameraFrontalMp", "carregamentoWatts", "pesoGramas"},
+    "NOTEBOOK": {"tamanhoTelaPolegadas", "bateriaWh", "autonomiaInformadaHoras", "pesoKg", "larguraMm", "alturaMm", "profundidadeMm"},
     "PROCESSADOR": {"cacheL2Mb", "cacheL3Mb", "temperaturaMaximaC"},
     "MEMORIA_RAM": {"tensaoVolts", "alturaMm", "consumoWatts"},
     "PLACA_VIDEO": {"comprimentoMm", "alturaMm", "espessuraMm", "slotsOcupados"},
@@ -546,6 +566,7 @@ INT_LIST_FIELDS = {
 
 
 MHZ_FIELDS = {
+    "NOTEBOOK": {"clockBaseMhz", "clockTurboMhz", "frequenciaMhz"},
     "PROCESSADOR": {"frequenciaBaseMhz", "frequenciaTurboMhz", "frequenciaMemoriaMaximaMhz"},
     "PLACA_MAE": set(),
     "MEMORIA_RAM": {"frequenciaMhz", "frequenciaJedecMhz"},
@@ -553,6 +574,8 @@ MHZ_FIELDS = {
 }
 
 GB_FIELDS = {
+    "CELULAR": {"ramGb", "armazenamentoGb"},
+    "NOTEBOOK": {"vramGb", "ramInstaladaGb", "ramSoldadaGb", "ramMaximaGb", "armazenamentoGb"},
     "PROCESSADOR": {"capacidadeMemoriaMaximaGb"},
     "PLACA_MAE": {"capacidadeMaximaMemoriaGb", "capacidadeMaximaPorSlotGb"},
     "MEMORIA_RAM": {"capacidadePorModuloGb"},
@@ -563,6 +586,7 @@ GB_FIELDS = {
 MB_FIELDS = {"PROCESSADOR": {"cacheL2Mb", "cacheL3Mb"}}
 
 MM_FIELDS = {
+    "NOTEBOOK": {"larguraMm", "alturaMm", "profundidadeMm"},
     "MEMORIA_RAM": {"alturaMm"},
     "PLACA_VIDEO": {"comprimentoMm", "alturaMm", "espessuraMm"},
     "ARMAZENAMENTO": {"alturaMm", "larguraMm", "profundidadeMm", "espessuraMm"},
@@ -573,6 +597,7 @@ MM_FIELDS = {
 }
 
 WATT_FIELDS = {
+    "NOTEBOOK": {"tdpWatts", "tgpWatts", "potenciaCarregadorWatts"},
     "PROCESSADOR": {"tdpWatts"},
     "MEMORIA_RAM": {"consumoWatts"},
     "PLACA_VIDEO": {"consumoWatts", "potenciaFonteRecomendadaWatts"},
@@ -614,6 +639,13 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
     """
     category = str(category or "").upper()
     normalized = dict(specs or {})
+    if category == "NOTEBOOK":
+        for field, value in list(normalized.items()):
+            if isinstance(value, str) and value.strip().casefold() in {
+                "não informado", "nao informado", "não encontrado", "nao encontrado",
+                "unknown", "not found", "n/a", "null", "undefined", "—",
+            }:
+                normalized[field] = None
 
     for field in BOOL_FIELDS.get(category, set()):
         if field in normalized and normalized[field] is not None:
@@ -683,6 +715,18 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
         if "saidasVideo" in normalized:
             normalized["saidasVideo"] = _string_list(normalized.get("saidasVideo"))
 
+        base = normalized.get("clockBaseMhz")
+        boost = normalized.get("clockBoostMhz")
+        if (
+            isinstance(base, (int, float))
+            and isinstance(boost, (int, float))
+            and base > boost
+        ):
+            # Não inverter automaticamente: isso poderia transformar clock de
+            # memória ou outro campo mal rotulado em clock do núcleo. Mantemos
+            # o base explicitamente coletado e descartamos o boost conflitante.
+            normalized["clockBoostMhz"] = None
+
     elif category == "ARMAZENAMENTO":
         if "tipo" in normalized:
             normalized["tipo"] = _storage_type(normalized.get("tipo"))
@@ -691,7 +735,9 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
         if "interface" in normalized:
             normalized["interface"] = _storage_interface(normalized.get("interface"))
         if "chaveM2" in normalized:
-            normalized["chaveM2"] = _m2_key(normalized.get("chaveM2"))
+            normalized["chaveM2"] = normalize_m2_key(normalized.get("chaveM2"))
+        if "tamanhoM2Mm" in normalized:
+            normalized["tamanhoM2Mm"] = normalize_m2_length(specs.get("tamanhoM2Mm"))
 
     elif category == "FONTE":
         if "formato" in normalized:
@@ -716,13 +762,16 @@ def normalize_specs_for_backend(category: str | None, specs: dict | None) -> dic
             normalized["socketsSuportados"] = _socket_list(normalized.get("socketsSuportados"))
 
     elif category == "VENTOINHA":
-        if "conector" in normalized:
-            normalized["conector"] = _fan_connector(normalized.get("conector"))
+        connector = _fan_connector(normalized.get("conector"))
+        if connector is None and normalized.get("pwm") is True:
+            connector = "PWM_4_PINOS"
+        normalized["conector"] = connector
 
     return normalized
 
 
 SPEC_FIELD_BY_HARDWARE_CATEGORY = {
+    "CELULAR": "especificacaoCelular",
     "PROCESSADOR": "especificacaoProcessador",
     "PLACA_MAE": "especificacaoPlacaMae",
     "MEMORIA_RAM": "especificacaoMemoriaRam",
@@ -764,7 +813,14 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
     except Exception:
         expected = []
     if expected:
-        specs = {field: specs.get(field) for field in expected}
+        # Campos técnicos não encontrados devem ser omitidos, não enviados como
+        # null. DTOs Nest com @IsOptional() aceitam null, mas o Prisma pode ter
+        # coluna obrigatória com default e rejeitar explicitamente o null.
+        specs = {
+            field: specs.get(field)
+            for field in expected
+            if specs.get(field) is not None
+        }
 
     # Contrato atual do CriaByte: o campo deve SEMPRE existir e ser array.
     # Se a geração foi confirmada, enviamos apenas enums válidos. Se não foi,
@@ -787,7 +843,8 @@ def normalize_hardware_payload_for_backend(category: str | None, payload: dict |
             if specs.get(field) is None:
                 specs.pop(field, None)
 
-    output["categoria"] = category
+    if category != "CELULAR":
+        output["categoria"] = category
     output[spec_field] = specs
     return output
 

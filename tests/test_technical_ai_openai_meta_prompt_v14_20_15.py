@@ -21,6 +21,7 @@ class FakeOpenAI:
 
 
 def test_openai_receives_exact_meta_ai_prompt_and_direct_lines_are_applied(monkeypatch):
+    monkeypatch.setenv("TECH_RESEARCH_OPENAI_RESPONSE_CACHE_ENABLED", "false")
     payload = {
         "categoria": "PROCESSADOR",
         "nome": "AMD Ryzen 9 7900",
@@ -51,7 +52,7 @@ def test_openai_receives_exact_meta_ai_prompt_and_direct_lines_are_applied(monke
         lambda _name: fake,
     )
     monkeypatch.setattr(
-        "src.technical_ai.service.collect_cited_sources",
+        "src.technical_ai.iterative_research.collect_cited_sources",
         lambda *_args, **_kwargs: None,
     )
 
