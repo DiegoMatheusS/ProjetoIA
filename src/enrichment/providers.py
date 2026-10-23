@@ -239,7 +239,9 @@ class ExternalTechnicalProvider:
         # Reuse cached search results; only move on for wrong/missing documents.
         if not result.get("ok") and source_diagnostic(result) in {"MODELO_DIVERGENTE", "NAO_ENCONTRADO", "SEM_DADOS"}:
             if hasattr(self.resolver, "results") and time.monotonic() - started < self.timeout:
-                candidates = self.resolver.results(identity_query(identity), self.search_domains(identity), limit=3)
+                fallback = getattr(self.resolver, "fallback_results", None)
+                candidates = fallback(identity_query(identity), self.search_domains(identity), limit=3,
+                                      time_budget_seconds=max(0, self.timeout - (time.monotonic() - started))) if fallback else self.resolver.results(identity_query(identity), self.search_domains(identity), limit=3)
                 for candidate in candidates:
                     if candidate["url"] == url or time.monotonic() - started >= self.timeout:
                         continue
@@ -293,7 +295,7 @@ class IcecatProvider(ExternalTechnicalProvider):
     categories = {
         "PROCESSADOR", "PLACA_MAE", "MEMORIA_RAM", "PLACA_VIDEO",
         "ARMAZENAMENTO", "FONTE", "GABINETE", "COOLER",
-        "VENTOINHA", "MONITOR", "NOTEBOOK",
+        "VENTOINHA", "MONITOR", "NOTEBOOK", "CELULAR", "MOUSE", "TECLADO", "HEADSET", "FONE",
     }
 
     def __init__(self, resolver=None, session=None):

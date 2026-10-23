@@ -13,6 +13,7 @@ from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.dto_normalizer import normalize_specs_for_backend
 from .agent import research_hardware_locally
 from .confidence import annotate_field_confidence
+from ..catalog_content import technical_name, technical_description
 
 TECHNICAL_DOMAINS = {
     "TECHPOWERUP": ("techpowerup.com",), "CPU_WORLD": ("cpu-world.com",),
@@ -30,7 +31,7 @@ def missing(value):
 
 def identity_from_name(category, name, brand=None, model=None):
     """Usa o nome como consulta; nenhuma especificação vem desta inferência."""
-    name = str(name or "").strip()
+    name = technical_name(name, brand, model, category)
     if category == "PROCESSADOR":
         match = re.search(r"\bRyzen\s+(?:[3579]\s+)?(?:PRO\s+)?\d{4,5}[A-Z0-9]*\b", name, re.I)
         if match:
@@ -89,6 +90,9 @@ def research_verified_hardware(*, category, payload, name=None, provider_name=No
     if only_fill_gaps is not True:
         raise ValueError("A pesquisa só preenche lacunas")
     schema = SCHEMAS.get(category)
+    if schema and schema[0] == "PRODUTO" and not schema[1]:
+        from .products import research_product_specs
+        return research_product_specs(category=category, payload=payload, name=name, time_budget_seconds=time_budget_seconds or 16)
     if not schema or not schema[1]:
         raise ValueError("Categoria sem ficha técnica estruturada")
     spec_key = schema[1]
@@ -139,6 +143,7 @@ def research_verified_hardware(*, category, payload, name=None, provider_name=No
         after[field] = value
         accepted[field] = {**origin, "valor": value, "coletadoEm": collected, "evidenciaCampoConfirmada": True}
     final = deepcopy(original)
+    final["nome"] = technical_name(final.get("nome"), final.get("marca"), final.get("modelo"), category)
     final[spec_key] = {key: value for key, value in after.items() if key in schema[2] and value is not None}
     if accepted:
         for key in ("marca", "modelo"):
@@ -150,6 +155,7 @@ def research_verified_hardware(*, category, payload, name=None, provider_name=No
         **({"hardwareId": hardware_id} if hardware_id is not None else {}),
         "utilizado": bool(accepted), "provedor": "PROJETO_IA", "categoria": category,
         "nome": final.get("nome"), "payload": final, "somentePreencheLacunas": True,
+        "descricaoTecnica": technical_description(category, final.get("nome"), final[spec_key], final.get("descricao")),
         "escopoIdentidade": hint.get("escopo"), "identidadeConsulta": identity,
         "camposPreenchidos": list(accepted), "origemPorCampo": accepted,
         "confiancaPorCampo": confidence["confiancaPorCampo"], "conflitos": conflicts,

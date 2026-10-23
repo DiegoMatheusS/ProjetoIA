@@ -12,12 +12,16 @@ def test_original_listing_survives_normalization_for_every_destination(category)
     result = build_result({'title': 'Produto', 'description': description,
                           'url_original': 'https://shopee.com.br/product/123/456'}, category)
     assert len(description) > 12000
-    assert result['payloadParcialBackend']['descricao'] == description
     assert result['descricaoAnuncio'] == description
+    if category == 'PC_MONTADO':
+        assert result['payloadParcialBackend']['descricao'] == description
+    else:
+        assert result['payloadParcialBackend']['descricao'] != description
+        assert len(result['payloadParcialBackend']['descricao'] or '') < 4000
 
 
-def test_no_description_is_not_replaced_by_a_technical_summary():
-    result = build_result({'title': 'Ryzen 5 5600G', 'brand': 'AMD'}, 'PROCESSADOR')
+def test_no_technical_facts_does_not_invent_a_description():
+    result = build_result({'title': 'Processador sem ficha técnica', 'brand': 'AMD'}, 'PROCESSADOR')
     assert result['payloadParcialBackend']['descricao'] is None
 
 
@@ -56,4 +60,5 @@ def test_technical_ai_cannot_overwrite_seller_description(monkeypatch):
     })
     result = build_result({'title': 'Ryzen 5 5600G', 'description': 'Texto original\n\nGarantia do vendedor'}, 'PROCESSADOR')
     enriched = auto_enrich_link_result(result)
-    assert enriched['payloadParcialBackend']['descricao'] == 'Texto original\n\nGarantia do vendedor'
+    assert enriched['descricaoAnuncio'] == 'Texto original\n\nGarantia do vendedor'
+    assert enriched['payloadParcialBackend']['descricao'] != 'Resumo inventado'

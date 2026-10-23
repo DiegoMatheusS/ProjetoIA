@@ -56,7 +56,7 @@ def test_automatic_link_research_reaches_every_structured_product(monkeypatch, c
     assert result["ofertaColetada"] == before["ofertaColetada"]
     if category == "CELULAR":
         assert len(product["descricao"].split(" · ")) == 4
-        assert result["descricaoAnuncio"] == product["descricao"]
+        assert result["descricaoAnuncio"] == before["descricaoAnuncio"]
         assert "mAh" in product["descricao"] and "NFC" not in product["descricao"]
         assert "Câmera" not in product["descricao"]
     else:

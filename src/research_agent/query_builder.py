@@ -152,6 +152,16 @@ _FIELD_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
+_FIELD_TERMS.update({
+    "MONITOR": {"tamanhoPolegadas": ("display size",), "resolucao": ("native resolution",), "taxaAtualizacaoHz": ("refresh rate",), "tipoPainel": ("panel type",), "tempoRespostaMs": ("response time",)},
+    "MOUSE": {"dpiMaximo": ("maximum DPI",), "sensor": ("sensor model",), "pesoGramas": ("weight",), "botoes": ("programmable buttons",), "pollingRateHz": ("polling rate",)},
+    "TECLADO": {"tipo": ("keyboard type",), "switch": ("switch type",), "layout": ("keyboard layout",), "conexao": ("connectivity",)},
+    "HEADSET": {"driverMm": ("driver diameter",), "impedancia": ("impedance",), "tipoConexao": ("connectivity",), "microfone": ("microphone",), "pesoGramas": ("weight",), "bateriaHoras": ("battery life",)},
+    "CELULAR": {"processadorNome": ("chipset processor",), "ramGb": ("RAM memory",), "armazenamentoGb": ("storage capacity",), "tamanhoTelaPolegadas": ("display size",), "bateriaMah": ("battery capacity",), "nfc": ("NFC regional variant",)},
+    "NOTEBOOK": {"processadorNome": ("processor specification",), "ramInstaladaGb": ("installed memory",), "ramSoldadaGb": ("soldered memory",), "gpuNome": ("graphics",), "armazenamentoGb": ("storage capacity",), "tgpWatts": ("graphics TGP",)},
+})
+
+
 def _humanize(field: str) -> str:
     text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(field or "")).replace("_", " ")
     return re.sub(r"\s+", " ", text).strip()

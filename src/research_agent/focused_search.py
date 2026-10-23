@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import time
 
 from .query_builder import build_focus_terms, build_focused_queries
 
@@ -94,3 +95,29 @@ class FocusedSearchResolver:
             if merged and candidate_query != queries[-1]:
                 return merged
         return merged[: max(1, int(limit))]
+
+    def fallback_results(self, query, allowed_domains, limit=3, time_budget_seconds=None):
+        """Após rejeitar uma variante, inclui a consulta exata sem termos de campo."""
+        deadline = time.monotonic() + time_budget_seconds if time_budget_seconds is not None else None
+        merged, seen = [], set()
+        for candidate_query in self._queries(query):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            self._record(candidate_query)
+            original_timeout = getattr(self._delegate, "timeout", None)
+            try:
+                if original_timeout is not None and deadline is not None:
+                    self._delegate.timeout = min(original_timeout, max(0.1, deadline-time.monotonic()))
+                items = self._delegate.results(candidate_query, allowed_domains, limit=limit) or []
+            finally:
+                if original_timeout is not None:
+                    self._delegate.timeout = original_timeout
+            for item in items:
+                url = str((item or {}).get("url") or "").strip()
+                key = url.split("#", 1)[0].rstrip("/").casefold()
+                if url and key not in seen:
+                    seen.add(key)
+                    merged.append(item)
+        # O fallback exato precisa participar mesmo que o primeiro conjunto
+        # tenha preenchido o limite com documentos de outro modelo.
+        return merged[-max(1, int(limit)):]

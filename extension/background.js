@@ -62,7 +62,22 @@ function extractProductDataFromPage() {
       return null;
     }
     const type = value["@type"];
-    if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) return value;
+    if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
+      if (typeof value.url === 'string') {
+        try {
+          const candidate = new URL(value.url, location.href);
+          const current = new URL(location.href);
+          const canonicalHref = document.querySelector('link[rel="canonical"]')?.getAttribute('href');
+          const canonical = canonicalHref ? new URL(canonicalHref, location.href) : null;
+          const paths = [location.pathname, ...(canonical?.origin === location.origin ? [canonical.pathname] : [])].map(path => path.replace(/\/$/, ''));
+          if (candidate.origin !== location.origin || !paths.includes(candidate.pathname.replace(/\/$/, ''))) return null;
+          for (const field of ['sku', 'skuId', 'variant', 'variation']) {
+            if (candidate.searchParams.has(field) && current.searchParams.has(field) && candidate.searchParams.get(field) !== current.searchParams.get(field)) return null;
+          }
+        } catch { return null; }
+      }
+      return value;
+    }
     if (Array.isArray(value["@graph"])) {
       const found = findProduct(value["@graph"]);
       if (found) return found;
@@ -97,6 +112,7 @@ function extractProductDataFromPage() {
   };
 
   const technicalAttributes = [];
+  const unrelated = node => Boolean(node.closest?.('nav, footer, aside, [class*="related"], [class*="recommend"], [data-testid*="recommend"]'));
   const seenAttributes = new Set();
   const addAttribute = (name, value) => {
     const key = clean(name)?.replace(/[:：]+$/, "");
@@ -118,6 +134,7 @@ function extractProductDataFromPage() {
   // Tabelas técnicas são comuns em KaBuM, Pichau, Terabyte, Amazon e Magalu.
   // Só aceitamos pares chave/valor explícitos para não transformar layout em ficha.
   for (const row of document.querySelectorAll("table tr")) {
+    if (unrelated(row)) continue;
     const cells = row.querySelectorAll(":scope > th, :scope > td");
     if (cells.length >= 2) addAttribute(cells[0].textContent, cells[1].textContent);
     if (technicalAttributes.length >= 200) break;
@@ -125,6 +142,7 @@ function extractProductDataFromPage() {
 
   if (technicalAttributes.length < 200) {
     for (const dt of document.querySelectorAll("dt")) {
+      if (unrelated(dt)) continue;
       const dd = dt.nextElementSibling?.matches?.("dd") ? dt.nextElementSibling : null;
       if (dd) addAttribute(dt.textContent, dd.textContent);
       if (technicalAttributes.length >= 200) break;
@@ -138,6 +156,7 @@ function extractProductDataFromPage() {
       '[class*="product-detail"], [id*="product-detail"], #detailBullets_feature_div',
     );
     for (const container of Array.from(containers).slice(0, 50)) {
+      if (unrelated(container)) continue;
       for (const node of Array.from(container.querySelectorAll("li, p, div")).slice(0, 300)) {
         const direct = Array.from(node.children || []).filter((child) =>
           ["SPAN", "DIV", "STRONG", "B"].includes(child.tagName),
@@ -218,8 +237,8 @@ function extractProductDataFromPage() {
     meta('meta[name="mpn"]', 'meta[property="product:mpn"]');
 
   const name = (amazon ? clean(document.querySelector("#productTitle")?.textContent) : null) ||
-    clean(product?.name) || meta('meta[property="og:title"]', 'meta[name="twitter:title"]') ||
-    clean(document.querySelector("h1")?.textContent) || clean(document.title);
+    clean(document.querySelector('h1, [data-testid="product-title"]')?.textContent) ||
+    clean(product?.name) || meta('meta[property="og:title"]', 'meta[name="twitter:title"]') || clean(document.title);
 
   let offer = product?.offers;
   if (Array.isArray(offer)) offer = offer[0];
@@ -250,7 +269,26 @@ function extractProductDataFromPage() {
     }
     if (visibleStorePrice) break;
   }
-  const rawPrice = amazonPrice || clean(offer?.price) || itemprop("price") ||
+  let mercadoLivrePrice = null;
+  if (/(^|\.)mercado(?:livre|libre)\.com(?:\.[a-z]{2})?$/i.test(location.hostname)) {
+    const priceSelectors = ['.ui-pdp-price__second-line .andes-money-amount', '.ui-pdp-price__main-container .andes-money-amount', '[data-testid="price-part"] .andes-money-amount'];
+    for (const selector of priceSelectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (node.classList?.contains('andes-money-amount--previous') || node.closest?.('s, del') || unrelated(node)) continue;
+        const context = clean(node.parentElement?.innerText) || '';
+        if (/\b\d{1,2}\s*x\b|parcela|sem\s+juros/i.test(context)) continue;
+        const fraction = node.querySelector('.andes-money-amount__fraction, [data-andes-money-amount-fraction="true"]');
+        const cents = node.querySelector('.andes-money-amount__cents, [data-andes-money-amount-cents="true"]');
+        const whole = String(fraction?.textContent || '').replace(/\D/g, '');
+        if (!whole) continue;
+        const decimal = String(cents?.textContent || '').replace(/\D/g, '').slice(0, 2).padEnd(2, '0');
+        const amount = Number(whole) + Number(decimal) / 100;
+        if (Number.isFinite(amount) && amount > 0 && amount <= 100000000) { mercadoLivrePrice = String(amount); break; }
+      }
+      if (mercadoLivrePrice) break;
+    }
+  }
+  const rawPrice = amazonPrice || mercadoLivrePrice || clean(offer?.price) || itemprop("price") ||
     meta('meta[property="product:price:amount"]', 'meta[itemprop="price"]') || visibleStorePrice;
   let preco = null;
   if (rawPrice) {
@@ -275,7 +313,7 @@ function extractProductDataFromPage() {
     : null;
 
   const data = {
-    nome: name,
+    nome: name ? name.slice(0, 300) : null,
     marca: brand,
     modelo: model,
     mpn,

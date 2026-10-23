@@ -1,3 +1,7 @@
+## Agente e extensão 0.4.0
+
+Nomes técnicos, pesquisa de Produtos com ficha em metadados e captura da página estão no [guia do catálogo técnico](docs/technical-catalog-20261023.md).
+
 ## Agente e extensão 0.3.0
 
 Operações persistentes, retomada, cancelamento, chaves por dispositivo e métricas de uso estão no [guia de atualização](docs/platform-upgrade-20261021.md). Consulte o guia antes das notas históricas abaixo; a fila precisa de volume persistente.
