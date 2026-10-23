@@ -28,7 +28,13 @@ def _model_is_specific(model):
     if low in generic:
         return False
     # Um modelo forte costuma trazer ao menos um dígito ou um código composto.
-    return bool(re.search(r"\d", value) or re.search(r"[-_/]", value))
+    if re.search(r"\d", value) or re.search(r"[-_/]", value):
+        return True
+    # Modelos comerciais como Cloud III e Cloud Alpha também têm identidade.
+    # Adjetivos de anúncio não bastam para identificar uma variante.
+    tokens = re.findall(r"[a-z]+", low)
+    generic |= {"wireless", "black", "white", "preto", "branco", "rgb", "usb", "bluetooth", "sem", "fio"}
+    return len(tokens) >= 2 and any(len(token) >= 4 and token not in generic for token in tokens)
 
 
 def build_identity(result):

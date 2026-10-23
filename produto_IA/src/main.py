@@ -298,12 +298,12 @@ def build_result(raw, forced_category=None):
     if not result_error and raw.get("ok") and not category:
         result_error = "PRODUTO_FORA_DAS_CATEGORIAS_CRIABYTE"
 
-    return {
+    result = {
         "categoriaDetectada": category,
         "categoriaSlugSugerida": CATEGORY_SLUGS.get(category),
         "tipoCadastro": tipo_cadastro,
         "payloadParcialBackend": payload,
-        "descricaoAnuncio": payload["descricao"],
+        "descricaoAnuncio": None if blocked else description_text(raw.get("description")),
         "ofertaColetada": {
             "preco": current_price,
             "precoAnterior": previous_price,
@@ -383,6 +383,8 @@ def build_result(raw, forced_category=None):
         "fonte": raw.get("source"),
         "erro": result_error,
     }
+    from .catalog_content import refine_catalog_result
+    return refine_catalog_result(result)
 
 
 def main():

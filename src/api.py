@@ -11,6 +11,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .main import build_result
+from .catalog_content import refine_catalog_result
 from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
@@ -158,7 +159,7 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     """
     items = result.get("itens")
     if not isinstance(items, list):
-        return result
+        return refine_catalog_result(result)
 
     safe_items = []
     registerable = 0
@@ -251,7 +252,7 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     # Mantém o campo antigo apenas como diagnóstico de compatibilidade, mas não
     # v14.20.9: [] representa tipo de memória não informado; não há bloqueio por ausência.
     result["descartadosPayloadObrigatorio"] = 0
-    return result
+    return refine_catalog_result(result)
 
 
 def _meta_ai_whatsapp_enrich_sync(payload: MetaAiWhatsappEnrichmentRequest) -> dict[str, Any]:
@@ -362,6 +363,12 @@ def _technical_ai_enrich_sync(payload: TechnicalAiEnrichmentRequest) -> dict[str
         base_payload["modelo"] = payload.modelo
     if payload.nome and not base_payload.get("nome"):
         base_payload["nome"] = payload.nome
+    schema = SCHEMAS.get(category)
+    if schema and schema[0] == "PRODUTO" and not schema[1]:
+        if not payload.somentePreencheLacunas:
+            raise ValueError("A pesquisa só preenche lacunas")
+        from .research_agent.products import research_product_specs
+        return research_product_specs(category=category, payload=base_payload, name=payload.nome)
     if payload.provedor.strip().upper() == "PROJETO_IA":
         from .research_agent.intake import research_verified_hardware
         return research_verified_hardware(category=category, name=payload.nome, payload=base_payload,
@@ -558,7 +565,7 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
         "integracao": INTEGRATION_ID,
         "proveniencia": PROVENANCE_ID,
     }
-    return result
+    return refine_catalog_result(result)
 
 
 def _structured_capture_to_raw(url: str, capture: dict[str, Any]) -> dict[str, Any]:
@@ -726,7 +733,7 @@ def _analyze_capture_sync(payload: CaptureAnalyzeRequest) -> dict[str, Any]:
             }
 
     result["servicoProdutoIa"] = {"versao": SERVICE_VERSION, "modo": "CAPTURA_LOCAL_HTTP_API", "integracao": INTEGRATION_ID, "proveniencia": PROVENANCE_ID}
-    return result
+    return refine_catalog_result(result)
 
 
 @app.get("/health", response_model=HealthResponse)

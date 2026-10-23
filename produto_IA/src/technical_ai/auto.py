@@ -318,6 +318,22 @@ def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
         return result
     category = str(result.get("categoriaDetectada") or "").strip().upper()
     schema = SCHEMAS.get(category)
+    if schema and schema[0] == "PRODUTO" and not schema[1]:
+        if not automatic_technical_ai_enabled():
+            return result
+        from ..research_agent.products import research_product_specs
+        from ..catalog_content import refine_catalog_result
+        raw = result.get("payloadParcialBackend") or {}
+        try:
+            outcome = research_product_specs(category=category, payload=raw)
+        except Exception:
+            result["iaTecnicaAutomatica"] = {"utilizado": False, "motivo": "FONTE_INDISPONIVEL", "camposPreenchidos": []}
+            return refine_catalog_result(result)
+        result["payloadParcialBackend"] = outcome["payload"]
+        result["especificacoesEncontradas"] = outcome["payload"]["metadados"]["especificacoesEncontradas"]
+        result["origemPorCampo"] = {**(result.get("origemPorCampo") or {}), **outcome["origemPorCampo"]}
+        result["iaTecnicaAutomatica"] = {key: value for key, value in outcome.items() if key != "payload"}
+        return refine_catalog_result(result)
     if not schema or not schema[1]:
         return result
 
@@ -352,7 +368,6 @@ def auto_enrich_link_result(result: dict[str, Any]) -> dict[str, Any]:
         if category == "CELULAR":
             from ..main import _phone_description
             safe_after["descricao"] = _phone_description(specs_after)
-            result["descricaoAnuncio"] = safe_after["descricao"]
         else:
             safe_after["descricao"] = safe_before.get("descricao")
         if schema[0] == "PRODUTO":
