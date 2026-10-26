@@ -106,6 +106,7 @@ def hydrate_marketplace_analysis(
     corrected_category = (
         captured_category if not forced_category and (
             (current_category == "MOUSE" and captured_category == "MOUSEPAD")
+            or (captured_category in {"MEMORIA_RAM", "PLACA_VIDEO", "PLACA_MAE"} and current_category != captured_category)
             or (captured_category in {"FONE", "HEADSET"} and current_category != captured_category)
         ) else None
     )

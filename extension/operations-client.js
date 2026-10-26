@@ -49,7 +49,7 @@
     const owner = await identity(settings.key)
     const saved = (await chrome.storage.local.get('pendingImportOperation')).pendingImportOperation
     if (saved && saved.owner === owner && saved.base === settings.base) throw new Error('Existe um envio pendente. Use Retomar antes de iniciar outro.')
-    const operation = { owner, base: settings.base, requestKey: crypto.randomUUID(), form: { urlProduto: body.urlProduto, urlAfiliada: body.urlAfiliada }, body }
+    const operation = { owner, base: settings.base, requestKey: crypto.randomUUID(), form: { urlProduto: body.urlProduto, urlAfiliada: body.urlAfiliada, categoria: body.categoria || "" }, body }
     await chrome.storage.local.set({ pendingImportOperation: operation })
     return start(operation)
   }

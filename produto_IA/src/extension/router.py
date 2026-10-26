@@ -560,10 +560,11 @@ def _import_sync(payload: ImportAffiliateOfferRequest) -> dict[str, Any]:
 
     category = str(analysis.get("categoriaDetectada") or "").strip().upper()
     raw_payload = analysis.get("payloadParcialBackend")
-    if not category or not isinstance(raw_payload, dict):
+    if category not in SCHEMAS or not isinstance(raw_payload, dict):
         return {
             "status": "REVISAO_NECESSARIA",
-            "motivo": "Não foi possível identificar uma categoria suportada para cadastro.",
+            "solicitarCategoria": True,
+            "motivo": "Selecione a categoria do produto na extensão para continuar.",
             "analise": analysis,
         }
 

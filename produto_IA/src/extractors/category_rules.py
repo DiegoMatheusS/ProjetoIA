@@ -69,7 +69,7 @@ ALIASES = {
 
 
 def normalize_forced(value: str):
-    raw = (value or "").strip().upper().replace("-", " ")
+    raw = _clean(value or "").strip().upper().replace("-", " ")
     raw = re.sub(r"\s+", " ", raw)
     return ALIASES.get(raw, raw.replace(" ", "_"))
 
@@ -88,13 +88,14 @@ def detect_category(text: str, forced: str | None = None):
         ("VENTOINHA", [r"^\s*(?:kit\s+com\s+\d+\s+)?ventoinhas?\b", r"^\s*fans?\b"]),
         ("NOTEBOOK", [r"^\s*notebook\b", r"^\s*laptop\b", r"^\s*ultrabook\b"]),
         ("PC_MONTADO", [r"^\s*(?:pc|computador)\s+gamer\b", r"^\s*(?:pc|computador)\s+(?:gamer\s+)?(?:completo|montado)\b", r"^\s*desktop\s+(?:gamer|montado)\b"]),
-        ("PLACA_MAE", [r"^\s*placa[- ]mae\b", r"^\s*motherboard\b"]),
-        ("PLACA_VIDEO", [r"^\s*placa\s+de\s+video\b", r"^\s*(?:gpu|geforce|radeon)\b"]),
+        ("PLACA_MAE", [r"^\s*placa[- ]mae\b", r"^\s*motherboard\b", r"\b(?:a320|a520|a620|b350|b450|b550|b650|b850|x370|x470|x570|x670|x870|h410|h510|h610|h710|h810|b460|b560|b660|b760|b860|z490|z590|z690|z790|z890)(?:m|e|i)?(?:[- ]|$)"]),
+        ("PLACA_VIDEO", [r"^\s*placa\s+de\s+video\b", r"^\s*(?:gpu|geforce|radeon)\b", r"\b(?:geforce\s+)?(?:rtx|gtx)\s*\d{3,4}\b", r"\bradeon\s+rx\s*\d{3,4}\b", r"\bintel\s+arc\s+[ab]\d{3}\b"]),
         ("PROCESSADOR", [r"^\s*processador\b", r"^\s*cpu\b"]),
         ("MEMORIA_RAM", [
             r"^\s*memoria(?:\s+ram)?\b",
             r"^\s*kit\s+(?:de\s+)?(?:memoria|ram)\b",
             r"^\s*ram\b",
+            r"\b(?:kingston\s+fury|corsair\s+vengeance|g[.]?skill\s+(?:trident|ripjaws)|xpg\s+(?:lancer|gammix)|teamgroup\s+t[- ]?force)\b.{0,100}\b\d+\s*gb\b.{0,50}\b\d{4,5}\s*mhz\b",
             r"\b(?:4|8|16|24|32|48|64|96|128)\s*gb\b.{0,45}\bddr[345]\b.{0,35}\b(?:\d{4,5})\s*mhz\b",
             r"\bddr[345]\b.{0,45}\b(?:4|8|16|24|32|48|64|96|128)\s*gb\b.{0,35}\b(?:\d{4,5})\s*mhz\b",
             r"\b(?:so[- ]?dimm|udimm|dimm)\b.{0,45}\bddr[345]\b",
@@ -112,6 +113,10 @@ def detect_category(text: str, forced: str | None = None):
         ("MICROFONE", [r"^\s*(?:microfone|microphone)\b"]),
     ]
     for category, patterns in headline_rules:
+        # Um modelo citado na compatibilidade não muda o tipo explícito do item.
+        if category in {"PLACA_MAE", "PLACA_VIDEO", "MEMORIA_RAM"} and re.match(
+            r"^\s*(?:monitor|notebook|laptop|ultrabook|processador|cpu|gabinete|cooler|water\s*cooler|air\s*cooler|ventoinha|fan|fonte|ssd|hdd|mouse|teclado|headset|fone|suporte|cabo|adaptador|computador|pc|desktop)\b", headline):
+            continue
         if any(re.search(pattern, headline, re.I | re.S) for pattern in patterns):
             return category
 

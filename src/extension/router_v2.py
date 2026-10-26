@@ -276,10 +276,11 @@ def _import_new_with_ai(
 
     category = str(analysis.get("categoriaDetectada") or "").strip().upper()
     raw_payload = analysis.get("payloadParcialBackend")
-    if not category or not isinstance(raw_payload, dict):
+    if category not in SCHEMAS or not isinstance(raw_payload, dict):
         return {
             "status": "REVISAO_NECESSARIA",
-            "motivo": "Não foi possível identificar uma categoria suportada para cadastro. Confira o título capturado na aba do produto.",
+            "solicitarCategoria": True,
+            "motivo": "Selecione a categoria do produto na extensão para continuar. Confira o título capturado na aba do produto.",
             "analise": analysis,
             "buscaCriabyte": {"status": preflight_status},
         }
