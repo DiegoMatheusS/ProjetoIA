@@ -84,6 +84,14 @@ def detect_category(text: str, forced: str | None = None):
     # forte da categoria. Isso evita falsos positivos de termos citados na ficha
     # (ex.: uma ventoinha menciona "placa-mãe" e "notebook" na descrição).
     headline = t[:320]
+    # O tipo explícito do item vem antes de modelos citados na compatibilidade.
+    for item_category, pattern in [
+        ("MEMORIA_RAM", r"^\s*(?:memoria(?:\s+ram)?|ram|kit\s+(?:de\s+)?(?:memoria|ram))\b"),
+        ("PLACA_VIDEO", r"^\s*(?:placa\s+de\s+video|gpu|geforce|radeon)\b"),
+        ("PLACA_MAE", r"^\s*(?:placa[- ]mae|motherboard)\b"),
+    ]:
+        if re.search(pattern, headline):
+            return item_category
     headline_rules = [
         ("VENTOINHA", [r"^\s*(?:kit\s+com\s+\d+\s+)?ventoinhas?\b", r"^\s*fans?\b"]),
         ("NOTEBOOK", [r"^\s*notebook\b", r"^\s*laptop\b", r"^\s*ultrabook\b"]),

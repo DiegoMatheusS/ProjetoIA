@@ -5,6 +5,8 @@ from src.extension import router, router_v2, amazon_fallback
 from src.extension.router_v2 import PageCapture
 
 @pytest.mark.parametrize('title,expected', [
+ ('Memória RAM DDR4 16GB compatível B550 RTX 4060', 'MEMORIA_RAM'),
+ ('Placa de vídeo RTX 4060 compatível B550M', 'PLACA_VIDEO'),
  ('Kingston Fury Beast 16GB 3200MHz', 'MEMORIA_RAM'),
  ('Corsair Vengeance LPX 32GB 3600MHz', 'MEMORIA_RAM'),
  ('ASUS TUF Gaming B550M-Plus WiFi II DDR4', 'PLACA_MAE'),
