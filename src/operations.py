@@ -50,7 +50,7 @@ def connection():
 def public(row):
     payload = json.loads(row['payload'])
     return { 'id': row['id'], 'estado': row['state'], 'etapa': row['stage'],
-             'envio': {key: payload.get(key) for key in ('urlProduto', 'urlAfiliada')},
+             'envio': {key: payload.get(key) for key in ('urlProduto', 'urlAfiliada', 'categoria')},
              'resultado': json.loads(row['result']) if row['result'] else None,
              'erro': row['error'], 'criadaEm': row['created'], 'atualizadaEm': row['updated'],
              'duracaoMs': row['duration_ms'] }

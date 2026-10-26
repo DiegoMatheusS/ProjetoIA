@@ -2,6 +2,8 @@ const DEFAULT_API_URL = "https://projetoia-production.up.railway.app";
 
 const els = {
   productUrl: document.querySelector("#productUrl"),
+  category: document.querySelector("#category"),
+  categoryHelp: document.querySelector("#categoryHelp"),
   affiliateUrl: document.querySelector("#affiliateUrl"),
   apiUrl: document.querySelector("#apiUrl"),
   apiKey: document.querySelector("#apiKey"),
@@ -40,6 +42,10 @@ function showResult(message, type = "success") {
 }
 
 function updateSendLabel() {
+  if (els.category.required && !els.category.value) {
+    els.send.textContent = "Selecionar categoria e continuar";
+    return;
+  }
   if (pendingMissingFields.length) {
     els.send.textContent = "Completar e cadastrar";
     return;
@@ -503,6 +509,11 @@ els.send.addEventListener("click", async () => {
   const manualFields = collectManualFields();
 
   if (manualFields === null) return;
+  if (els.category.required && !els.category.value) {
+    showResult("Selecione a categoria do produto para continuar.", "warning");
+    els.category.focus();
+    return;
+  }
 
   if (!isHttpUrl(productUrl)) {
     showResult("A página do produto é inválida.", "warning");
@@ -542,6 +553,7 @@ els.send.addEventListener("click", async () => {
       body: JSON.stringify({
         urlProduto: productUrl,
         urlAfiliada: affiliateUrl,
+        ...(els.category.value ? { categoria: els.category.value } : {}),
         ...(manualPrice !== null ? { precoManual: manualPrice } : {}),
         ...(Object.keys(manualFields).length ? { dadosManuais: manualFields } : {}),
       }),
@@ -609,10 +621,19 @@ function applyOperationResult(data) {
   if (data?.envio) {
     els.productUrl.value = data.envio.urlProduto || els.productUrl.value;
     els.affiliateUrl.value = data.envio.urlAfiliada || els.affiliateUrl.value;
+    els.category.value = data.envio.categoria || "";
   }
   if (data?.status === "PRECO_NAO_IDENTIFICADO") { revealManualPrice(data.motivo || "Informe o preço do anúncio para continuar."); return; }
     renderPreview(data?.previa);
 
+    if (data?.solicitarCategoria) {
+      els.category.required = true;
+      els.categoryHelp.textContent = "Categoria não identificada. Selecione o tipo do item acima para continuar.";
+      showResult(data.motivo || "Selecione a categoria do produto.", "warning");
+      updateSendLabel();
+      els.category.focus();
+      return;
+    }
     const warning = data?.status === "REVISAO_NECESSARIA";
     if (warning) {
       renderMissingFields(data?.camposFaltantes);
@@ -658,3 +679,15 @@ document.getElementById('loadHistory').addEventListener('click', async () => {
     }
   } catch (error) { showResult(error.message, 'error'); }
 });
+
+function resetCategory() {
+  els.category.value = "";
+  els.category.required = false;
+  els.categoryHelp.textContent = "Se a identificação falhar ou estiver errada, escolha a categoria e envie novamente.";
+  clearMissingFields();
+  resetManualPrice();
+  renderPreview(null);
+}
+els.category.addEventListener("change", () => { clearMissingFields(); updateSendLabel(); });
+els.productUrl.addEventListener("input", resetCategory);
+els.currentTab.addEventListener("click", resetCategory);
