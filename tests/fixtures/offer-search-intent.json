@@ -148,5 +148,20 @@
     "RTX4060Ti",
     "MSI RTX 4060 Ti 8GB",
     true
+  ],
+  [
+    "notebook Dell Latitude 5420",
+    "Dell Teclado para notebook Latitude 5420",
+    false
+  ],
+  [
+    "celular Samsung A55",
+    "Carregador para celular Samsung A55",
+    false
+  ],
+  [
+    "headset HyperX Cloud III",
+    "Almofadas para headset HyperX Cloud III",
+    false
   ]
 ]

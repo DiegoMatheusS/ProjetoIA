@@ -4,7 +4,7 @@ import re
 import unicodedata
 from ..extractors.category import detect_category
 
-ACCESSORIES = r"adaptador|suporte|cabo|capa|pelicula|carcaca|waterblock|backplate|cooler|ventoinha|dissipador|fan|refil|recarga|pecas?|reposicao|reparo|conector|bateria|fonte|placa\s+logica|kit\s+(?:de\s+)?upgrade"
+ACCESSORIES = r"adaptador|suporte|cabo|capa|pelicula|carcaca|waterblock|backplate|cooler|ventoinha|dissipador|fan|carregador|estojo|almofadas?|espumas?|earpads?|bolsa|protetor|parafuso|bracket|riser|extensor|teclado|mouse|refil|recarga|pecas?|reposicao|reparo|conector|bateria|fonte|placa\s+logica|kit\s+(?:de\s+)?upgrade"
 MAIN = r"placa\s+(?:de\s+video|mae)|processador|memoria(?:\s+ram)?|notebook|computador|pc\s+gamer|ssd|cartucho|toner|impressora|monitor|mouse|teclado|headset|celular|smartphone|fonte|rtx\s*\d|gtx\s*\d|radeon|ryzen|geforce|\brx\s*\d|\bb\d{3}"
 STOP = {
     "de",
