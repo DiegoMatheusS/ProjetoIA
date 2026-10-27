@@ -1,6 +1,7 @@
 """Conteúdo de cadastro: identidade curta e fatos técnicos, sem texto comercial."""
 from __future__ import annotations
 
+from .catalog_specs import technical_attribute, technical_attributes
 from copy import deepcopy
 from html import unescape
 import re
@@ -138,6 +139,8 @@ def technical_description(category, name, specs, original=None):
         if re.search(r"^(?:id|produtoId|hardwareId|criadoEm|atualizadoEm|nome|descricao|origem|fontes|url|metodo|__proto__|constructor|prototype)$|pre[cç]o|price|frete|shipping|hist[oó]ria|history", field, re.I):
             continue
         value = specs.get(field)
+        if not technical_attribute(field, value):
+            continue
         if value is None or value == "" or value == []:
             continue
         rendered = field_value(field, value)
@@ -159,6 +162,19 @@ def refine_catalog_result(result):
         return result
     result = deepcopy(result)
     payload = result["payloadParcialBackend"]
+    for key in ('especificacoesEncontradas',):
+        if isinstance(result.get(key), dict):
+            result[key] = {k: v for k, v in result[key].items() if technical_attribute(k, v)}
+    if isinstance(result.get('informacoesProdutoEncontradas'), list):
+        result['informacoesProdutoEncontradas'] = technical_attributes(result['informacoesProdutoEncontradas'])
+    metadata = payload.get('metadados')
+    if isinstance(metadata, dict):
+        for key in ('atributosColetados', 'informacoesProdutoEncontradas'):
+            if isinstance(metadata.get(key), list):
+                metadata[key] = technical_attributes(metadata[key])
+        for key in ('especificacoes', 'especificacoesEncontradas'):
+            if isinstance(metadata.get(key), dict):
+                metadata[key] = {k: v for k, v in metadata[key].items() if technical_attribute(k, v)}
     if not payload.get("nome"):
         return result
     category = str(result.get("categoriaDetectada") or payload.get("categoria") or "").upper()
