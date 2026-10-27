@@ -3,7 +3,7 @@ import re
 import unicodedata
 from html import unescape
 
-NON_TECHNICAL = r"avaliac|customer\s*reviews?|\bratings?\b|review\s*count|feedback|ranking|sales\s*rank\b|best\s*seller|mais\s*vendid|classificacao\s*(?:dos|de)\s*mais|parcel|installment|pagamento|payment|preco|price|frete|shipping|entrega|delivery|prazo|vendedor|seller|vendido\s*por|loja\b|estoque|stock|disponibilidade|availability|date\s*first\s*available|disponivel\s*(?:para\s*compra\s*)?desde|devoluc|return\s*policy|compras?\s*no\s*mes"
+NON_TECHNICAL = r"avaliac|customer\s*reviews?|^\s*ratings?\s*$|(?:customer|user)\s*ratings?|review\s*count|feedback|ranking|sales\s*rank\b|best\s*seller|mais\s*vendid|classificacao\s*(?:dos|de)\s*mais|parcel|installment|pagamento|payment|preco|price|frete|shipping|entrega|delivery|prazo|vendedor|seller|vendido\s*por|loja\b|estoque|stock|disponibilidade|availability|date\s*first\s*available|disponivel\s*(?:para\s*compra\s*)?desde|devoluc|return\s*policy|compras?\s*no\s*mes"
 SCRIPT = r"<\s*(?:script|style)\b|\b(?:var|let|const)\s+\w+\s*[=;]|\bfunction\s*\(|=>\s*\{|\b(?:window|document)\s*[.\[]|\bP\.when\s*\(|\bue\.count\s*\("
 
 

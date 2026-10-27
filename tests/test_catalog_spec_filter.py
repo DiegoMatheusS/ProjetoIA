@@ -14,7 +14,7 @@ def test_discards_commercial_fields_and_scripts(key,value):
  assert not technical_attribute(key,value)
 
 @pytest.mark.parametrize('key,value', [
- ('Material', 'Plástico'), ('Rank', 'Dual Rank'), ('Cor', 'Preto'), ('Modelo', 'F6V29AB'),
+ ('Material', 'Plástico'), ('Rank', 'Dual Rank'), ('IP rating', 'IP67'), ('Power rating', '650 W'), ('Cor', 'Preto'), ('Modelo', 'F6V29AB'),
  ('Capacidade', '2 ml'), ('Compatibilidade', 'HP DeskJet 2136, 2676, 3776'),
  ('Rendimento de páginas', '120 páginas'), ('Duplex', False), ('Consumo em espera', 0),
  ('Composição', ['Polipropileno', 'Tinta pigmentada']),
