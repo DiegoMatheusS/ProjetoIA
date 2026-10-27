@@ -1,3 +1,4 @@
+from .offers.discovery_router import router as offer_discovery_router
 from .api import app
 from .auth.mercadolivre_router import router as mercadolivre_oauth_router
 from .mercadolivre.router import router as mercadolivre_api_router
@@ -8,6 +9,7 @@ from .extension.router_v2 import router as browser_extension_v2_router
 from .build_detection.router import router as build_listing_router
 from .operations import router as operations_router
 
+app.include_router(offer_discovery_router)
 app.include_router(shopee_router)
 app.include_router(mercadolivre_oauth_router)
 app.include_router(mercadolivre_api_router)

@@ -1,0 +1,167 @@
+[
+  [
+    "RTX 4060",
+    "Placa de vídeo ASUS RTX 4060 8GB GDDR6",
+    true
+  ],
+  [
+    "RTX4060",
+    "MSI GeForce RTX 4060 8GB",
+    true
+  ],
+  [
+    "RTX 4060",
+    "Suporte vertical para RTX 4060",
+    false
+  ],
+  [
+    "RTX 4060",
+    "ASUS adaptador para RTX 4060",
+    false
+  ],
+  [
+    "RTX 4060",
+    "Cabo de alimentação RTX 4060",
+    false
+  ],
+  [
+    "RTX 4060",
+    "Cooler de reposição para RTX 4060",
+    false
+  ],
+  [
+    "RTX 4060",
+    "Notebook Gamer RTX 4060",
+    false
+  ],
+  [
+    "RTX 4060",
+    "Placa RTX 4060 Ti 8GB",
+    false
+  ],
+  [
+    "RTX 4060 Ti",
+    "Placa RTX 4060 8GB",
+    false
+  ],
+  [
+    "RTX 4060 Ti",
+    "ASUS RTX 4060 Ti 8GB",
+    true
+  ],
+  [
+    "RTX 4060",
+    "Placa de vídeo RTX 4060 com cabo incluso",
+    true
+  ],
+  [
+    "placa de video",
+    "Processador Ryzen 5 5600",
+    false
+  ],
+  [
+    "adaptador RTX 4060",
+    "Adaptador para RTX 4060",
+    true
+  ],
+  [
+    "B550M",
+    "ASUS Placa mãe B550M",
+    true
+  ],
+  [
+    "B550M",
+    "Suporte para B550M",
+    false
+  ],
+  [
+    "Ryzen 5600G",
+    "Processador AMD Ryzen 5 5600G",
+    true
+  ],
+  [
+    "Ryzen 5600",
+    "Processador AMD Ryzen 5 5600G",
+    false
+  ],
+  [
+    "Ryzen 5600",
+    "Cooler compatível Ryzen 5600",
+    false
+  ],
+  [
+    "DDR4 16GB",
+    "Kingston Memória RAM DDR4 16GB 3200MHz",
+    true
+  ],
+  [
+    "DDR4 16GB",
+    "Memória RAM DDR4 8GB 3200MHz",
+    false
+  ],
+  [
+    "notebook Acer",
+    "Fonte para notebook Acer 19V",
+    false
+  ],
+  [
+    "pc gamer",
+    "Computador gamer Ryzen 5 5600 SSD 512GB 16GB RAM",
+    true
+  ],
+  [
+    "cartucho HP 664",
+    "Cartucho de tinta HP 664 Preto",
+    true
+  ],
+  [
+    "cartucho HP 664",
+    "Tinta recarga para cartucho HP 664",
+    false
+  ],
+  [
+    "fonte 650W",
+    "Fonte ATX Corsair 650W",
+    true
+  ],
+  [
+    "mouse Logitech G203",
+    "Mouse Logitech G203 USB",
+    true
+  ],
+  [
+    "mouse Logitech G203",
+    "Cabo reposição Mouse Logitech G203",
+    false
+  ],
+  [
+    "RX 7700XT",
+    "Radeon RX 7700 XT 12GB",
+    true
+  ],
+  [
+    "RX 7700",
+    "Radeon RX 7700 XT 12GB",
+    false
+  ],
+  [
+    "RTX4060Ti",
+    "MSI RTX 4060 Ti 8GB",
+    true
+  ],
+  [
+    "notebook Dell Latitude 5420",
+    "Dell Teclado para notebook Latitude 5420",
+    false
+  ],
+  [
+    "celular Samsung A55",
+    "Carregador para celular Samsung A55",
+    false
+  ],
+  [
+    "headset HyperX Cloud III",
+    "Almofadas para headset HyperX Cloud III",
+    false
+  ]
+]
