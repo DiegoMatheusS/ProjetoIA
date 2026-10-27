@@ -1,3 +1,4 @@
+from ..catalog_specs import technical_attribute
 """Pesquisa de Produtos cuja ficha fica em metadados, com evidência por campo."""
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -58,7 +59,7 @@ def research_product_specs(*, category, payload, name=None, providers=None, time
                     if not isinstance(row, dict):
                         continue
                     key, value = plain_text(row.get("name")), plain_text(row.get("value_name"))
-                    if not key or not value or len(key)>80 or len(value)>180 or _EXCLUDE.search(key) or key.casefold() in _DANGEROUS:
+                    if not technical_attribute(key, value) or not key or not value or len(key)>80 or len(value)>180 or _EXCLUDE.search(key) or key.casefold() in _DANGEROUS:
                         continue
                     found[key] = value
                     evidence[key] = {"url": row.get("source_url") or source.get("url"), "fonte": source.get("fonte") or provider.name, "trecho": f"{key}: {value}", "valor": value, "metodo": "EXTRACAO_DETERMINISTICA"}

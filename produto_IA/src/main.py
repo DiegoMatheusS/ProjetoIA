@@ -1,3 +1,4 @@
+from .catalog_specs import technical_attributes
 import argparse
 import json
 import os
@@ -174,6 +175,8 @@ def _category_hint_from_product_url(url):
 
 
 def build_result(raw, forced_category=None):
+    raw = {**raw, 'attributes': technical_attributes(raw.get('attributes')),
+           'product_attributes': technical_attributes(raw.get('product_attributes'))}
     blocked = bool(raw.get("blocked"))
     text = "\n".join(filter(None, [
         raw.get("title"),

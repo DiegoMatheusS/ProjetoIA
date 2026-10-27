@@ -50,3 +50,8 @@ test('somente parcelas ou preço anterior não viram preço à vista', () => {
   const result = execute({ prices: [price('3.000', '00', { previous: true }), price('250', '00', { context: '12x sem juros' })] })
   assert.equal(Object.hasOwn(result, 'preco'), false)
 })
+
+test('captura preserva material e compatibilidade, descartando avaliações e scripts', () => {
+  const result=execute({rows:[row('Material','Plástico'),row('Compatibilidade','HP DeskJet 2136, 2676'),row('Avaliações de clientes',"4,7 var dpAcrHasRegisteredArcLinkClickAction; P.when('A')"),row('Ranking dos mais vendidos','#1'),row('Prazo','Amanhã'),row('Parcelas','10x sem juros'),row('Cor','window.ue.count("x")')]})
+  assert.deepEqual(Array.from(result.atributos,item=>item.name),['Material','Compatibilidade'])
+})
