@@ -14,6 +14,7 @@ from ..enrichment.search import WebSearchResolver
 from ..shopee.agent import ShopeeAffiliateAgent
 from ..shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
 from .store_candidates import StoreCandidates, is_product_url
+from .search_intent import same_item_kind
 
 
 router = APIRouter(prefix="/ofertas", tags=["Ofertas idênticas"])
@@ -73,6 +74,8 @@ def _variant_conflict(payload: IdenticalProductOffersRequest, title: Any) -> boo
 
 
 def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, Any]) -> tuple[bool, str | None]:
+    if not same_item_kind(payload.nome, raw.get("title")):
+        return False, None
     gtin, found_gtin = _digits(payload.gtin), _digits(raw.get("gtin"))
     mpn, found_mpn = _norm(payload.mpn), _norm(raw.get("mpn"))
     # A conflicting explicit identifier must never fall back to a similar title.
@@ -97,7 +100,7 @@ def _identity_match_raw(payload: IdenticalProductOffersRequest, raw: dict[str, A
 
 
 def _identity_match_marketplace_name(payload: IdenticalProductOffersRequest, title: Any) -> tuple[bool, str | None]:
-    if not title or _variant_conflict(payload, title):
+    if not title or not same_item_kind(payload.nome, title) or _variant_conflict(payload, title):
         return False, None
     gtin = _digits(payload.gtin)
     if gtin and len(gtin) >= 8 and re.search(r"(?<!\d)" + re.escape(gtin) + r"(?!\d)", str(title)):
