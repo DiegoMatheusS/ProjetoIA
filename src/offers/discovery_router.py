@@ -1,4 +1,4 @@
-"""Busca administrativa de novos itens em Mercado Livre e Magalu."""
+"""Busca administrativa de novos itens em Mercado Livre, Magalu e Amazon."""
 
 from __future__ import annotations
 import asyncio
@@ -7,10 +7,10 @@ import hmac
 import math
 import time
 from typing import Literal
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from .store_candidates import StoreCandidates, is_product_url
+from .store_candidates import StoreCandidates, is_product_url, store_search_url
 from .search_intent import matches_search, sold_kind, normalized
 
 router = APIRouter(prefix="/ofertas", tags=["Descoberta de ofertas"])
@@ -18,7 +18,7 @@ _slots = asyncio.Semaphore(2)
 
 
 class OfferDiscoveryRequest(BaseModel):
-    loja: Literal["MERCADO_LIVRE", "MAGALU"]
+    loja: Literal["MERCADO_LIVRE", "MAGALU", "AMAZON"]
     consulta: str = Field(min_length=2, max_length=300)
     limite: int = Field(default=24, ge=1, le=100)
     somentePromocoes: bool = False
@@ -43,6 +43,12 @@ def search_offers(payload, factory=StoreCandidates):
     source = factory(payload.loja, deadline)
     candidates, api_status = source.api_results(payload.consulta, payload.limite)
     warnings = []
+    candidates = [
+        candidate for candidate in candidates
+        if matches_search(payload.consulta, (candidate.get("raw") or {}).get("title"))
+        and (candidate.get("raw") or {}).get("available") is not False
+        and number((candidate.get("raw") or {}).get("price")) is not None
+    ]
     if not candidates:
         candidates, status = source.listing_results(
             payload.consulta, min(payload.limite, 12)
@@ -107,11 +113,11 @@ def search_offers(payload, factory=StoreCandidates):
                 "shopId": str(raw.get("seller_id") or ""),
                 "loja": raw.get("seller_name") or "",
                 "marketplace": payload.loja,
-                "parceiroNome": (
-                    "Mercado Livre"
-                    if payload.loja == "MERCADO_LIVRE"
-                    else "Magazine Luiza"
-                ),
+                "parceiroNome": {
+                    "MERCADO_LIVRE": "Mercado Livre",
+                    "MAGALU": "Magazine Luiza",
+                    "AMAZON": "Amazon",
+                }[payload.loja],
                 "fonte": raw.get("source") or "PAGINA_PUBLICA",
                 "apiOficial": bool(raw.get("api_used")),
             }
@@ -126,19 +132,11 @@ def search_offers(payload, factory=StoreCandidates):
         warnings.append(
             "A loja não liberou a leitura agora. Abra a busca na loja e use a extensão no anúncio desejado."
         )
-    url = (
-        "https://lista.mercadolivre.com.br/"
-        + quote(payload.consulta.replace(" ", "-"), safe="")
-        if payload.loja == "MERCADO_LIVRE"
-        else "https://www.magazineluiza.com.br/busca/"
-        + quote(payload.consulta, safe="")
-        + "/"
-    )
     return {
         "itens": items,
         "avisos": warnings,
         "statusBusca": status,
-        "urlBusca": url,
+        "urlBusca": store_search_url(payload.loja, payload.consulta),
         "loja": payload.loja,
     }
 

@@ -51,7 +51,8 @@ def normalized(value):
     )
     text = re.sub(r"\b(rtx|gtx|rx|ddr)(?=\d)", r"\1 ", text)
     text = re.sub(r"\b((?:rtx|gtx|rx)\s*\d{3,4})\s*(ti|super|xtx|xt|gre)\b", r"\1 \2", text)
-    text = re.sub(r"(\d)\s*(gb|tb|mhz|ghz)\b", r"\1 \2", text)
+    text = re.sub(r"(\d)\s*(?:watts?|w)\b", r"\1 w", text)
+    text = re.sub(r"(\d)\s*(gb|tb|mb|mhz|ghz|hz)\b", r"\1 \2", text)
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
@@ -80,11 +81,16 @@ def same_item_kind(query, title):
     return True
 
 
+def matches_quantities(query, title):
+    pattern = r"\b(\d+)\s*(gb|tb|mb|mhz|ghz|hz|w)\b"
+    return set(re.findall(pattern, query)).issubset(re.findall(pattern, title))
+
+
 def matches_search(query, title):
     q, t = normalized(query), normalized(title)
     if not q or not t:
         return False
-    if not same_item_kind(q, t):
+    if not same_item_kind(q, t) or not matches_quantities(q, t):
         return False
     terms = [w for w in q.split() if w not in STOP]
     words = set(t.split())
