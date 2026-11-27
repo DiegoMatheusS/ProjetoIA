@@ -44,6 +44,11 @@ def normalized(value):
         for c in unicodedata.normalize("NFKD", str(value or ""))
         if not unicodedata.combining(c)
     ).lower()
+    text = re.sub(
+        r"\b(i[3579])\s*-?\s*(\d{4,5})(?:\s*(kf|ks|k|f|t|hx|hk|h|p|u))?\b",
+        lambda match: f"{match[1]} {match[2]}{match[3] or ''}",
+        text,
+    )
     text = re.sub(r"\b(rtx|gtx|rx|ddr)(?=\d)", r"\1 ", text)
     text = re.sub(r"\b((?:rtx|gtx|rx)\s*\d{3,4})\s*(ti|super|xtx|xt|gre)\b", r"\1 \2", text)
     text = re.sub(r"(\d)\s*(gb|tb|mhz|ghz)\b", r"\1 \2", text)

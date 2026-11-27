@@ -1,4 +1,7 @@
 [
+  ["i512400F", "Processador Intel Core i5-12400 F", true],
+  ["i5 12400", "Processador Intel Core i5-12400F", false],
+  ["i512400F", "Cooler para Intel Core i5-12400F", false],
   [
     "RTX 4060",
     "Placa de vídeo ASUS RTX 4060 8GB GDDR6",
