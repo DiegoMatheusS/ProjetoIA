@@ -24,7 +24,7 @@ class Source:
         self.store = store
 
     def api_results(self, q, limit):
-        if self.store == "MAGALU":
+        if self.store != "MERCADO_LIVRE":
             return [], "NAO_CONFIGURADA"
 
         def row(title, index, price=1999):
@@ -51,7 +51,11 @@ class Source:
     def listing_results(self, q, limit):
         return [
             {
-                "url": "https://www.magazineluiza.com.br/placa-rtx-4060/p/abcd1234/in/pcvd/"
+                "url": (
+                    "https://www.amazon.com.br/dp/B012345678"
+                    if self.store == "AMAZON"
+                    else "https://www.magazineluiza.com.br/placa-rtx-4060/p/abcd1234/in/pcvd/"
+                )
             }
         ], "ENCONTRADO"
 
@@ -65,7 +69,7 @@ class Source:
         }
 
 
-@pytest.mark.parametrize("store", ["MERCADO_LIVRE", "MAGALU"])
+@pytest.mark.parametrize("store", ["MERCADO_LIVRE", "MAGALU", "AMAZON"])
 def test_shop_results_are_confirmed_and_never_invent_an_affiliate_url(store):
     result = search_offers(
         OfferDiscoveryRequest(loja=store, consulta="RTX 4060"), factory=Source
@@ -73,7 +77,7 @@ def test_shop_results_are_confirmed_and_never_invent_an_affiliate_url(store):
     assert len(result["itens"]) == 1
     assert result["itens"][0]["urlAfiliada"] is None
     assert result["itens"][0]["parceiroNome"] == (
-        "Mercado Livre" if store == "MERCADO_LIVRE" else "Magazine Luiza"
+        {"MERCADO_LIVRE": "Mercado Livre", "MAGALU": "Magazine Luiza", "AMAZON": "Amazon"}[store]
     )
     assert result["itens"][0]["preco"] > 0
 
@@ -150,3 +154,32 @@ def test_identical_offers_do_not_accept_an_accessory_that_quotes_the_target_mode
     assert _identity_match_raw(
         target, {"title": "ASUS RTX 4060 8GB", "gtin": "7891234567895"}
     ) == (True, "GTIN")
+
+
+def test_mercado_livre_uses_listing_when_api_finds_only_accessories():
+    class FallbackSource(Source):
+        def api_results(self, query, limit):
+            rows, status = super().api_results(query, limit)
+            return rows[:1], status
+
+        def listing_results(self, query, limit):
+            return [{"url": "https://produto.mercadolivre.com.br/MLB-987654"}], "ENCONTRADO"
+
+    result = search_offers(
+        OfferDiscoveryRequest(loja="MERCADO_LIVRE", consulta="RTX 4060"),
+        factory=FallbackSource,
+    )
+
+    assert len(result["itens"]) == 1
+    assert result["itens"][0]["urlOriginal"].endswith("MLB-987654")
+
+
+def test_ram_capacity_and_speed_are_matched_as_number_unit_pairs():
+    from src.shopee.relevance import relevant_item
+
+    query = "DDR4 16GB 3200MHz"
+    wrong = "Memória RAM DDR4 8 GB 3200 MHz CL 16"
+    correct = "Memória RAM DDR4 16 GB 3200 MHz"
+    for title, expected in [(wrong, False), (correct, True)]:
+        assert matches_search(query, title) is expected
+        assert relevant_item({"nome": title}, query) is expected

@@ -2,6 +2,8 @@
 import re
 import unicodedata
 
+from ..offers.search_intent import matches_quantities, normalized as normalize_model
+
 
 def normalized(text):
     value = unicodedata.normalize('NFKD', str(text or '').casefold())
@@ -89,6 +91,8 @@ def relevant_item(item, query, intent=None):
     if not wanted.strip():
         return True  # Resolução por IDs não depende do nome do anúncio.
     title = normalized(item.get('nome'))
+    if not matches_quantities(normalize_model(query), normalize_model(title)):
+        return False
     intent = intent or search_intent(wanted)
     title_signals = _signals(title)
     if intent and (not title_signals or title_signals[0][2] != intent):

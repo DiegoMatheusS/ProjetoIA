@@ -98,6 +98,18 @@ def listing_candidates(html, base_url, store, limit):
     return found
 
 
+def store_search_url(store, query):
+    if store == "MAGALU":
+        return "https://www.magazineluiza.com.br/busca/" + quote(query, safe="") + "/"
+    if store == "SHOPEE":
+        return "https://shopee.com.br/search?keyword=" + quote(query, safe="")
+    if store == "MERCADO_LIVRE":
+        return "https://lista.mercadolivre.com.br/" + quote(query.replace(" ", "-"), safe="")
+    if store == "AMAZON":
+        return "https://www.amazon.com.br/s?k=" + quote(query, safe="")
+    return None
+
+
 class StoreCandidates:
     def __init__(self, store, deadline):
         self.store, self.deadline = store, deadline
@@ -156,15 +168,8 @@ class StoreCandidates:
             deadline=min(self.deadline, time.monotonic() + 8), rate_limiter=self.public.rate_limiter)
 
     def listing_results(self, query, limit):
-        if self.store == "MAGALU":
-            url = "https://www.magazineluiza.com.br/busca/" + quote(query, safe="") + "/"
-        elif self.store == "SHOPEE":
-            url = "https://shopee.com.br/search?keyword=" + quote(query, safe="")
-        elif self.store == "MERCADO_LIVRE":
-            url = "https://lista.mercadolivre.com.br/" + quote(query.replace(" ", "-"), safe="")
-        else:
-            # Para as demais lojas, a descoberta é feita pelo resolver web com
-            # domínio restrito. Evita depender de URLs internas de busca que mudam.
+        url = store_search_url(self.store, query)
+        if url is None:
             return [], "NAO_SUPORTADA"
         try:
             page = self._page(url)
