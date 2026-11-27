@@ -54,6 +54,26 @@ def test_amazon_keeps_bullets_description_and_aplus_without_nested_duplicates():
     assert raw['description'].count('Detalhes do fabricante') == 1
 
 
+def test_amazon_extracts_model_and_part_number_from_technical_details():
+    html = '''
+      <h1>Memória Kingston Fury Beast 16 GB DDR4 3200 MHz</h1>
+      <div id="detailBullets_feature_div"><ul>
+        <li><span class="a-list-item"><span>Número do modelo do produto ‏ : ‎</span><span>Fury Beast</span></span></li>
+        <li><span class="a-list-item"><span>Número da peça ‏ : ‎</span><span>‎KF432C16BB/16</span></span></li>
+        <li><span class="a-list-item"><span>Fabricante:</span><span>Kingston</span></span></li>
+        <li><span class="a-list-item"><span>ASIN:</span><span>B012345678</span></span></li>
+      </ul></div>
+    '''
+    url = 'https://www.amazon.com.br/dp/B012345678'
+    raw = GenericScraper()._parse_html(url, url, html)
+    payload = build_result(raw, 'MEMORIA_RAM')['payloadParcialBackend']
+
+    assert payload['modelo'] == 'Fury Beast'
+    assert payload['mpn'] == 'KF432C16BB/16'
+    assert payload['marca'] == 'Kingston'
+    assert payload['gtin'] is None
+
+
 def test_technical_ai_cannot_overwrite_seller_description(monkeypatch):
     monkeypatch.setattr('src.technical_ai.auto.maybe_auto_enrich_hardware', lambda **kwargs: {
         'utilizado': True, 'payload': {**kwargs['payload'], 'descricao': 'Resumo inventado'},

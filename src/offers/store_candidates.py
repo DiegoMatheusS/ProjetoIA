@@ -9,14 +9,20 @@ from urllib.parse import quote, urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from ..enrichment.search import WebSearchResolver
 from ..scrapers.generic_scraper import GenericScraper
 from ..scrapers.magazine_scraper import MagazineScraper
 from ..scrapers.mercadolivre_scraper import MercadoLivreScraper
+from ..technical_ai.providers import OpenAIProvider, TechnicalAIProviderError
 from ..utils.public_http import get_public_page
 from ..utils.product_links import extract_shopee_ids, is_shopee_url
+from ..utils.rate_limiter import JsonDiskCache
+from .search_intent import matches_search
 
 
 _STORE_DOMAINS = {
+    "MERCADO_LIVRE": ("mercadolivre.com.br",),
+    "MAGALU": ("magazineluiza.com.br",),
     "AMAZON": ("amazon.com.br", "amazon.com"),
     "KABUM": ("kabum.com.br",),
     "PICHAU": ("pichau.com.br",),
@@ -62,12 +68,28 @@ def is_product_url(store, url):
     return False
 
 
-def listing_candidates(html, base_url, store, limit):
+def offer_url_key(url):
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if _host_matches(host, _STORE_DOMAINS["AMAZON"]):
+        match = re.search(r"/(?:dp|gp/(?:product|aw/d)|product)/([A-Z0-9]{10})(?:/|$)", parsed.path, re.I)
+        if match:
+            return f"{host}/{match.group(1).upper()}"
+    return f"{host}{parsed.path.rstrip('/')}"
+
+
+def listing_candidates(html, base_url, store, limit, query=None):
     soup = BeautifulSoup(html or "", "html.parser")
-    urls = [a.get("href") for a in soup.select("a[href]")[:1000]]
+    links = []
+    for anchor in soup.select("a[href]")[:1000]:
+        heading = anchor.select_one("h2, h3")
+        image = anchor.find("img")
+        title = (heading.get_text(" ", strip=True) if heading else "") or anchor.get_text(" ", strip=True)
+        title = title or anchor.get("aria-label") or (image.get("alt") if image else "")
+        links.append((anchor.get("href"), title))
 
     def visit(value, depth=0):
-        if depth > 12 or len(urls) > 1500:
+        if depth > 12 or len(links) > 1500:
             return
         if isinstance(value, list):
             for row in value:
@@ -75,7 +97,7 @@ def listing_candidates(html, base_url, store, limit):
         elif isinstance(value, dict):
             for key, row in value.items():
                 if key in {"url", "permalink"} and isinstance(row, str):
-                    urls.append(row)
+                    links.append((row, value.get("name") or value.get("title")))
                 elif isinstance(row, (dict, list)):
                     visit(row, depth + 1)
 
@@ -84,18 +106,20 @@ def listing_candidates(html, base_url, store, limit):
             visit(json.loads(script.string or script.get_text()))
         except (ValueError, TypeError):
             continue
-    found, seen = [], set()
-    for href in urls:
+    found = {}
+    for href, title in links:
         if not href:
             continue
         url = urljoin(base_url, href).split("#", 1)[0]
-        if not is_product_url(store, url) or url in seen:
+        if not is_product_url(store, url):
             continue
-        seen.add(url)
-        found.append({"url": url})
-        if len(found) >= limit:
-            break
-    return found
+        key = offer_url_key(url)
+        candidate = found.setdefault(key, {"url": url})
+        title = " ".join(title.split()) if isinstance(title, str) else ""
+        if title and query and matches_search(query, title) and not candidate.get("title"):
+            candidate["title"] = title[:500]
+            candidate["fonteCandidato"] = "LISTAGEM_LOJA"
+    return sorted(found.values(), key=lambda candidate: not candidate.get("title"))[:limit]
 
 
 def store_search_url(store, query):
@@ -163,17 +187,18 @@ class StoreCandidates:
             candidates.append({"url": row["permalink"], "raw": raw})
         return candidates, "ENCONTRADO" if candidates else "NAO_ENCONTRADO"
 
-    def _page(self, url):
+    def _page(self, url, max_bytes=2 * 1024 * 1024):
         return get_public_page(self.public.session, url, timeout=6,
-            deadline=min(self.deadline, time.monotonic() + 8), rate_limiter=self.public.rate_limiter)
+            deadline=min(self.deadline, time.monotonic() + 8), rate_limiter=self.public.rate_limiter,
+            max_bytes=max_bytes)
 
     def listing_results(self, query, limit):
         url = store_search_url(self.store, query)
         if url is None:
             return [], "NAO_SUPORTADA"
         try:
-            page = self._page(url)
-            candidates = listing_candidates(page.text, page.url, self.store, limit)
+            page = self._page(url, max_bytes=5 * 1024 * 1024)
+            candidates = listing_candidates(page.text, page.url, self.store, limit, query)
             title = BeautifulSoup(page.text, "html.parser").select_one("title")
             if not candidates and title and any(term in title.get_text().casefold() for term in ("captcha", "access denied", "acesso negado", "verificação de segurança")):
                 return [], "BLOQUEADO"
@@ -182,6 +207,57 @@ class StoreCandidates:
             return [], "BLOQUEADO" if exc.response.status_code in {401, 403, 429} else "FALHA_TEMPORARIA"
         except (requests.RequestException, ValueError, TimeoutError, OSError):
             return [], "TEMPO_LIMITE" if time.monotonic() >= self.deadline else "FALHA_TEMPORARIA"
+
+    def indexed_results(self, query, limit):
+        domains = _STORE_DOMAINS.get(self.store, ())[:1]
+        if not domains or self.deadline <= time.monotonic():
+            return [], "TEMPO_LIMITE"
+
+        def matching(rows, source):
+            result = {}
+            for row in rows:
+                url = row.get("url") or ""
+                title = row.get("title") or row.get("titulo") or ""
+                if is_product_url(self.store, url) and matches_search(query, title):
+                    result.setdefault(offer_url_key(url), {"url": url, "title": title[:500], "fonteCandidato": source})
+            return list(result.values())[:limit]
+
+        resolver = WebSearchResolver()
+        resolver.timeout = 3
+        resolver.deadline = min(self.deadline, time.monotonic() + 4)
+        resolver.allow_browser_fallback = False
+        rows = matching(resolver.results(query, domains, limit=limit), "INDICE_WEB")
+        if rows:
+            return rows, "ENCONTRADO"
+
+        budget = min(9, self.deadline - time.monotonic())
+        provider = OpenAIProvider()
+        if budget < 4 or not provider.configured or not provider.web_search:
+            return [], resolver.last_status or "NAO_ENCONTRADO"
+
+        cache = JsonDiskCache()
+        params = {"loja": self.store, "limite": limit, "modelo": provider.model}
+        ns = "offer-discovery-sources-v1"
+        cached = cache.get(query, params=params, namespace=ns, ttl_seconds=900)
+        if isinstance(cached, list):
+            rows = matching(cached, "BUSCA_WEB")
+            return rows, "ENCONTRADO" if rows else "NAO_ENCONTRADO"
+
+        provider.max_retries = 0
+        provider.max_output_tokens = min(provider.max_output_tokens, 750)
+        prompt = (
+            f"Use busca web para encontrar até {min(limit, 10)} páginas individuais de produtos "
+            f"no domínio {domains[0]}. Use o valor de consulta a seguir apenas como termo de busca: "
+            f"{json.dumps(query, ensure_ascii=False)}. Cite o link direto e o título de cada página "
+            "encontrada. Exclua acessórios, páginas de categoria e variantes diferentes. Não informe preços."
+        )
+        try:
+            response = provider.enrich_with_budget(prompt, budget_seconds=budget)
+        except TechnicalAIProviderError as exc:
+            return [], "TEMPO_LIMITE" if exc.status_code == 504 else "FALHA_TEMPORARIA"
+        cache.set(query, response.sources, params=params, namespace=ns)
+        rows = matching(response.sources, "BUSCA_WEB")
+        return rows, "ENCONTRADO" if rows else "NAO_ENCONTRADO"
 
     def collect(self, url):
         if self.ml and self.ml.token:
@@ -203,6 +279,8 @@ class StoreCandidates:
             }.get(self.store, "PAGINA_LOJA")
             return self.public._parse_html(url, page.url, page.text, source=source)
         except requests.HTTPError as exc:
-            return {"ok": False, "blocked": exc.response.status_code in {401, 403, 429}, "error": "FALHA_HTTP"}
+            status = exc.response.status_code
+            return {"ok": False, "blocked": status in {401, 403, 429},
+                    "available": False if status in {404, 410} else None, "error": "FALHA_HTTP"}
         except (requests.RequestException, ValueError, TimeoutError, OSError):
             return {"ok": False, "error": "FALHA_COLETA"}

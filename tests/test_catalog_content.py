@@ -42,6 +42,25 @@ def test_original_listing_survives_technical_catalog_summary():
     assert 'história' not in result['payloadParcialBackend']['descricao']
 
 
+def test_discovered_hardware_description_uses_normalized_specs_and_skips_conflicts():
+    from src.api import _discovery_payload
+
+    result = _discovery_payload('MEMORIA_RAM', {
+        'payload': {
+            'nome': 'Kingston Fury Beast KF432C16BB/16', 'categoria': 'MEMORIA_RAM',
+            'descricao': 'Conheça nossa história! Frete grátis.',
+            'especificacaoMemoriaRam': {
+                'tipo': 'DDR4', 'capacidadePorModuloGb': 16, 'frequenciaMhz': 3200,
+                'latenciaCl': 16,
+            },
+        },
+        'conflitos': [{'campo': 'especificacaoMemoriaRam.latenciaCl'}],
+    })
+
+    assert '16 GB' in result['descricao'] and '3200 MHz' in result['descricao']
+    assert 'Latência' not in result['descricao'] and 'Frete' not in result['descricao']
+
+
 def test_multiword_commercial_model_is_specific_but_adjectives_are_not():
     assert identity_is_strong(build_identity({'payloadParcialBackend': {'marca': 'HyperX', 'modelo': 'Cloud III'}}))
     assert not identity_is_strong(build_identity({'payloadParcialBackend': {'marca': 'HyperX', 'modelo': 'Wireless Pro'}}))

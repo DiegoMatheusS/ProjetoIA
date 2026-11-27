@@ -34,7 +34,7 @@ CATEGORIES = {
     "PC_MONTADO": "PC montado", "MICROFONE": "Microfone", "WEBCAM": "Webcam",
 }
 PRIORITIES = {
-    "PROCESSADOR": ("socket", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "cacheL3Mb", "tdpWatts", "modeloVideoIntegrado"),
+    "PROCESSADOR": ("socket", "nucleos", "threads", "frequenciaBaseMhz", "frequenciaTurboMhz", "cacheL3Mb", "tdpWatts", "possuiVideoIntegrado", "modeloVideoIntegrado", "tiposMemoriaSuportados"),
     "PLACA_VIDEO": ("gpu", "memoriaVideoGb", "tipoMemoriaVideo", "barramentoBits", "clockBoostMhz", "consumoWatts", "potenciaFonteRecomendadaWatts", "comprimentoMm", "saidasVideo"),
     "PLACA_MAE": ("socket", "chipset", "formato", "tiposMemoriaSuportados", "slotsMemoria", "capacidadeMaximaMemoriaGb", "portasSata", "wifi", "bluetooth"),
     "MEMORIA_RAM": ("tipo", "capacidadePorModuloGb", "quantidadeModulos", "frequenciaMhz", "latenciaCl", "tensaoVolts", "formato", "suportaXmp", "suportaExpo"),
@@ -53,6 +53,9 @@ LABELS = {
     "capacidadePorModuloGb": "Capacidade por módulo", "quantidadeModulos": "Módulos",
     "frequenciaMhz": "Frequência", "tensaoVolts": "Tensão", "latenciaCl": "Latência CL",
     "capacidadeGb": "Capacidade", "tipo": "Tipo", "formato": "Formato", "interface": "Interface",
+    "tiposMemoriaSuportados": "Tipos de memória suportados", "slotsMemoria": "Slots de memória",
+    "capacidadeMaximaMemoriaGb": "Capacidade máxima de RAM", "portasSata": "Portas SATA",
+    "wifi": "Wi-Fi", "possuiVideoIntegrado": "Possui vídeo integrado",
     "ramGb": "Memória RAM", "armazenamentoGb": "Armazenamento", "bateriaMah": "Bateria",
     "tamanhoTelaPolegadas": "Tela", "tamanhoPolegadas": "Tela", "resolucao": "Resolução",
     "taxaAtualizacaoHz": "Taxa de atualização", "tipoPainel": "Painel", "tempoRespostaMs": "Tempo de resposta",
@@ -126,17 +129,21 @@ def field_value(field, value):
     return rendered
 
 
-def technical_description(category, name, specs, original=None):
+def technical_description(category, name, specs, original=None, *, conflicts=()):
     category = str(category or "").upper()
     # No PC comercial, preservar configuração, acessórios e garantia informados
     # pelo anúncio: não reconstruir a máquina a partir de peças presumidas.
     if category == "PC_MONTADO" and plain_text(original):
         return plain_text(original)
     specs = specs if isinstance(specs, dict) else {}
+    disputed = {
+        str(item.get("campo") or "").rsplit(".", 1)[-1]
+        for item in conflicts if isinstance(item, dict)
+    }
     keys = list(dict.fromkeys([*PRIORITIES.get(category, ()), *specs.keys()]))
     facts = []
     for field in keys:
-        if re.search(r"^(?:id|produtoId|hardwareId|criadoEm|atualizadoEm|nome|descricao|origem|fontes|url|metodo|__proto__|constructor|prototype)$|pre[cç]o|price|frete|shipping|hist[oó]ria|history", field, re.I):
+        if field in disputed or re.search(r"^(?:id|produtoId|hardwareId|criadoEm|atualizadoEm|nome|descricao|origem|fontes|url|metodo|__proto__|constructor|prototype)$|pre[cç]o|price|frete|shipping|hist[oó]ria|history", field, re.I):
             continue
         value = specs.get(field)
         if not technical_attribute(field, value):
@@ -182,5 +189,12 @@ def refine_catalog_result(result):
     # O anúncio é preservado para auditoria e análise da composição de PCs.
     result.setdefault("descricaoAnuncio", payload.get("descricao"))
     specs = result.get("especificacoesEncontradas") or {}
-    payload["descricao"] = technical_description(category, payload["nome"], specs, payload.get("descricao"))
+    conflicts = [
+        *(result.get("conflitos") or []),
+        *((result.get("enriquecimentoTecnico") or {}).get("conflitos") or []),
+        *((result.get("iaTecnicaAutomatica") or {}).get("conflitos") or []),
+    ]
+    payload["descricao"] = technical_description(
+        category, payload["nome"], specs, payload.get("descricao"), conflicts=conflicts,
+    )
     return result

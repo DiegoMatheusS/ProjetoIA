@@ -59,6 +59,9 @@ class Source:
             }
         ], "ENCONTRADO"
 
+    def indexed_results(self, q, limit):
+        return [], "NAO_ENCONTRADO"
+
     def collect(self, url):
         return {
             "ok": True,
@@ -74,12 +77,59 @@ def test_shop_results_are_confirmed_and_never_invent_an_affiliate_url(store):
     result = search_offers(
         OfferDiscoveryRequest(loja=store, consulta="RTX 4060"), factory=Source
     )
-    assert len(result["itens"]) == 1
-    assert result["itens"][0]["urlAfiliada"] is None
+    confirmed = [item for item in result["itens"] if item["precoConfirmado"]]
+    assert len(confirmed) == 1
+    assert all(item["urlAfiliada"] is None for item in result["itens"])
     assert result["itens"][0]["parceiroNome"] == (
         {"MERCADO_LIVRE": "Mercado Livre", "MAGALU": "Magazine Luiza", "AMAZON": "Amazon"}[store]
     )
     assert result["itens"][0]["preco"] > 0
+
+
+@pytest.mark.parametrize("store,url", [
+    ("MERCADO_LIVRE", "https://produto.mercadolivre.com.br/MLB-987654"),
+    ("MAGALU", "https://www.magazineluiza.com.br/placa-rtx-4060/p/abcd1234/"),
+    ("AMAZON", "https://www.amazon.com.br/dp/B012345678"),
+])
+def test_indexed_listing_survives_blocked_detail_without_inventing_price(store, url):
+    class BlockedStore(Source):
+        def api_results(self, q, limit):
+            return [], "BLOQUEADO"
+
+        def listing_results(self, q, limit):
+            return [], "BLOQUEADO"
+
+        def indexed_results(self, q, limit):
+            return [{"url": url, "title": "ASUS GeForce RTX 4060 8GB", "fonteCandidato": "INDICE_WEB"}], "ENCONTRADO"
+
+        def collect(self, url):
+            return {"ok": False, "blocked": True, "price": 100}
+
+    result = search_offers(OfferDiscoveryRequest(loja=store, consulta="RTX 4060"), factory=BlockedStore)
+    assert result["statusBusca"] == "PARCIAL"
+    assert len(result["itens"]) == 1
+    item = result["itens"][0]
+    assert item["nome"] == "ASUS GeForce RTX 4060 8GB"
+    assert item["categoriaDetectada"] == "PLACA_VIDEO"
+    assert item["preco"] is None and not item["precoConfirmado"]
+    assert item["disponivel"] is None and not item["emPromocao"]
+    assert item["urlOriginal"] == url
+
+
+def test_storefront_prefers_exact_listing_titles_and_groups_amazon_links():
+    from src.offers.store_candidates import listing_candidates
+
+    rows = listing_candidates('''
+        <a href="/dp/B111111111?ref=first">Veja o produto</a>
+        <a href="/dp/B222222222?ref=image"><img alt="" /></a>
+        <a href="/ASUS/dp/B222222222?ref=title"><h2>ASUS RTX 4060 8GB</h2></a>
+        <a href="/dp/B333333333"><h2>Suporte para RTX 4060</h2></a>
+    ''', "https://www.amazon.com.br/s?k=RTX+4060", "AMAZON", 1, "RTX 4060")
+
+    assert rows == [{
+        "url": "https://www.amazon.com.br/dp/B222222222?ref=image",
+        "title": "ASUS RTX 4060 8GB", "fonteCandidato": "LISTAGEM_LOJA",
+    }]
 
 
 def test_promotions_filter_requires_a_real_previous_price():

@@ -13,6 +13,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from ..enrichment.search import WebSearchResolver
+from ..offers.search_intent import matches_model_query
 from ..scrapers.browser_scraper import BrowserScraper
 from ..utils.rate_limiter import PoliteRateLimiter
 from ..utils.normalizers import clean_text
@@ -318,11 +319,7 @@ class DiscoverySourceCatalog:
             }.get(brand, (brand,))
             if not any(alias in low for alias in aliases):
                 return False
-        if consulta:
-            tokens = [x for x in re.split(r"\s+", consulta.casefold().strip()) if x]
-            if tokens and not all(token in low for token in tokens):
-                return False
-        return True
+        return not consulta or not consulta.strip() or matches_model_query(consulta, name)
 
     @staticmethod
     def _dedupe(candidates: list[DiscoveryCandidate]) -> list[DiscoveryCandidate]:

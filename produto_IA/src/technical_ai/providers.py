@@ -132,15 +132,20 @@ class OpenAIProvider(TechnicalAIProvider):
     @staticmethod
     def _sources(data: dict[str, Any]) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
-        seen: set[str] = set()
+        seen: dict[str, dict[str, str]] = {}
 
         def add(url: Any, title: Any = "") -> None:
             clean_url = str(url or "").strip()
             clean_title = str(title or "").strip()
-            if not clean_url or clean_url in seen:
+            if not clean_url:
                 return
-            seen.add(clean_url)
-            out.append({"url": clean_url, "titulo": clean_title})
+            if clean_url in seen:
+                if clean_title and not seen[clean_url]["titulo"]:
+                    seen[clean_url]["titulo"] = clean_title
+                return
+            source = {"url": clean_url, "titulo": clean_title}
+            seen[clean_url] = source
+            out.append(source)
 
         for item in data.get("output") or []:
             if not isinstance(item, dict):
