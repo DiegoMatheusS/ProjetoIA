@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from urllib.parse import urljoin, urlparse
 
@@ -12,6 +13,8 @@ from ..utils.public_http import get_public_page
 from .product_page_crawler import ProductPageCrawler, merge_page_details, same_product
 from .storefront_html import storefront_fields
 from .listing_description import listing_description
+
+_BIDI_MARKS = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 class GenericScraper:
@@ -162,8 +165,8 @@ class GenericScraper:
         seen = set()
 
         def add(name, value):
-            name = clean_text(name)
-            value = clean_text(value)
+            name = clean_text(_BIDI_MARKS.sub("", str(name))) if name is not None else None
+            value = clean_text(_BIDI_MARKS.sub("", str(value))) if value is not None else None
             if not name or not value or len(name) > 160 or len(value) > 1000:
                 return
             key = (name.casefold(), value.casefold())
@@ -202,6 +205,14 @@ class GenericScraper:
                 dd = dt.find_next_sibling("dd")
                 if dd:
                     add(dt.get_text(" ", strip=True), dd.get_text(" ", strip=True))
+                if len(pairs) >= 250:
+                    break
+
+        if len(pairs) < 250:
+            for row in soup.select("#detailBullets_feature_div li > .a-list-item")[:100]:
+                cells = row.find_all("span", recursive=False)
+                if len(cells) == 2:
+                    add(cells[0].get_text(" ", strip=True).replace(":", ""), cells[1].get_text(" ", strip=True))
                 if len(pairs) >= 250:
                     break
 
@@ -350,16 +361,23 @@ class GenericScraper:
             for item in attributes
             if item.get("name") and item.get("value_name")
         }
-        brand = brand or by_name.get("marca") or by_name.get("brand") or by_name.get("producer") or by_name.get("manufacturer")
-        model = clean_text(product.get("model") if isinstance(product, dict) else None) or by_name.get("modelo") or by_name.get("model")
-        mpn = clean_text(product.get("mpn") if isinstance(product, dict) else None) or by_name.get("mpn") or by_name.get("part number")
+        def attribute(*labels):
+            return next((by_name[label] for label in labels if by_name.get(label)), None)
+
+        brand = brand or attribute("marca", "brand", "fabricante", "producer", "manufacturer")
+        model = clean_text(product.get("model")) or attribute(
+            "modelo", "model", "número do modelo do produto", "número do modelo", "item model number",
+        )
+        mpn = clean_text(product.get("mpn")) or attribute(
+            "mpn", "part number", "número da peça", "número da peça do fabricante", "manufacturer part number",
+        )
 
         description, description_source = listing_description(soup, product)
 
         gtin = None
         if isinstance(product, dict):
             gtin = product.get("gtin13") or product.get("gtin12") or product.get("gtin14") or product.get("gtin")
-        gtin = clean_text(gtin) or by_name.get("ean") or by_name.get("gtin") or by_name.get("upc")
+        gtin = clean_text(gtin) or attribute("ean", "gtin", "upc", "código ean")
 
         return {
             "ok": bool(title),

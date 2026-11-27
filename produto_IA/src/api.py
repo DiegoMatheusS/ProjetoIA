@@ -11,7 +11,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .main import build_result
-from .catalog_content import refine_catalog_result
+from .catalog_content import refine_catalog_result, technical_description
 from .version import SERVICE_VERSION, INTEGRATION_ID, PROVENANCE_ID
 from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
@@ -149,6 +149,18 @@ class HealthResponse(BaseModel):
 from .security import validate_service_key as _validate_api_key
 
 
+def _discovery_payload(category: str, item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware")
+    safe = normalize_hardware_payload_for_backend(category, raw if isinstance(raw, dict) else {})
+    schema = SCHEMAS.get(category)
+    if schema and schema[1]:
+        safe["descricao"] = technical_description(
+            category, safe.get("nome") or "", safe.get(schema[1]),
+            conflicts=item.get("conflitos") or [],
+        )
+    return safe
+
+
 def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[str, Any]:
     """Última barreira HTTP da descoberta.
 
@@ -176,8 +188,7 @@ def _sanitize_discovery_result(category: str, result: dict[str, Any]) -> dict[st
     for item in items:
         if not isinstance(item, dict):
             continue
-        raw = item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware")
-        safe = normalize_hardware_payload_for_backend(category, raw if isinstance(raw, dict) else {})
+        safe = _discovery_payload(category, item)
         issues = registration_payload_issues(category, safe)
 
         item["payload"] = safe
@@ -830,10 +841,7 @@ async def detalhar_hardware_descoberto(
                 wrapped = await asyncio.to_thread(auto_enrich_discovery_result, category, {"itens": [item]})
                 if isinstance(wrapped.get("itens"), list) and wrapped["itens"]:
                     item = wrapped["itens"][0]
-            safe_payload = normalize_hardware_payload_for_backend(
-                category,
-                item.get("payload") if isinstance(item.get("payload"), dict) else item.get("payloadHardware"),
-            )
+            safe_payload = _discovery_payload(category, item)
             item["payload"] = safe_payload
             item["payloadHardware"] = safe_payload
             return {
