@@ -86,11 +86,11 @@ def matches_quantities(query, title):
     return set(re.findall(pattern, query)).issubset(re.findall(pattern, title))
 
 
-def matches_search(query, title):
+def matches_model_query(query, title):
     q, t = normalized(query), normalized(title)
     if not q or not t:
         return False
-    if not same_item_kind(q, t) or not matches_quantities(q, t):
+    if not matches_quantities(q, t):
         return False
     terms = [w for w in q.split() if w not in STOP]
     words = set(t.split())
@@ -107,3 +107,7 @@ def matches_search(query, title):
         if not candidate or candidate.group(1).strip() != suffix.strip():
             return False
     return True
+
+
+def matches_search(query, title):
+    return same_item_kind(query, title) and matches_model_query(query, title)
