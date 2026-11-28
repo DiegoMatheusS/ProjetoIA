@@ -183,7 +183,7 @@ def search_offers(payload, factory=StoreCandidates):
     if len(products) < limit and time.monotonic() < deadline:
         candidates, status = safe_results(source.listing_results, query, max(24, min(limit * 2, 50)))
         process(candidates, status, "LISTAGEM_LOJA")
-    if not products and time.monotonic() < deadline:
+    if len(products) < limit and time.monotonic() < deadline:
         candidates, status = safe_results(source.indexed_results, query, max(12, min(limit * 2, 30)))
         process(candidates, status, "INDICE_WEB")
 
