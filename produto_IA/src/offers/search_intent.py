@@ -40,6 +40,17 @@ STOP = {
 RYZEN_MODEL = re.compile(
     r"\bryzen\s*([3579])[\s-]*(\d{4})(?:[\s-]*(x3d|xt|ge|gt|hx|hs|[xgfuhe]))?\b"
 )
+SEARCH_PREFIX = re.compile(
+    r"^(?:onde\s+(?:(?:eu\s+)?(?:posso|consigo)\s+)?(?:comprar|encontrar|achar)"
+    r"|(?:quero|gostaria de)\s+(?:comprar|encontrar|achar)"
+    r"|(?:busque|procure|encontre)(?:\s+ofertas?\s+de)?|ofertas?\s+de)\s+",
+    re.IGNORECASE,
+)
+
+
+def offer_query(value):
+    query = " ".join(value.split()).rstrip("?").rstrip()
+    return SEARCH_PREFIX.sub("", query, count=1).strip()
 
 
 def normalize_ryzen(text):

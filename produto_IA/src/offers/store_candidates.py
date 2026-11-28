@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from urllib.parse import quote, urljoin, urlparse
@@ -252,38 +253,98 @@ class StoreCandidates:
 
     def indexed_results(self, query, limit):
         domains = _STORE_DOMAINS.get(self.store, ())[:1]
-        if not domains or self.deadline <= time.monotonic():
+        if not domains:
+            return [], "NAO_SUPORTADA"
+        lookup_deadline = self.deadline - 2
+        if lookup_deadline <= time.monotonic():
             return [], "TEMPO_LIMITE"
 
-        def matching(rows, source):
-            result = {}
+        candidates = {}
+
+        def add_candidates(rows, source):
             for row in rows:
-                url = row.get("url") or ""
-                title = row.get("title") or row.get("titulo") or ""
-                if is_product_url(self.store, url) and matches_search(query, title):
-                    result.setdefault(offer_url_key(url), {"url": url, "title": title[:500], "fonteCandidato": source})
-            return list(result.values())[:limit]
+                if not isinstance(row, dict) or not isinstance(row.get("url"), str):
+                    continue
+                url = row["url"].strip().split("#", 1)[0]
+                try:
+                    if not is_product_url(self.store, url) or not _host_matches(urlparse(url).hostname, domains):
+                        continue
+                    key = offer_url_key(url)
+                except ValueError:
+                    continue
+                title = row.get("title") or row.get("titulo")
+                title = title.strip()[:500] if isinstance(title, str) else ""
+                if title.startswith(("http://", "https://")):
+                    title = ""
+                if title and not matches_search(query, title):
+                    continue
+                if key not in candidates or (title and not candidates[key].get("title")):
+                    candidates[key] = {"url": url, "title": title, "fonteCandidato": source}
 
         resolver = WebSearchResolver()
         resolver.timeout = 3
-        resolver.deadline = min(self.deadline, time.monotonic() + 4)
+        resolver.deadline = min(lookup_deadline, time.monotonic() + 4)
         resolver.allow_browser_fallback = False
-        rows = matching(resolver.results(query, domains, limit=limit), "INDICE_WEB")
+        add_candidates(resolver.results(query, domains, limit=limit), "INDICE_WEB")
+        statuses = {resolver.last_status}
+        for source, search in (("INDICE_BRAVE", self._brave_index), ("BUSCA_WEB", self._openai_index)):
+            if any(candidate.get("title") for candidate in candidates.values()):
+                break
+            rows, status = search(query, domains, limit, lookup_deadline)
+            add_candidates(rows, source)
+            statuses.add(status)
+
+        rows = sorted(candidates.values(), key=lambda candidate: not candidate.get("title"))[:limit]
         if rows:
             return rows, "ENCONTRADO"
+        status = next((value for value in ("BLOQUEADO", "TEMPO_LIMITE", "FALHA_TEMPORARIA")
+                       if value in statuses), "NAO_ENCONTRADO")
+        return [], status
 
-        budget = min(9, self.deadline - time.monotonic())
+    def _brave_index(self, query, domains, limit, deadline):
+        api_key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
+        if not api_key:
+            return [], "NAO_CONFIGURADA"
+        timeout = min(4, deadline - time.monotonic())
+        if timeout <= 0:
+            return [], "TEMPO_LIMITE"
+        terms = " ".join(query.split()[:74])
+        try:
+            response = self.public.session.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": f"{terms} site:{domains[0]}", "country": "BR", "search_lang": "pt-br",
+                        "count": min(20, limit), "result_filter": "web", "text_decorations": "false",
+                        "spellcheck": "false"},
+                headers={"Accept": "application/json", "X-Subscription-Token": api_key},
+                timeout=timeout, allow_redirects=False,
+            )
+            if response.status_code in {401, 403, 429}:
+                return [], "BLOQUEADO"
+            if response.status_code != 200:
+                return [], "FALHA_TEMPORARIA"
+            payload = response.json()
+        except requests.Timeout:
+            return [], "TEMPO_LIMITE"
+        except (requests.RequestException, ValueError):
+            return [], "FALHA_TEMPORARIA"
+        web = payload.get("web") if isinstance(payload, dict) else None
+        rows = web.get("results") if isinstance(web, dict) else None
+        return (rows, "ENCONTRADO") if isinstance(rows, list) and rows else ([], "NAO_ENCONTRADO")
+
+    def _openai_index(self, query, domains, limit, deadline):
         provider = OpenAIProvider()
-        if budget < 4 or not provider.configured or not provider.web_search:
-            return [], resolver.last_status or "NAO_ENCONTRADO"
+        if not provider.configured or not provider.web_search:
+            return [], "NAO_CONFIGURADA"
 
         cache = JsonDiskCache()
         params = {"loja": self.store, "limite": limit, "modelo": provider.model}
-        ns = "offer-discovery-sources-v1"
+        ns = "offer-discovery-sources-v2"
         cached = cache.get(query, params=params, namespace=ns, ttl_seconds=900)
         if isinstance(cached, list):
-            rows = matching(cached, "BUSCA_WEB")
-            return rows, "ENCONTRADO" if rows else "NAO_ENCONTRADO"
+            return cached, "ENCONTRADO" if cached else "NAO_ENCONTRADO"
+        budget = min(9, deadline - time.monotonic())
+        if budget < 3:
+            return [], "TEMPO_LIMITE"
 
         provider.max_retries = 0
         provider.max_output_tokens = min(provider.max_output_tokens, 750)
@@ -294,16 +355,17 @@ class StoreCandidates:
             "encontrada. Exclua acessórios, páginas de categoria e variantes diferentes. Não informe preços."
         )
         try:
-            response = provider.enrich_with_budget(prompt, budget_seconds=budget)
+            response = provider.enrich_with_budget(prompt, budget_seconds=budget, web_domains=domains)
         except TechnicalAIProviderError as exc:
             return [], "TEMPO_LIMITE" if exc.status_code == 504 else "FALHA_TEMPORARIA"
         cache.set(query, response.sources, params=params, namespace=ns)
-        rows = matching(response.sources, "BUSCA_WEB")
-        return rows, "ENCONTRADO" if rows else "NAO_ENCONTRADO"
+        return response.sources, "ENCONTRADO" if response.sources else "NAO_ENCONTRADO"
 
     def collect(self, url):
         if self.ml and self.ml.token:
-            return self.ml.collect(url, no_browser=True)
+            api_result = self.ml.collect(url, no_browser=True)
+            if api_result.get("ok") or time.monotonic() >= self.deadline:
+                return api_result
         try:
             page = self._page(url)
             if not is_product_url(self.store, page.url):
