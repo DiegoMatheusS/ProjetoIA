@@ -103,7 +103,8 @@ class WebSearchResolver:
         if not query or not allowed_domains:
             return []
         domains = [d.casefold().removeprefix("www.") for d in allowed_domains]
-        q = f"{query} (" + " OR ".join(f"site:{d}" for d in domains) + ")"
+        sites = " OR ".join(f"site:{domain}" for domain in domains)
+        q = f"{query} {sites}" if len(domains) == 1 else f"{query} ({sites})"
         search_urls = [
             "https://html.duckduckgo.com/html/?q=" + quote_plus(q),
             "https://www.bing.com/search?q=" + quote_plus(q),

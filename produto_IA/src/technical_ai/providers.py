@@ -95,7 +95,7 @@ class OpenAIProvider(TechnicalAIProvider):
     def configured(self) -> bool:
         return bool(self.enabled and self.api_key)
 
-    def _request_body(self, prompt: str) -> dict[str, Any]:
+    def _request_body(self, prompt: str, *, web_domains: tuple[str, ...] = ()) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self.model,
             "input": prompt,
@@ -103,7 +103,11 @@ class OpenAIProvider(TechnicalAIProvider):
             "store": False,
         }
         if self.web_search:
-            body["tools"] = [{"type": "web_search"}]
+            tool: dict[str, Any] = {"type": "web_search"}
+            if web_domains:
+                tool["filters"] = {"allowed_domains": list(web_domains)}
+                body["tool_choice"] = "required"
+            body["tools"] = [tool]
             # A Responses API pode devolver as fontes da busca no próprio item
             # web_search_call. Pedimos esse bloco explicitamente para que a
             # proveniência não dependa apenas de anotações no texto final.
@@ -267,7 +271,9 @@ class OpenAIProvider(TechnicalAIProvider):
             self._log_failure(exc)
             raise
 
-    def enrich_with_budget(self, prompt: str, *, budget_seconds: float) -> TechnicalAIResponse:
+    def enrich_with_budget(
+        self, prompt: str, *, budget_seconds: float, web_domains: tuple[str, ...] = ()
+    ) -> TechnicalAIResponse:
         """Executa a chamada dentro de um teto de tempo compartilhado pelo agente.
 
         O timeout configurado em OPENAI_TIMEOUT_SECONDS continua sendo o teto normal,
@@ -275,12 +281,14 @@ class OpenAIProvider(TechnicalAIProvider):
         duas rodadas + retries consumam toda a janela da requisição principal.
         """
         try:
-            return self._enrich(prompt, budget_seconds=budget_seconds)
+            return self._enrich(prompt, budget_seconds=budget_seconds, web_domains=web_domains)
         except TechnicalAIProviderError as exc:
             self._log_failure(exc)
             raise
 
-    def _enrich(self, prompt: str, *, budget_seconds: float | None = None) -> TechnicalAIResponse:
+    def _enrich(
+        self, prompt: str, *, budget_seconds: float | None = None, web_domains: tuple[str, ...] = ()
+    ) -> TechnicalAIResponse:
         if not self.enabled:
             raise TechnicalAIProviderError(
                 "PROVEDOR_NAO_CONFIGURADO",
@@ -315,7 +323,7 @@ class OpenAIProvider(TechnicalAIProvider):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        body = self._request_body(prompt)
+        body = self._request_body(prompt, web_domains=web_domains)
         last_error: TechnicalAIProviderError | None = None
 
         for attempt in range(self.max_retries + 1):

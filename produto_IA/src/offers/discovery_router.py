@@ -19,7 +19,7 @@ from .store_candidates import (
     StoreCandidates, is_product_url, offer_code_from_url, offer_url_key,
     redirected_to_other_product, store_search_url,
 )
-from .search_intent import matches_search, sold_kind, normalized
+from .search_intent import matches_search, normalized, offer_query, sold_kind
 
 router = APIRouter(prefix="/ofertas", tags=["Descoberta de ofertas"])
 _slots = asyncio.Semaphore(2)
@@ -105,7 +105,7 @@ def _offer_result(store, query, candidate, raw):
 
 
 def search_offers(payload, factory=StoreCandidates):
-    query = payload.consulta.strip()
+    query = offer_query(payload.consulta)
     if len(query) < 2:
         raise HTTPException(
             status_code=422, detail="Digite pelo menos dois caracteres para pesquisar."
@@ -140,7 +140,10 @@ def search_offers(payload, factory=StoreCandidates):
             raw = candidate.get("raw")
             if raw is None and key not in detail_attempted:
                 remaining = deadline - time.monotonic()
-                if detail_count < 6 and remaining > (7 if candidate_title else 9):
+                # Reserva leituras para o índice enquanto a listagem não confirma ofertas.
+                max_details = 4 if origin == "LISTAGEM_LOJA" and not products else 6
+                min_remaining = 1 if origin == "INDICE_WEB" else (7 if candidate_title else 9)
+                if detail_count < max_details and remaining > min_remaining:
                     detail_count += 1
                     detail_attempted.add(key)
                     raw = source.collect(url)

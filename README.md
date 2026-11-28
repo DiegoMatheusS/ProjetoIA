@@ -2,6 +2,12 @@
 
 Nomes técnicos, pesquisa de Produtos com ficha em metadados e captura da página estão no [guia do catálogo técnico](docs/technical-catalog-20261023.md).
 
+## Descobrir Ofertas
+
+O ProjetoIA aceita o nome do produto ou uma pergunta como “Onde comprar uma RTX 4060?”. Para Mercado Livre, Magalu e Amazon, o serviço consulta a loja e usa índices web para achar anúncios individuais quando a busca direta fica sem ofertas confirmadas. A identidade e o preço são conferidos no anúncio. Um resultado do índice ainda sem preço confirmado fica pendente.
+
+Configure `BRAVE_SEARCH_API_KEY` no ambiente do ProjetoIA para habilitar o índice opcional do Brave Search. Ele é consultado quando os índices públicos não encontram títulos compatíveis. Se necessário, a busca web da OpenAI também pode ser usada com `OPENAI_API_KEY` e `OPENAI_WEB_SEARCH=true`.
+
 ## Agente e extensão 0.3.0
 
 Operações persistentes, retomada, cancelamento, chaves por dispositivo e métricas de uso estão no [guia de atualização](docs/platform-upgrade-20261021.md). Consulte o guia antes das notas históricas abaixo; a fila precisa de volume persistente.
