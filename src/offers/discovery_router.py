@@ -120,6 +120,13 @@ def search_offers(payload, factory=StoreCandidates):
     limited = False
     query_kind = sold_kind(normalized(query))
 
+    def safe_results(method, *args):
+        try:
+            return method(*args)
+        except Exception:
+            _logger.warning("Falha na fonte de ofertas loja=%s", payload.loja, exc_info=True)
+            return [], "FALHA_TEMPORARIA"
+
     def process(candidates, status, origin):
         nonlocal detail_count, limited
         attempts.append({"origem": origin, "status": status, "candidatos": len(candidates)})
@@ -146,7 +153,12 @@ def search_offers(payload, factory=StoreCandidates):
                 if detail_count < max_details and remaining > min_remaining:
                     detail_count += 1
                     detail_attempted.add(key)
-                    raw = source.collect(url)
+                    try:
+                        raw = source.collect(url)
+                    except Exception:
+                        _logger.warning("Falha na leitura de oferta loja=%s", payload.loja, exc_info=True)
+                        raw = {"ok": False, "blocked": True}
+                        attempts.append({"origem": "DETALHE", "status": "FALHA_TEMPORARIA", "candidatos": 1})
                 else:
                     limited = True
             result = _offer_result(payload.loja, query, candidate, raw)
@@ -165,14 +177,14 @@ def search_offers(payload, factory=StoreCandidates):
             elif not payload.somentePromocoes and len(pending) < limit:
                 pending.setdefault(key, result)
 
-    candidates, api_status = source.api_results(query, limit)
     if payload.loja == "MERCADO_LIVRE":
+        candidates, api_status = safe_results(source.api_results, query, limit)
         process(candidates, api_status, "API_MERCADO_LIVRE")
-    if not products and time.monotonic() < deadline:
-        candidates, status = source.listing_results(query, max(24, min(limit * 2, 50)))
+    if len(products) < limit and time.monotonic() < deadline:
+        candidates, status = safe_results(source.listing_results, query, max(24, min(limit * 2, 50)))
         process(candidates, status, "LISTAGEM_LOJA")
     if not products and time.monotonic() < deadline:
-        candidates, status = source.indexed_results(query, max(12, min(limit * 2, 30)))
+        candidates, status = safe_results(source.indexed_results, query, max(12, min(limit * 2, 30)))
         process(candidates, status, "INDICE_WEB")
 
     items = [*products.values(), *pending.values()][:limit]
@@ -198,6 +210,7 @@ def search_offers(payload, factory=StoreCandidates):
         "itens": items,
         "avisos": warnings,
         "statusBusca": status,
+        "diagnostico": {"fontes": attempts, "confirmados": len(products), "pendentes": len(items) - min(len(products), len(items))},
         "urlBusca": store_search_url(payload.loja, query),
         "loja": payload.loja,
     }
