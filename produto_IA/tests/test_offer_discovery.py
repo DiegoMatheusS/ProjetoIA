@@ -150,3 +150,27 @@ def test_identical_offers_do_not_accept_an_accessory_that_quotes_the_target_mode
     assert _identity_match_raw(
         target, {"title": "ASUS RTX 4060 8GB", "gtin": "7891234567895"}
     ) == (True, "GTIN")
+
+
+def test_source_failure_falls_back_and_reports_diagnostics():
+    class ResilientStore(Source):
+        def listing_results(self, q, limit):
+            raise TimeoutError("listing unavailable")
+
+        def indexed_results(self, q, limit):
+            return [{"url": "https://www.amazon.com.br/dp/B000000001"}], "ENCONTRADO"
+
+    result = search_offers(OfferDiscoveryRequest(loja="AMAZON", consulta="RTX 4060"), factory=ResilientStore)
+    assert result["statusBusca"] == "ENCONTRADO"
+    assert result["diagnostico"]["confirmados"] == 1
+    assert result["diagnostico"]["fontes"][0]["status"] == "FALHA_TEMPORARIA"
+
+
+def test_index_can_fill_remaining_slots_after_confirmed_listing():
+    class MoreResults(Source):
+        def indexed_results(self, q, limit):
+            return [{"url": "https://www.amazon.com.br/dp/B000000001"}], "ENCONTRADO"
+
+    result = search_offers(OfferDiscoveryRequest(loja="AMAZON", consulta="RTX 4060", limite=2), factory=MoreResults)
+    assert len(result["itens"]) == 2
+    assert result["diagnostico"]["confirmados"] == 2
