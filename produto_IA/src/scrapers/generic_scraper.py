@@ -17,6 +17,15 @@ from .listing_description import listing_description
 _BIDI_MARKS = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
+def _stock_state(availability):
+    stock = re.sub(r"[^a-z]", "", str(availability or "").rsplit("/", 1)[-1].casefold())
+    if stock in {"instock", "limitedavailability"}:
+        return True
+    if stock in {"outofstock", "soldout", "discontinued"}:
+        return False
+    return None
+
+
 class GenericScraper:
     """Coletor conservador para uma URL individual de loja.
 
@@ -281,10 +290,17 @@ class GenericScraper:
                     "error": "PAGINA_BLOQUEADA", "attributes": [], "attributes_text": ""}
         visible = storefront_fields(soup, final_url)
         offers = product.get("offers") if isinstance(product, dict) else None
+        available = None
         if isinstance(offers, list):
             valid = [offer for offer in offers if isinstance(offer, dict)]
-            prices = {to_float(offer.get("price")) for offer in valid}
-            offers = valid[0] if valid and len(prices) == 1 else {}
+            active = [offer for offer in valid if _stock_state(offer.get("availability")) is True]
+            candidates = active or [offer for offer in valid if _stock_state(offer.get("availability")) is not False]
+            if active:
+                available = True
+            elif valid and not candidates:
+                available = False
+            prices = {(to_float(offer.get("price")), offer.get("priceCurrency")) for offer in candidates}
+            offers = candidates[0] if candidates and len(prices) == 1 else {}
         if not isinstance(offers, dict):
             offers = {}
 
@@ -341,14 +357,11 @@ class GenericScraper:
             price_source = visible.get("price_source")
         previous = None  # highPrice is an offer range, not a historical price.
 
-        availability = clean_text(offers.get("availability"))
-        available = None
-        if availability:
-            low = availability.casefold()
-            if "instock" in low or "in_stock" in low:
-                available = True
-            elif "outofstock" in low or "out_of_stock" in low:
-                available = False
+        availability = clean_text(offers.get("availability")) or self._meta(
+            soup, 'meta[property="product:availability"]', 'meta[property="og:availability"]'
+        )
+        if available is None:
+            available = _stock_state(availability)
 
         attributes = self._visible_attributes(soup, product)
         attributes_text = "\n".join(
@@ -398,7 +411,10 @@ class GenericScraper:
             "price": price,
             "previous_price": previous,
             "price_source": price_source,
-            "currency": clean_text(offers.get("priceCurrency")) or "BRL",
+            "currency": clean_text(offers.get("priceCurrency") or price_spec.get("priceCurrency"))
+                or self._meta(soup, 'meta[property="product:price:currency"]',
+                              'meta[property="og:price:currency"]', 'meta[itemprop="priceCurrency"]')
+                or "BRL",
             "available": available,
             "seller_id": None,
             "category_id": None,
@@ -408,13 +424,13 @@ class GenericScraper:
             "error": None if title else "PAGINA_SEM_DADOS_DE_PRODUTO",
         }
 
-    def collect(self, url, no_browser=False, crawl=False, *, budget_seconds=None, initial_page=None):
+    def collect(self, url, no_browser=False, crawl=False, *, budget_seconds=None, initial_page=None, fresh=False):
         budget = (max(0.25, min(45, float(budget_seconds))) if budget_seconds is not None
                   else max(5, min(45, float(os.getenv("PAGE_COLLECTION_BUDGET_SECONDS", "30")))))
         self._deadline = time.monotonic() + budget
         params = {"no_browser": no_browser, "crawl": crawl,
                   "budgetClass": "short" if budget <= 12 else "full"}
-        cached = self.cache.get(url, params=params, namespace="product-pages-v7", ttl_seconds=300)
+        cached = None if fresh else self.cache.get(url, params=params, namespace="product-pages-v7", ttl_seconds=300)
         if cached:
             return {**cached, "cache_hit": True}
         attempts, html, result = [], "", None

@@ -17,8 +17,9 @@ from .scrapers.magazine_scraper import MagazineScraper
 from .scrapers.mercadolivre_scraper import MercadoLivreScraper
 from .scrapers.generic_scraper import GenericScraper
 from .scrapers.link_page_details import complement_link_page
-from .shopee.agent import ShopeeAffiliateAgent, is_shopee_url
+from .shopee.agent import ShopeeAffiliateAgent
 from .shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
+from .utils.product_links import extract_shopee_ids, is_shopee_url
 from .discovery.core import HardwareDiscoveryService, SUPPORTED_DISCOVERY_CATEGORIES
 from .extractors.dto_normalizer import normalize_hardware_payload_for_backend, registration_payload_issues
 from .extractors.backend_schemas import SCHEMAS
@@ -78,6 +79,7 @@ class AnalyzeRequest(BaseModel):
     criabytePlan: bool = False
     noBrowser: bool = False
     detalharPagina: bool = False
+    verificarOferta: bool = False
 
 
 class CaptureAnalyzeRequest(BaseModel):
@@ -504,13 +506,14 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
     url = _validate_url(payload.url)
     affiliate_url = _validate_url(payload.urlAfiliada) if payload.urlAfiliada else None
     page_options = {"crawl": True} if payload.detalharPagina else {}
+    fresh_options = {"fresh": True} if payload.verificarOferta else {}
 
     if MercadoLivreScraper.is_mercadolivre(url):
-        raw = MercadoLivreScraper().collect(url, no_browser=payload.noBrowser)
+        raw = MercadoLivreScraper().collect(url, no_browser=payload.noBrowser, **fresh_options)
     elif is_shopee_url(url):
         raw, shopee_errors = _shopee_api_raw(url)
         if raw is None:
-            raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options)
+            raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options, **fresh_options)
             raw.setdefault("source", "SHOPEE_PAGINA_FALLBACK")
             raw.setdefault("api_used", False)
             raw["api_errors"] = [*(raw.get("api_errors") or []), *shopee_errors]
@@ -518,10 +521,19 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
                 "api_debug",
                 [{"fonte": "SHOPEE_AFFILIATE_API", "sucesso": False, "erros": shopee_errors}],
             )
+        elif payload.verificarOferta and raw.get("available") is None:
+            # A API afiliada da Shopee fornece preço, mas não informa estoque.
+            address = raw.get("url_final") or url
+            expected = extract_shopee_ids(address)
+            if all(expected):
+                page = GenericScraper().collect(address, no_browser=True, budget_seconds=8, fresh=True)
+                if (page.get("ok") and not page.get("blocked")
+                        and extract_shopee_ids(page.get("url_final") or "") == expected):
+                    raw["available"] = page.get("available")
     elif MagazineScraper.is_magazine(url):
-        raw = MagazineScraper().collect(url, no_browser=payload.noBrowser)
+        raw = MagazineScraper().collect(url, no_browser=payload.noBrowser, **fresh_options)
     else:
-        raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options)
+        raw = GenericScraper().collect(url, no_browser=payload.noBrowser, **page_options, **fresh_options)
         raw.setdefault("source", "NAVEGADOR_GENERICO")
         raw.setdefault("api_used", False)
 
@@ -532,6 +544,10 @@ def _analyze_sync(payload: AnalyzeRequest) -> dict[str, Any]:
         raw["affiliate_url"] = affiliate_url
 
     result = build_result(raw, payload.categoria)
+    if payload.verificarOferta:
+        if result.get("erro") == "PRODUTO_FORA_DAS_CATEGORIAS_CRIABYTE":
+            result["erro"] = None
+        return result
 
     auto_enrich = os.getenv("ENRICHMENT_AUTO", "false").strip().casefold() in {
         "1", "true", "sim", "yes"

@@ -1172,7 +1172,7 @@ class MagazineScraper:
         result["proxy_country"] = browser.get("proxy_country")
         return result, None, False
 
-    def collect(self, url, no_browser=False):
+    def collect(self, url, no_browser=False, *, fresh=False):
         if not self.is_product_url(url):
             return {
                 "ok": False,
@@ -1185,7 +1185,7 @@ class MagazineScraper:
                 "error": "MAGALU_URL_NAO_E_PAGINA_DE_PRODUTO",
             }
 
-        cached = self.cache.get(
+        cached = None if fresh else self.cache.get(
             url,
             namespace=self.cache_namespace,
             ttl_seconds=self.cache_ttl,

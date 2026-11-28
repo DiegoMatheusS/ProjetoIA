@@ -37,6 +37,16 @@ STOP = {
     "desktop",
 }
 
+RYZEN_MODEL = re.compile(
+    r"\bryzen\s*([3579])[\s-]*(\d{4})(?:[\s-]*(x3d|xt|ge|gt|hx|hs|[xgfuhe]))?\b"
+)
+
+
+def normalize_ryzen(text):
+    return RYZEN_MODEL.sub(
+        lambda match: f"ryzen {match[1]} {match[2]}{match[3] or ''}", text
+    )
+
 
 def normalized(value):
     text = "".join(
@@ -49,6 +59,7 @@ def normalized(value):
         lambda match: f"{match[1]} {match[2]}{match[3] or ''}",
         text,
     )
+    text = normalize_ryzen(text)
     text = re.sub(r"\b(rtx|gtx|rx|ddr)(?=\d)", r"\1 ", text)
     text = re.sub(r"\b((?:rtx|gtx|rx)\s*\d{3,4})\s*(ti|super|xtx|xt|gre)\b", r"\1 \2", text)
     text = re.sub(r"(\d)\s*(?:watts?|w)\b", r"\1 w", text)

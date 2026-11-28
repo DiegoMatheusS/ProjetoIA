@@ -48,6 +48,27 @@ def test_price_style_analisar_does_not_call_gemini(monkeypatch):
     assert out["ofertaColetada"]["disponivel"] is True
 
 
+def test_offer_verification_requests_a_fresh_read_without_technical_research(monkeypatch):
+    calls = []
+
+    def collect(self, url, **options):
+        calls.append(options)
+        return _raw_offer()
+
+    def unexpected_research(_result):
+        raise AssertionError("A verificação de preço não deve pesquisar a ficha")
+
+    monkeypatch.setattr(api.GenericScraper, "collect", collect)
+    monkeypatch.setattr(api, "auto_enrich_link_result", unexpected_research)
+    out = api._analyze_sync(api.AnalyzeRequest(
+        url="https://example.com/produto", verificarOferta=True, enrich=True,
+    ))
+
+    assert calls == [{"no_browser": False, "fresh": True}]
+    assert out["ofertaColetada"]["preco"] == 1234.56
+    assert out["ofertaColetada"]["disponivel"] is True
+
+
 def test_hardware_link_with_explicit_category_still_calls_gemini(monkeypatch):
     monkeypatch.setenv("ENRICHMENT_DISABLE", "true")
     monkeypatch.setenv("ENRICHMENT_AUTO", "false")

@@ -30,6 +30,7 @@ class MercadoLivreScraper:
             jitter=float(os.getenv("ML_JITTER_SECONDS", "0.35")),
         )
         self.cache = JsonDiskCache()
+        self._fresh = False
         self.max_retries = max(0, int(os.getenv("HTTP_MAX_RETRIES", "2")))
 
     @staticmethod
@@ -139,7 +140,7 @@ class MercadoLivreScraper:
     def _request_get(self, path: str, params=None, use_auth=True):
         url = f"{self.API_BASE}{path}"
         namespace = "ml_auth" if use_auth else "ml_public"
-        cached = self.cache.get(
+        cached = None if self._fresh else self.cache.get(
             url, params=params, namespace=namespace, ttl_seconds=self._cache_ttl(path)
         )
         if cached is not None:
@@ -692,7 +693,8 @@ class MercadoLivreScraper:
         out["error"] = None if out.get("title") else (secondary.get("error") or primary.get("error"))
         return out
 
-    def collect(self, url: str, no_browser: bool = False):
+    def collect(self, url: str, no_browser: bool = False, *, fresh: bool = False):
+        self._fresh = fresh
         ids = self.extract_ids(url)
         item_id = ids["item_id"]
         catalog_product_id = ids["catalog_product_id"]
@@ -989,7 +991,8 @@ class MercadoLivreScraper:
         logger.warning("Mercado Livre ainda incompleto; usando coletor genérico como último fallback.")
         try:
             from .generic_scraper import GenericScraper
-            browser_result = GenericScraper().collect(url)
+            freshness = {"fresh": True} if fresh else {}
+            browser_result = GenericScraper().collect(url, **freshness)
         except Exception as exc:
             if api_result:
                 api_result["collection_attempts"] = attempts
