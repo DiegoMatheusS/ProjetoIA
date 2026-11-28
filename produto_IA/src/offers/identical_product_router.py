@@ -13,8 +13,11 @@ from pydantic import BaseModel, Field
 from ..enrichment.search import WebSearchResolver
 from ..shopee.agent import ShopeeAffiliateAgent
 from ..shopee.client import ShopeeAffiliateClient, ShopeeAffiliateError
-from .store_candidates import StoreCandidates, is_product_url
-from .search_intent import same_item_kind
+from .store_candidates import (
+    StoreCandidates, is_product_url, offer_code_from_url, offer_url_key,
+    redirected_to_other_product,
+)
+from .search_intent import RYZEN_MODEL, normalized, same_item_kind
 
 
 router = APIRouter(prefix="/ofertas", tags=["Ofertas idênticas"])
@@ -61,6 +64,10 @@ def _exact_phrase(value: Any, title: Any) -> bool:
 
 def _variant_conflict(payload: IdenticalProductOffersRequest, title: Any) -> bool:
     expected = f"{payload.nome} {payload.modelo or ''}"
+    ryzen_expected = set(RYZEN_MODEL.findall(normalized(expected)))
+    ryzen_found = set(RYZEN_MODEL.findall(normalized(title)))
+    if ryzen_expected and ryzen_found and not ryzen_expected & ryzen_found:
+        return True
     variants = r"\b(?:ti|super|xt|xtx|pro|plus|ultra|max|lite|mini)\b"
     if set(re.findall(variants, str(title or '').casefold())) != set(re.findall(variants, expected.casefold())):
         return True
@@ -158,6 +165,8 @@ def _identity_queries(payload: IdenticalProductOffersRequest) -> list[str]:
 
 
 def _price(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -174,6 +183,7 @@ def _normalize_web_offer(
     price = _price(raw.get("price"))
     url = str(raw.get("url_final") or raw.get("url_original") or requested_url or "").strip()
     if (price is None or not is_product_url(store, url) or raw.get("available") is False
+            or redirected_to_other_product(store, requested_url, url)
             or str(raw.get("currency") or "BRL").upper() != "BRL"):
         return None
     partner_name = {
@@ -195,7 +205,7 @@ def _normalize_web_offer(
         "precoAnterior": _price(raw.get("previous_price")),
         "urlOriginal": url,
         "urlAfiliada": None,
-        "codigoMarketplace": raw.get("marketplace_product_code") or raw.get("item_id"),
+        "codigoMarketplace": raw.get("marketplace_product_code") or raw.get("item_id") or offer_code_from_url(store, url),
         "vendedorNome": raw.get("seller_name") or raw.get("seller"),
         "vendedorIdentificador": raw.get("seller_id"),
         "imagemUrl": raw.get("image_url"),
@@ -237,8 +247,10 @@ def _search_web_store(
             if len(offers) >= limit or time.monotonic() >= deadline:
                 break
             url = str(candidate.get("url") or "").strip()
-            key = url.split("#", 1)[0].rstrip("/")
-            if not is_product_url(store, url) or key in seen:
+            if not is_product_url(store, url):
+                continue
+            key = offer_url_key(url)
+            if key in seen:
                 continue
             seen.add(key)
             diagnostics["candidatos"] += 1
@@ -285,6 +297,10 @@ def _search_web_store(
     if len(offers) < limit and time.monotonic() < deadline:
         candidates, status = discovery.listing_results(queries[0], max(limit * 2, 6))
         process(candidates, "BUSCA_DA_LOJA", queries[0], status)
+        title_query = _query(payload)
+        if not offers and title_query != queries[0] and detail_count < 6 and time.monotonic() < deadline:
+            candidates, status = discovery.listing_results(title_query, max(limit * 2, 6))
+            process(candidates, "BUSCA_DA_LOJA", title_query, status)
     for query in list(dict.fromkeys([_query(payload), *queries]))[:3]:
         if len(offers) >= limit or detail_count >= 6 or time.monotonic() >= deadline:
             break
@@ -524,11 +540,11 @@ def find_identical_product_offers(
     for key_name in ordered_keys:
         store_offers, _diagnostic = results[key_name]
         for offer in store_offers:
-            key = (
-                str(offer.get("marketplace") or ""),
-                str(offer.get("urlOriginal") or "").split("#", 1)[0].rstrip("/").casefold(),
-            )
-            if not key[1] or key in seen:
+            url = str(offer.get("urlOriginal") or "")
+            if not url:
+                continue
+            key = (str(offer.get("marketplace") or ""), offer_url_key(url))
+            if key in seen:
                 continue
             seen.add(key)
             unique.append(offer)

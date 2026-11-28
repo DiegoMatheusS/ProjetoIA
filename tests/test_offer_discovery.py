@@ -233,3 +233,46 @@ def test_ram_capacity_and_speed_are_matched_as_number_unit_pairs():
     for title, expected in [(wrong, False), (correct, True)]:
         assert matches_search(query, title) is expected
         assert relevant_item({"nome": title}, query) is expected
+
+
+def test_a_price_pending_on_the_storefront_does_not_stop_searching():
+    first = "https://www.amazon.com.br/dp/B000000001"
+    second = "https://www.amazon.com.br/dp/B000000002"
+
+    class PartialStore(Source):
+        def listing_results(self, query, limit):
+            return [{"url": first, "title": "ASUS RTX 4060 8GB"}], "ENCONTRADO"
+
+        def indexed_results(self, query, limit):
+            return [{"url": second, "title": "MSI RTX 4060 8GB"}], "ENCONTRADO"
+
+        def collect(self, url):
+            if url == first:
+                return {"ok": False, "blocked": True}
+            return {"ok": True, "title": "MSI RTX 4060 8GB", "price": 2050, "url_final": url}
+
+    result = search_offers(OfferDiscoveryRequest(loja="AMAZON", consulta="RTX 4060"), factory=PartialStore)
+    assert [(item["itemId"], item["preco"]) for item in result["itens"]] == [
+        ("B000000002", 2050), ("B000000001", None)]
+
+
+def test_redirect_to_another_listing_never_confirms_price():
+    class RedirectedStore(Source):
+        def collect(self, url):
+            return {**super().collect(url), "url_final": "https://www.amazon.com.br/dp/B000000002"}
+
+    result = search_offers(OfferDiscoveryRequest(loja="AMAZON", consulta="RTX 4060"), factory=RedirectedStore)
+    assert result["itens"] == []
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Processador AMD Ryzen 5 5600", True),
+    ("Processador AMD Ryzen 5 5600 G", False),
+    ("Processador AMD Ryzen 5 5600X", False),
+])
+def test_distinguishes_ryzen_variants_even_with_suffix_separated(title, expected):
+    from src.shopee.relevance import relevant_item
+
+    query = "Ryzen 5 5600"
+    assert matches_search(query, title) is expected
+    assert relevant_item({"nome": title}, query) is expected

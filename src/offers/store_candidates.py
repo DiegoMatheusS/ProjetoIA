@@ -15,7 +15,7 @@ from ..scrapers.magazine_scraper import MagazineScraper
 from ..scrapers.mercadolivre_scraper import MercadoLivreScraper
 from ..technical_ai.providers import OpenAIProvider, TechnicalAIProviderError
 from ..utils.public_http import get_public_page
-from ..utils.product_links import extract_shopee_ids, is_shopee_url
+from ..utils.product_links import extract_mercadolivre_item_id, extract_shopee_ids, is_shopee_url
 from ..utils.rate_limiter import JsonDiskCache
 from .search_intent import matches_search
 
@@ -68,13 +68,50 @@ def is_product_url(store, url):
     return False
 
 
+def offer_code_from_url(store, url):
+    parsed = urlparse(url)
+    if store == "MERCADO_LIVRE":
+        return extract_mercadolivre_item_id(url) or MercadoLivreScraper.extract_ids(url)["catalog_product_id"]
+    if store == "MAGALU":
+        code = MagazineScraper.product_code_from_url(url)
+        return code.upper() if code else None
+    if store != "AMAZON":
+        return None
+    match = re.search(r"/(?:dp|gp/(?:product|aw/d)|product)/([A-Z0-9]{10})(?:/|$)", parsed.path, re.I)
+    return match.group(1).upper() if match else None
+
+
+def redirected_to_other_product(store, original, final):
+    if not final:
+        return False
+    if not is_product_url(store, final):
+        return True
+    original_code = offer_code_from_url(store, original)
+    final_code = offer_code_from_url(store, final)
+    if store == "AMAZON":
+        if (urlparse(original).hostname or "").endswith(".br") != (urlparse(final).hostname or "").endswith(".br"):
+            return True
+    if store == "MAGALU":
+        original_seller = MagazineScraper.seller_slug_from_url(original)
+        final_seller = MagazineScraper.seller_slug_from_url(final)
+        if original_seller and final_seller and original_seller != final_seller:
+            return True
+    if store == "MERCADO_LIVRE" and original_code == MercadoLivreScraper.extract_ids(original)["catalog_product_id"]:
+        if not MercadoLivreScraper.extract_ids(final)["catalog_product_id"]:
+            return False  # Catálogo compartilhado encaminhando a um anúncio específico.
+    return bool(original_code and final_code and original_code != final_code)
+
+
 def offer_url_key(url):
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().removeprefix("www.")
-    if _host_matches(host, _STORE_DOMAINS["AMAZON"]):
-        match = re.search(r"/(?:dp|gp/(?:product|aw/d)|product)/([A-Z0-9]{10})(?:/|$)", parsed.path, re.I)
-        if match:
-            return f"{host}/{match.group(1).upper()}"
+    for store in ("AMAZON", "MERCADO_LIVRE", "MAGALU"):
+        if _host_matches(host, _STORE_DOMAINS[store]):
+            code = offer_code_from_url(store, url)
+            if code:
+                if store == "MAGALU":
+                    return f"{store}/{code}/{MagazineScraper.seller_slug_from_url(url) or ''}"
+                return f"{store}/{code}"
     return f"{host}{parsed.path.rstrip('/')}"
 
 
@@ -169,20 +206,25 @@ class StoreCandidates:
         for row in data.get("results") or []:
             if not isinstance(row, dict) or not is_product_url(self.store, row.get("permalink") or ""):
                 continue
-            attrs = {a.get("id"): self.ml._attribute_value(a) for a in row.get("attributes") or [] if isinstance(a, dict)}
+            attributes = [a for a in row.get("attributes") or [] if isinstance(a, dict)]
+            attrs = {a.get("id"): self.ml._attribute_value(a) for a in attributes}
+            quantity = row.get("available_quantity")
             try:
-                available = float(row.get("available_quantity", 1) or 0) > 0
+                available = float(quantity) > 0 if quantity is not None else None
             except (ValueError, TypeError):
+                available = None
+            if row.get("status") not in (None, "active"):
                 available = False
             raw = {
                 "ok": True, "title": row.get("title"), "brand": attrs.get("BRAND"),
                 "model": attrs.get("MODEL"), "mpn": attrs.get("MPN"),
                 "gtin": attrs.get("GTIN") or attrs.get("EAN"), "price": row.get("price"),
                 "currency": row.get("currency_id"), "previous_price": row.get("original_price"),
-                "available": available and row.get("status", "active") == "active",
+                "available": available,
                 "url_final": row["permalink"], "item_id": row.get("id"),
                 "seller_id": (row.get("seller") or {}).get("id"),
-                "image_url": row.get("thumbnail"), "api_used": True, "source": "MERCADO_LIVRE_API_BUSCA",
+                "image_url": row.get("secure_thumbnail") or row.get("thumbnail"),
+                "attributes": attributes, "api_used": True, "source": "MERCADO_LIVRE_API_BUSCA",
             }
             candidates.append({"url": row["permalink"], "raw": raw})
         return candidates, "ENCONTRADO" if candidates else "NAO_ENCONTRADO"

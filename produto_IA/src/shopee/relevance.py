@@ -2,6 +2,8 @@
 import re
 import unicodedata
 
+from ..offers.search_intent import RYZEN_MODEL, matches_quantities, normalize_ryzen, normalized as normalize_model
+
 
 def normalized(text):
     value = unicodedata.normalize('NFKD', str(text or '').casefold())
@@ -11,7 +13,7 @@ def normalized(text):
     value = re.sub(r'(\b(?:rtx|gtx|rx|gt)\s+\d{3,4})\s*(ti|super|xtx|xt|gre)\b', r'\1 \2', value)
     value = re.sub(r'\b(full|ultra|quad)\s*hd\b', lambda m: {'full': 'fhd', 'ultra': 'uhd', 'quad': 'qhd'}[m.group(1)], value)
     value = re.sub(r'(\d)\s*(gb|tb|mb|mhz|ghz|hz|watts?|w)\b', r'\1 \2', value)
-    return value
+    return normalize_ryzen(value)
 
 
 # A primeira identidade no título costuma ser o que está à venda: "cabo para
@@ -89,6 +91,11 @@ def relevant_item(item, query, intent=None):
     if not wanted.strip():
         return True  # Resolução por IDs não depende do nome do anúncio.
     title = normalized(item.get('nome'))
+    model_query, model_title = normalize_model(query), normalize_model(title)
+    if not matches_quantities(model_query, model_title):
+        return False
+    if not set(RYZEN_MODEL.findall(model_query)).issubset(RYZEN_MODEL.findall(model_title)):
+        return False
     intent = intent or search_intent(wanted)
     title_signals = _signals(title)
     if intent and (not title_signals or title_signals[0][2] != intent):
@@ -120,10 +127,10 @@ def relevant_item(item, query, intent=None):
     # Retira só os nomes de categorias; os qualificadores continuam obrigatórios.
     # Números/modelos preservados abaixo impedem "SSD 1 TB" de aceitar 480 GB,
     # "DDR4" de aceitar DDR5 e "G502" de aceitar qualquer mouse Logitech.
-    models = {word for word in _words(wanted) if any(c.isdigit() for c in word)}
+    models = {word for word in _words(model_query) if any(c.isdigit() for c in word)}
     qualifiers = wanted
     spans = sorted((signal[3].start(), signal[3].end()) for signal in _signals(wanted))
     for start, end in reversed(spans):
         qualifiers = qualifiers[:start] + ' ' * (end - start) + qualifiers[end:]
     required = _words(qualifiers) | models
-    return required.issubset(_words(title))
+    return required.issubset(_words(title) | _words(model_title))

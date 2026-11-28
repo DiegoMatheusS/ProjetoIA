@@ -11,11 +11,14 @@ from typing import Literal
 from urllib.parse import unquote, urlparse
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from ..catalog_content import technical_name
+from ..catalog_content import technical_description, technical_name
 from ..extractors.backend_schemas import SCHEMAS
 from ..extractors.category import detect_category
 from ..main import build_result
-from .store_candidates import StoreCandidates, is_product_url, offer_url_key, store_search_url
+from .store_candidates import (
+    StoreCandidates, is_product_url, offer_code_from_url, offer_url_key,
+    redirected_to_other_product, store_search_url,
+)
 from .search_intent import matches_search, sold_kind, normalized
 
 router = APIRouter(prefix="/ofertas", tags=["Descoberta de ofertas"])
@@ -44,26 +47,37 @@ def number(value):
 def _offer_result(store, query, candidate, raw):
     if not isinstance(raw, dict):
         raw = {}
-    if raw.get("available") is False:
+    if raw.get("available") is False and not raw.get("blocked"):
         return None
-    verified = bool(raw.get("ok") and not raw.get("blocked"))
-    title = technical_name(raw.get("title") if verified else candidate.get("title"))
+    url = candidate["url"]
+    verified_title = technical_name(raw.get("title"), raw.get("brand"), raw.get("model"))
+    verified = bool(raw.get("ok") and not raw.get("blocked") and verified_title)
+    if verified and redirected_to_other_product(store, url, raw.get("url_final")):
+        return None
+    requested_code = offer_code_from_url(store, url)
+
+    title = verified_title if verified else technical_name(candidate.get("title"))
     if not title or not matches_search(query, title):
         return None
     currency = str(raw.get("currency") or "BRL").upper()
     price = number(raw.get("price")) if verified and currency == "BRL" else None
     previous = number(raw.get("previous_price")) if price else None
     promotion = bool(previous and previous > price)
-    url = candidate["url"]
     category = detect_category(title)
     technical = {}
-    if verified and raw.get("attributes") and category in SCHEMAS:
-        imported = build_result(raw, category)["payloadParcialBackend"]
+    if verified and category in SCHEMAS:
+        result = build_result({**raw, "title": title}, category)
+        imported = result["payloadParcialBackend"]
         spec_field = SCHEMAS[category][1]
-        if spec_field and imported.get(spec_field):
-            technical[spec_field] = imported[spec_field]
-        if imported.get("descricao") and category != "PC_MONTADO":
-            technical["descricao"] = imported["descricao"]
+        specs = imported.get(spec_field) if spec_field else result.get("especificacoesEncontradas")
+        if spec_field and specs:
+            technical[spec_field] = specs
+        if imported.get("metadados") and specs:
+            technical["metadados"] = {"especificacoesEncontradas": specs}
+        if category != "PC_MONTADO":
+            description = technical_description(category, title, specs, imported.get("descricao"))
+            if description:
+                technical["descricao"] = description
     return {
         "nome": title,
         "preco": price,
@@ -74,9 +88,9 @@ def _offer_result(store, query, candidate, raw):
         "urlOriginal": url,
         "urlAfiliada": None,
         "imagemUrl": raw.get("image_url") if verified else None,
-        "itemId": (raw.get("item_id") or raw.get("marketplace_product_code") if verified else None) or offer_url_key(url),
+        "itemId": (raw.get("item_id") or raw.get("marketplace_product_code") if verified else None) or requested_code,
         "shopId": str(raw.get("seller_id") or "") if verified else "",
-        "loja": raw.get("seller_name") or "" if verified else "",
+        "loja": (raw.get("seller_name") or "") if verified else "",
         "marca": raw.get("brand") if verified else None,
         "modelo": raw.get("model") if verified else None,
         "mpn": raw.get("mpn") if verified else None,
@@ -99,7 +113,8 @@ def search_offers(payload, factory=StoreCandidates):
     deadline = time.monotonic() + 22
     source = factory(payload.loja, deadline)
     limit = payload.limite
-    products, pending, seen = [], [], set()
+    products, pending = {}, {}
+    discarded, detail_attempted = set(), set()
     attempts, warnings = [], []
     detail_count = 0
     limited = False
@@ -115,7 +130,7 @@ def search_offers(payload, factory=StoreCandidates):
             if not url or not is_product_url(payload.loja, url):
                 continue
             key = offer_url_key(url)
-            if key in seen:
+            if key in products or key in discarded:
                 continue
             candidate_title = candidate.get("title")
             if not candidate_title:
@@ -123,10 +138,11 @@ def search_offers(payload, factory=StoreCandidates):
                 if url_kind and url_kind != query_kind:
                     continue
             raw = candidate.get("raw")
-            if raw is None:
+            if raw is None and key not in detail_attempted:
                 remaining = deadline - time.monotonic()
-                if detail_count < 6 and remaining > (3 if candidate_title else 9):
+                if detail_count < 6 and remaining > (7 if candidate_title else 9):
                     detail_count += 1
+                    detail_attempted.add(key)
                     raw = source.collect(url)
                 else:
                     limited = True
@@ -134,16 +150,17 @@ def search_offers(payload, factory=StoreCandidates):
             if not result:
                 # A página fora de estoque ou com outro modelo não volta como
                 # candidato pendente caso apareça em uma fonte posterior.
-                if isinstance(raw, dict) and (raw.get("available") is False or raw.get("ok")):
-                    seen.add(key)
+                if (isinstance(raw, dict) and not raw.get("blocked")
+                        and (raw.get("available") is False or (raw.get("ok") and raw.get("title")))):
+                    discarded.add(key)
+                    pending.pop(key, None)
                 continue
             if result["precoConfirmado"]:
-                seen.add(key)
+                pending.pop(key, None)
                 if not payload.somentePromocoes or result["emPromocao"]:
-                    products.append(result)
+                    products[key] = result
             elif not payload.somentePromocoes and len(pending) < limit:
-                seen.add(key)
-                pending.append(result)
+                pending.setdefault(key, result)
 
     candidates, api_status = source.api_results(query, limit)
     if payload.loja == "MERCADO_LIVRE":
@@ -151,12 +168,12 @@ def search_offers(payload, factory=StoreCandidates):
     if not products and time.monotonic() < deadline:
         candidates, status = source.listing_results(query, max(24, min(limit * 2, 50)))
         process(candidates, status, "LISTAGEM_LOJA")
-    if not products and not pending and time.monotonic() < deadline:
+    if not products and time.monotonic() < deadline:
         candidates, status = source.indexed_results(query, max(12, min(limit * 2, 30)))
         process(candidates, status, "INDICE_WEB")
 
-    items = (products + pending)[:limit]
-    if pending:
+    items = [*products.values(), *pending.values()][:limit]
+    if any(not item["precoConfirmado"] for item in items):
         warnings.append("Alguns anúncios foram encontrados, mas o preço ainda precisa ser confirmado na loja.")
     if limited and not pending:
         warnings.append("A busca atingiu o limite de leitura de páginas. Refine pelo modelo para consultar mais detalhes.")
